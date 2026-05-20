@@ -9,19 +9,13 @@ public struct PowerShellTool: Tool {
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
         "Executes a PowerShell command and returns the output"
     }
-    public var searchHint: String? { "run powershell command" }
+    public var searchHint: String? { "execute Windows PowerShell commands" }
     public var isReadOnly: Bool { false }
     public var isConcurrencySafe: Bool { false }
 
     public func isDestructive(_ input: [String: JSONValue]) -> Bool { true }
 
-    public func isEnabled() -> Bool {
-        #if os(Windows)
-        return true
-        #else
-        return false
-        #endif
-    }
+    public func isEnabled() -> Bool { FeatureFlags.isPowerShellToolEnabled() }
 
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [

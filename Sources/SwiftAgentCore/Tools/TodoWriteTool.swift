@@ -46,6 +46,7 @@ public struct TodoWriteTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { !FeatureFlags.isTodoV2Enabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         var itemSchema = JSONSchema(type: "object", properties: [:])

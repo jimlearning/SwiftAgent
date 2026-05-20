@@ -9,6 +9,7 @@ public struct GlobTool: Tool {
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Fast file pattern matching tool. Supports glob patterns like '**/*.swift'." }
     public var isReadOnly: Bool { true }
     public var isConcurrencySafe: Bool { true }
+    public var maxResultSizeChars: Int { 100_000 }
 
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [

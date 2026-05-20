@@ -53,7 +53,7 @@ public struct FileReadTool: Tool {
         input.stringValue("file_path")
     }
 
-    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> String {
+    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> Any {
         input.stringValue("file_path") ?? ""
     }
 

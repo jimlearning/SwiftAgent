@@ -9,6 +9,7 @@ public struct ExitPlanModeV2Tool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { !FeatureFlags.isChannelsActive() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["plan"] = JSONSchemaProperty(type: "string", description: "The plan to present for user approval")

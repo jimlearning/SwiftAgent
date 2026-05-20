@@ -8,14 +8,20 @@ public struct ConfigTool: Tool {
     public let name = "Config"
     public var searchHint: String? { "get or set Claude Code settings (theme, model)" }
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Get or set Claude Code configuration settings." }
-    public let isReadOnly = false
+    /// CC: isReadOnly depends on whether a value is being set.
+    /// isReadOnly(input) returns true (read-only) when value is undefined (get mode).
+    /// Returns false (writable) when value is provided (set mode).
+    public func isReadOnly(_ input: [String: JSONValue]) -> Bool {
+        if input["value"] == nil { return true }
+        return false
+    }
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
 
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["setting"] = JSONSchemaProperty(type: "string", description: "The setting key (e.g., \"theme\", \"model\", \"permissions.defaultMode\")")
-        schema.properties?["value"] = JSONSchemaProperty(type: "string", description: "The new value. Omit to get current value.")
+        schema.properties?["value"] = JSONSchemaProperty(type: "string", description: "The new value. Can be any JSON type. Omit to get current value.")
         schema.required = ["setting"]
         return schema
     }()

@@ -8,6 +8,7 @@ public struct TaskListTool: Tool {
     public let isReadOnly = true
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isTodoV2Enabled() }
     public let inputSchema = JSONSchema(type: "object", properties: [:])
 
     private let taskManager: TaskManager

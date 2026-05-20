@@ -3,10 +3,10 @@ import Foundation
 /// Lists resources from connected MCP servers.
 /// Matches Claude Code's ListMcpResourcesTool.
 public struct ListMcpResourcesTool: Tool {
-    public let name = "ListMcpResources"
+    public let name = "ListMcpResourcesTool"
     public var searchHint: String? { "list resources from connected MCP servers" }
     public let isMcp = true
-    public let mcpInfo: MCPToolInfo? = MCPToolInfo(serverName: "", toolName: "ListMcpResources")
+    public let mcpInfo: MCPToolInfo? = MCPToolInfo(serverName: "", toolName: "ListMcpResourcesTool")
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "List resources from connected MCP servers" }
     public let isReadOnly = true
     public let isConcurrencySafe = true

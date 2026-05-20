@@ -6,8 +6,50 @@ import Foundation
 /// Matches Claude Code's AgentTool.
 public struct AgentTool: Tool {
     public let name = "Agent"
+    public var aliases: [String] { ["Task"] }
     public var searchHint: String? { "delegate work to a subagent" }
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Launch a new agent to handle complex, multi-step tasks autonomously. Each agent type has specific capabilities and tools available to it. Available agent types: general-purpose (catch-all), Explore (codebase search), Plan (architecture planning), verification (check completed work)." }
+
+    /// Dynamic prompt matching CC's AgentTool.prompt() — lists available agents,
+    /// filters by MCP server availability and permission rules, and handles
+    /// coordinator mode detection.
+    public func prompt(
+        getToolPermissionContext: @Sendable () async -> ToolPermissionContext,
+        tools: [any Tool],
+        agents: [any Sendable],
+        allowedAgentTypes: [String]?
+    ) async -> String {
+        let agentDefinitions = agents.compactMap { $0 as? AgentDefinition }
+        let availableAgents = agentDefinitions.isEmpty ? BuiltInAgents.all.values.map { $0 } : agentDefinitions
+
+        // Filter by allowedAgentTypes if specified
+        let filtered: [AgentDefinition]
+        if let allowed = allowedAgentTypes {
+            filtered = availableAgents.filter { allowed.contains($0.name) }
+        } else {
+            filtered = availableAgents
+        }
+
+        // Build agent descriptions
+        let agentDescriptions = filtered.map { agent in
+            var parts: [String] = ["- **\(agent.name)**"]
+            if let tools = agent.tools, tools != ["*"] {
+                parts.append(": Tools: \(tools.joined(separator: ", "))")
+            } else if let disallowed = agent.disallowedTools, !disallowed.isEmpty {
+                parts.append(": All tools except \(disallowed.joined(separator: ", "))")
+            } else {
+                parts.append(": All tools")
+            }
+            return parts.joined()
+        }.joined(separator: "\n")
+
+        let agentSection = agentDescriptions.isEmpty
+            ? ""
+            : "\n\nAvailable agent types and the tools they have access to:\n\(agentDescriptions)"
+
+        return "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.\(agentSection)"
+    }
+
     public let isReadOnly = false
     public let isConcurrencySafe = true
     public let inputSchema: JSONSchema = {

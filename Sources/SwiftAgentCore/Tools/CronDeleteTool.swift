@@ -9,6 +9,7 @@ public struct CronDeleteTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isKairosCronEnabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["id"] = JSONSchemaProperty(type: "string", description: "Job ID returned by CronCreate")

@@ -8,6 +8,7 @@ public struct TaskUpdateTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isTodoV2Enabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["taskId"] = JSONSchemaProperty(type: "string", description: "The ID of the task to update")

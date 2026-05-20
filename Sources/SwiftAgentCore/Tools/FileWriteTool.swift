@@ -17,7 +17,8 @@ public struct FileWriteTool: Tool {
         ], required: ["file_path", "content"])
     }
 
-    public func isDestructive(_ input: [String: JSONValue]) -> Bool { true }
+    // CC FileWriteTool does NOT override isDestructive (defaults to false).
+    // isDestructive is checked per-input by the permission system separately.
 
     public func call(input: [String: JSONValue], context: ToolUseContext, canUseTool: CanUseToolFn? = nil, parentMessage: Message? = nil, onProgress: ToolCallProgress? = nil) async throws -> ToolResult {
         guard case .string(let path) = input["file_path"],
@@ -86,7 +87,7 @@ public struct FileWriteTool: Tool {
         return "Writing file"
     }
 
-    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> String {
+    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> Any {
         if case .string(let path) = input["file_path"] ?? input["path"] {
             return "\(path): new content"
         }

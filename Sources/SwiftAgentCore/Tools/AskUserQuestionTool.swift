@@ -4,9 +4,12 @@ import Foundation
 /// Matches Claude Code's AskUserQuestionTool.
 public struct AskUserQuestionTool: Tool {
     public let name = "AskUserQuestion"
-    public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Prompt the user with one or more multiple-choice questions" }
+    public var searchHint: String? { "prompt the user with a multiple-choice question" }
+    public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Ask the user a multiple-choice question" }
     public let isReadOnly = true
     public let isConcurrencySafe = true
+    public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { !FeatureFlags.isChannelsActive() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         var questionSchema = JSONSchema(type: "object", properties: [:])

@@ -9,6 +9,7 @@ public struct ExitWorktreeTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isWorktreeModeEnabled() }
 
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])

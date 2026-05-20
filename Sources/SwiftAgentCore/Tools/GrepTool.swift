@@ -72,7 +72,7 @@ public struct GrepTool: Tool {
         "Search"
     }
 
-    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> String {
+    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> Any {
         guard case .string(let pattern) = input["pattern"] else { return "" }
         if case .string(let path) = input["path"] {
             return "\(pattern) in \(path)"

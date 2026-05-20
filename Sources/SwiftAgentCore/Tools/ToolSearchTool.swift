@@ -7,10 +7,11 @@ public struct ToolSearchTool: Tool {
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Search for available tools by name or description" }
     public let isReadOnly = true
     public let isConcurrencySafe = true
+    public func isEnabled() -> Bool { FeatureFlags.isToolSearchEnabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["query"] = JSONSchemaProperty(type: "string", description: "Search keywords")
-        schema.properties?["maxResults"] = JSONSchemaProperty(type: "number", description: "Maximum results to return (default: 5)")
+        schema.properties?["max_results"] = JSONSchemaProperty(type: "number", description: "Maximum results to return (default: 5)")
         schema.required = ["query"]
         return schema
     }()
@@ -27,7 +28,8 @@ public struct ToolSearchTool: Tool {
         }
 
         let maxResults: Int
-        if let m = input["maxResults"], case .number(let n) = m { maxResults = Int(n) }
+        if let m = input["max_results"], case .number(let n) = m { maxResults = Int(n) }
+        else if let m = input["maxResults"], case .number(let n) = m { maxResults = Int(n) }
         else { maxResults = 5 }
 
         let allTools: [any Tool]

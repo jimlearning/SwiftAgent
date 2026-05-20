@@ -9,6 +9,7 @@ public struct TaskCreateTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isTodoV2Enabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["subject"] = JSONSchemaProperty(type: "string", description: "A brief title for the task")

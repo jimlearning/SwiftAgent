@@ -11,6 +11,9 @@ public struct WebSearchTool: Tool {
     public let isReadOnly = true
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
+    /// CC: WebSearchTool.isEnabled() checks API provider compatibility.
+    /// SA: always enabled (provider check done at API call time).
+    public func isEnabled() -> Bool { true }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["query"] = JSONSchemaProperty(type: "string", description: "The search query to use")

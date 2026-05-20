@@ -6,10 +6,17 @@ import Foundation
 /// Matches Claude Code's TaskOutputTool.
 public struct TaskOutputTool: Tool {
     public let name = "TaskOutput"
+    public var aliases: [String] { ["AgentOutputTool", "BashOutputTool"] }
     public var searchHint: String? { "read output/logs from a background task" }
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Retrieve output from a running or completed background task" }
     public let isReadOnly = true
     public let isConcurrencySafe = true
+    public var shouldDefer: Bool { true }
+    /// CC: isEnabled returns true for external builds (not ant-internal).
+    /// SA mirrors this — TaskOutputTool is always enabled externally.
+    public func isEnabled() -> Bool {
+        ProcessInfo.processInfo.environment["USER_TYPE"] != "ant"
+    }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["taskId"] = JSONSchemaProperty(type: "string", description: "The task ID to get output from")

@@ -9,6 +9,7 @@ public struct SendMessageTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isAgentSwarmsEnabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["to"] = JSONSchemaProperty(type: "string", description: "Recipient: teammate name, or \"*\" for broadcast to all teammates")

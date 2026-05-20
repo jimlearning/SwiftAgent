@@ -37,5 +37,7 @@ public struct RemoteTriggerTool: Tool {
         "Triggering remote action"
     }
 
-    public func isDestructive(_ input: [String: JSONValue]) -> Bool { true }
+    public func isEnabled() -> Bool {
+        ProcessInfo.processInfo.environment["USER_TYPE"] == "ant"
+    }
 }

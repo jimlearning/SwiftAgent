@@ -19,8 +19,6 @@ public struct FileEditTool: Tool {
         ], required: ["file_path", "old_string", "new_string"])
     }
 
-    public func isDestructive(_ input: [String: JSONValue]) -> Bool { true }
-
     public func call(input: [String: JSONValue], context: ToolUseContext, canUseTool: CanUseToolFn? = nil, parentMessage: Message? = nil, onProgress: ToolCallProgress? = nil) async throws -> ToolResult {
         guard case .string(let path) = input["file_path"],
               case .string(let old) = input["old_string"],
@@ -136,7 +134,7 @@ public struct FileEditTool: Tool {
         return "Editing file"
     }
 
-    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> String {
+    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> Any {
         if case .string(let path) = input["file_path"] ?? input["path"],
            case .string(let new) = input["new_string"] {
             return "\(path): \(new.prefix(80))"

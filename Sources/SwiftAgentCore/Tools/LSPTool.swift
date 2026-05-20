@@ -7,6 +7,7 @@ import Foundation
 public struct LSPTool: Tool {
     public let name = "LSP"
     public var searchHint: String? { "code intelligence (definitions, references, symbols, hover)" }
+    public func isEnabled() -> Bool { FeatureFlags.isLSPEnabled() }
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
         """
         Interact with Language Server Protocol (LSP) servers to get code intelligence features.
@@ -29,6 +30,9 @@ public struct LSPTool: Tool {
     public let isReadOnly = true
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
+    public var maxResultSizeChars: Int { 100_000 }
+    /// CC: LSPTool is `isLsp` — true (flags as LSP tool type).
+    public var isLsp: Bool { true }
 
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])

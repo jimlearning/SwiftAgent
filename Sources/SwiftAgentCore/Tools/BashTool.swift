@@ -40,12 +40,17 @@ public struct BashTool: Tool {
     public var isConcurrencySafe: Bool { false }
 
     /// Claude Code default for Bash tool result persistence threshold.
-    public var maxResultSizeChars: Int { 500_000 }
+    /// CC: BashTool.ts sets maxResultSizeChars = 30_000
+    public var maxResultSizeChars: Int { 30_000 }
 
     // MARK: - Input Schema
 
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
+            "draftCommand": JSONSchemaProperty(
+                type: "string",
+                description: "The command to execute (draft — will be shown in UI before execution)"
+            ),
             "command": JSONSchemaProperty(
                 type: "string",
                 description: "The command to execute"
@@ -89,7 +94,55 @@ public struct BashTool: Tool {
                     mode and run commands without sandboxing.
                     """
             ),
+            "isSilent": JSONSchemaProperty(
+                type: "boolean",
+                description: "Set to true to suppress stdout from the user-facing output."
+            ),
         ], required: ["command"])
+    }
+
+    // MARK: - isReadOnly (input-dependent)
+
+    /// CC: BashTool.isReadOnly(input) delegates to checkReadOnlyConstraints.
+    /// SA: simplified check for common read-only patterns.
+    public func isReadOnly(_ input: [String: JSONValue]) -> Bool {
+        guard case .string(let cmd) = input["command"] ?? input["draftCommand"] else { return false }
+        let trimmed = cmd.trimmingCharacters(in: .whitespaces)
+        // Read-only commands: display, query, inspect operations
+        let readOnlyPrefixes = [
+            "ls ", "cat ", "head ", "tail ", "find ", "grep ", "rg ",
+            "git status", "git log", "git diff", "git show",
+            "which ", "where ", "whoami", "hostname", "uname",
+            "echo ", "pwd", "env", "printenv",
+            "ps ", "top ", "htop", "df ", "du ", "free",
+            "wc ", "stat ", "file ", "md5 ", "sha", "cksum",
+            "date", "uptime", "id", "groups",
+        ]
+        let readOnlyExact: Set<String> = ["pwd", "whoami", "hostname", "uname", "date", "uptime", "id", "groups", "env", "printenv"]
+        let lower = trimmed.lowercased()
+        if readOnlyExact.contains(lower) { return true }
+        return readOnlyPrefixes.contains { lower.hasPrefix($0) }
+    }
+
+    // MARK: - isConcurrencySafe (input-dependent)
+
+    /// Returns false when the command is a known state-mutating operation.
+    /// CC: BashTool.isConcurrencySafe is input-dependent.
+    public func isConcurrencySafe(_ input: [String: JSONValue]) -> Bool {
+        guard case .string(let cmd) = input["command"] ?? input["draftCommand"] else { return false }
+        let trimmed = cmd.trimmingCharacters(in: .whitespaces).lowercased()
+        // Non-concurrency-safe patterns: write, delete, install, and git mutations
+        let unsafePrefixes = [
+            "rm ", "mv ", "cp ", "mkdir", "touch ", "dd ",
+            "git commit", "git push", "git merge", "git rebase", "git checkout",
+            "npm install", "pip install", "brew install", "apt ",
+            "chmod", "chown", "kill ", "pkill",
+            ">", ">>", "tee ",
+        ]
+        if unsafePrefixes.contains(where: { trimmed.hasPrefix($0) || trimmed.contains($0) }) {
+            return false
+        }
+        return true
     }
 
     // MARK: - isDestructive (input-dependent)
@@ -157,7 +210,7 @@ public struct BashTool: Tool {
 
     /// Returns the raw command string for auto-mode security classifier input.
     /// Matches Claude Code's `toAutoClassifierInput`.
-    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> String {
+    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> Any {
         guard case .string(let cmd) = input["command"] else { return "" }
         return cmd
     }

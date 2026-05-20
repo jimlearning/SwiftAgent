@@ -3,10 +3,10 @@ import Foundation
 /// Reads a specific MCP resource by URI.
 /// Matches Claude Code's ReadMcpResourceTool.
 public struct ReadMcpResourceTool: Tool {
-    public let name = "ReadMcpResource"
+    public let name = "ReadMcpResourceTool"
     public var searchHint: String? { "read a specific MCP resource by URI" }
     public let isMcp = true
-    public let mcpInfo: MCPToolInfo? = MCPToolInfo(serverName: "", toolName: "ReadMcpResource")
+    public let mcpInfo: MCPToolInfo? = MCPToolInfo(serverName: "", toolName: "ReadMcpResourceTool")
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Read a specific MCP resource by URI" }
     public let isReadOnly = true
     public let isConcurrencySafe = true

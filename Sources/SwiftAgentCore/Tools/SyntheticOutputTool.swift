@@ -4,7 +4,7 @@ import Foundation
 /// Mirrors Claude Code's SyntheticOutputTool.
 public struct SyntheticOutputTool: Tool {
     public init() {}
-    public let name = "SyntheticOutput"
+    public let name = "StructuredOutput"
     public var searchHint: String? { "return the final response as structured JSON" }
     public let isReadOnly = true
     public let isConcurrencySafe = true

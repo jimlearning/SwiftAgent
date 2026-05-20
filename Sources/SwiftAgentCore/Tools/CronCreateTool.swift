@@ -9,6 +9,7 @@ public struct CronCreateTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isKairosCronEnabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["cron"] = JSONSchemaProperty(type: "string", description: "Standard 5-field cron expression in local time: \"M H DoM Mon DoW\" (e.g., \"*/5 * * * *\" = every 5 minutes)")

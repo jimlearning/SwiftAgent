@@ -9,6 +9,7 @@ public struct TeamDeleteTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isAgentSwarmsEnabled() }
 
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
         "Removes a teammate agent and cleans up its resources."

@@ -1,12 +1,22 @@
 import Foundation
 
 /// Suspends execution for a specified duration.
-/// Matches Claude Code's SleepTool.
+/// Matches Claude Code's SleepTool. CC gate: feature(PROACTIVE) || feature(KAIROS).
 public struct SleepTool: Tool {
     public let name = "Sleep"
+    public var searchHint: String? { "pause execution for a specified duration" }
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Pause execution for a specified duration" }
     public let isReadOnly = false
     public let isConcurrencySafe = false
+    public var shouldDefer: Bool { true }
+    /// CC: SleepTool is only compiled in when feature(PROACTIVE) || feature(KAIROS).
+    /// SA: gated by CLAUDE_CODE_PROACTIVE env or USER_TYPE=ant.
+    public func isEnabled() -> Bool {
+        if ProcessInfo.processInfo.environment["USER_TYPE"] == "ant" { return true }
+        let v = ProcessInfo.processInfo.environment["CLAUDE_CODE_PROACTIVE"] ?? ""
+        let l = v.lowercased()
+        return l == "1" || l == "true" || l == "yes" || l == "on"
+    }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["duration"] = JSONSchemaProperty(type: "number", description: "Duration in seconds to sleep")

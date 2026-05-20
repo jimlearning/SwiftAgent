@@ -9,6 +9,7 @@ public struct EnterPlanModeTool: Tool {
     public let isReadOnly = true
     public let isConcurrencySafe = true
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { !FeatureFlags.isChannelsActive() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["description"] = JSONSchemaProperty(type: "string", description: "Brief description of the plan")

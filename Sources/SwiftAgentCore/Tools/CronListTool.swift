@@ -7,8 +7,10 @@ public struct CronListTool: Tool {
     public var searchHint: String? { "list active cron jobs" }
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "List all active scheduled cron jobs" }
     public let isReadOnly = true
-    public let isConcurrencySafe = false
+    /// CC: CronListTool.isConcurrencySafe() returns true (read-only listing).
+    public var isConcurrencySafe: Bool { true }
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isKairosCronEnabled() }
     public let inputSchema = JSONSchema(type: "object", properties: [:])
 
     private let cronStore: CronStore

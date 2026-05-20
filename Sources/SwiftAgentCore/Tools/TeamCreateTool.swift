@@ -9,6 +9,7 @@ public struct TeamCreateTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public var shouldDefer: Bool { true }
+    public func isEnabled() -> Bool { FeatureFlags.isAgentSwarmsEnabled() }
 
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
         "Creates a new teammate agent for collaborative multi-agent work."

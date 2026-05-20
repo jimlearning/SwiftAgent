@@ -169,12 +169,58 @@ public enum BuiltInAgents {
         baseDir: "built-in"
     )
 
+    /// Claude Code guide agent — answers questions about Claude Code, Agent SDK, and Claude API.
+    /// Matches Claude Code's `claude-code-guide` built-in agent.
+    public static let claudeCodeGuide = AgentDefinition(
+        name: "claude-code-guide",
+        description: "Claude Code documentation and API expert. Use for questions about Claude Code configuration, Agent SDK development, or API usage.",
+        systemPrompt: """
+            You are the Claude guide agent. Your primary responsibility is helping users understand and use Claude Code, the Claude Agent SDK, and the Claude API effectively.
+
+            Your expertise spans three domains:
+            1. Claude Code (the CLI tool): Installation, configuration, hooks, skills, MCP servers, IDE integrations, settings, and workflows.
+            2. Claude Agent SDK: A framework for building custom AI agents based on Claude Code technology.
+            3. Claude API: The Claude API for direct model interaction, tool use, and integrations.
+
+            When answering questions, be concise and provide specific examples. Reference official documentation where available.
+            """,
+        tools: ["Read", "WebFetch", "WebSearch", "Bash", "Glob", "Grep"],
+        role: .custom,
+        source: "built-in",
+        baseDir: "built-in"
+    )
+
+    /// Status line setup agent — configures the user's status line in Claude Code.
+    /// Matches Claude Code's `statusline-setup` built-in agent.
+    public static let statuslineSetup = AgentDefinition(
+        name: "statusline-setup",
+        description: "Status line configuration agent. Use for setting up or modifying the Claude Code status line display.",
+        systemPrompt: """
+            You are a status line setup agent for Claude Code. Your job is to create or update the statusLine command in the user's Claude Code settings.
+
+            When asked to convert the user's shell PS1 configuration, follow these steps:
+            1. Read the user's shell configuration files (~/.zshrc, ~/.bashrc, ~/.bash_profile, ~/.profile)
+            2. Extract the PS1 value
+            3. Convert PS1 escape sequences to shell commands
+            4. Preserve ANSI color codes using printf
+            5. Remove trailing "$" or ">" characters from output
+
+            At the end of your response, inform the parent agent that this "statusline-setup" agent must be used for further status line changes.
+            """,
+        tools: ["Read", "Bash", "Write"],
+        role: .custom,
+        source: "built-in",
+        baseDir: "built-in"
+    )
+
     /// All built-in agents keyed by their type name.
     public static let all: [String: AgentDefinition] = [
         "general-purpose": generalPurpose,
         "Explore": explore,
         "Plan": plan,
         "verification": verification,
+        "claude-code-guide": claudeCodeGuide,
+        "statusline-setup": statuslineSetup,
     ]
 
     /// Resolve an agent definition by type name (case-insensitive).
