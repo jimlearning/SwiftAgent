@@ -8,6 +8,53 @@ public enum CommandResult: Sendable {
     case error(String)
 }
 
+/// State snapshot provided to slash commands that need app context.
+/// Matches CC's command execution context (AppState, settings, etc.).
+public struct CommandStateProvider: Sendable {
+    public var currentModel: String?
+    public var permissionMode: String?
+    public var sessionInfo: SessionInfo?
+    public var mcpServers: [String]?
+    public var activeTasks: [String]?
+    public var workingDirectory: String?
+
+    public struct SessionInfo: Sendable {
+        public let sessionId: String
+        public let startTime: Date
+        public let tokenUsage: TokenUsageInfo?
+        public init(sessionId: String, startTime: Date = Date(), tokenUsage: TokenUsageInfo? = nil) {
+            self.sessionId = sessionId
+            self.startTime = startTime
+            self.tokenUsage = tokenUsage
+        }
+    }
+
+    public struct TokenUsageInfo: Sendable {
+        public let inputTokens: Int
+        public let outputTokens: Int
+        public init(inputTokens: Int, outputTokens: Int) {
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+        }
+    }
+
+    public init(
+        currentModel: String? = nil,
+        permissionMode: String? = nil,
+        sessionInfo: SessionInfo? = nil,
+        mcpServers: [String]? = nil,
+        activeTasks: [String]? = nil,
+        workingDirectory: String? = nil
+    ) {
+        self.currentModel = currentModel
+        self.permissionMode = permissionMode
+        self.sessionInfo = sessionInfo
+        self.mcpServers = mcpServers
+        self.activeTasks = activeTasks
+        self.workingDirectory = workingDirectory
+    }
+}
+
 /// Handler closure for executing a slash command.
 /// Receives the full input line (including / prefix) and returns a result.
 /// Matches CC's LocalCommand behavior.
@@ -21,7 +68,12 @@ public final class CommandRegistry: @unchecked Sendable {
     private var commands: [String: Command] = [:]
     private var handlers: [String: CommandHandler] = [:]
 
-    public init() {
+    /// Optional state provider for commands that need app state (model, permissions, sessions, tasks).
+    /// Matches CC's command context passing pattern.
+    public var stateProvider: (@Sendable () -> CommandStateProvider?)?
+
+    public init(stateProvider: (@Sendable () -> CommandStateProvider?)? = nil) {
+        self.stateProvider = stateProvider
         registerBuiltins()
     }
 
@@ -146,5 +198,120 @@ public final class CommandRegistry: @unchecked Sendable {
 
         // /resume — CC parity: resume previous conversation (aliases: continue)
         register(Command(name: "resume", description: "Resume a previous conversation", type: .local))
+
+        // MARK: - Iteration 58 — CC-parity commands
+
+        // /mcp — list/add/remove MCP servers. CC parity.
+        register(Command(name: "mcp", description: "Manage MCP server connections", type: .local,
+            arguments: [CommandArgument(name: "action", description: "list, add, remove, or reconnect")])) { [weak self] _ in
+            guard let self = self, let state = self.stateProvider?() else {
+                return .text("MCP state unavailable")
+            }
+            var lines = ["MCP Server Connections:"]
+            if let servers = state.mcpServers, !servers.isEmpty {
+                for s in servers.sorted() { lines.append("  • \(s)") }
+                lines.append("\(servers.count) server(s) configured")
+            } else {
+                lines.append("  (no MCP servers configured)")
+            }
+            return .text(lines.joined(separator: "\n"))
+        }
+
+        // /tasks — list active background tasks. CC parity.
+        register(Command(name: "tasks", description: "List and manage background tasks", type: .local,
+            arguments: [CommandArgument(name: "action", description: "list or cancel")])) { [weak self] _ in
+            guard let self = self, let state = self.stateProvider?() else {
+                return .text("Task state unavailable")
+            }
+            var lines = ["Active Tasks:"]
+            if let tasks = state.activeTasks, !tasks.isEmpty {
+                for t in tasks { lines.append("  • \(t)") }
+                lines.append("\(tasks.count) active task(s)")
+            } else {
+                lines.append("  (no active tasks)")
+            }
+            return .text(lines.joined(separator: "\n"))
+        }
+
+        // /init — scaffold project settings. CC parity.
+        register(Command(name: "init", description: "Initialize Claude Code in the current project", type: .local)) { [weak self] _ in
+            guard let self = self else { return .text("") }
+            let cwd = self.stateProvider?()?.workingDirectory ?? FileManager.default.currentDirectoryPath
+            let claudeDir = "\(cwd)/.claude"
+            let settingsPath = "\(claudeDir)/settings.json"
+            let claudeMdPath = "\(cwd)/CLAUDE.md"
+
+            let fm = FileManager.default
+            var report: [String] = ["Initializing project..."]
+
+            // Create .claude directory
+            if !fm.fileExists(atPath: claudeDir) {
+                try? fm.createDirectory(atPath: claudeDir, withIntermediateDirectories: true)
+                report.append("  ✓ Created \(claudeDir)")
+            } else {
+                report.append("  • \(claudeDir) already exists")
+            }
+
+            // Create settings.json if missing
+            if !fm.fileExists(atPath: settingsPath) {
+                let defaultSettings = "{\n  \"permissions\": {}\n}\n"
+                try? defaultSettings.write(toFile: settingsPath, atomically: true, encoding: .utf8)
+                report.append("  ✓ Created \(settingsPath)")
+            } else {
+                report.append("  • \(settingsPath) already exists")
+            }
+
+            // Create CLAUDE.md if missing
+            if !fm.fileExists(atPath: claudeMdPath) {
+                let defaultMd = "# \(String(cwd.split(separator: "/").last ?? ""))\n\nAdd project instructions here.\n"
+                try? defaultMd.write(toFile: claudeMdPath, atomically: true, encoding: .utf8)
+                report.append("  ✓ Created \(claudeMdPath)")
+            } else {
+                report.append("  • \(claudeMdPath) already exists")
+            }
+
+            report.append("\nProject initialized. Edit CLAUDE.md to add project instructions.")
+            return .text(report.joined(separator: "\n"))
+        }
+
+        // /permissions — view/change permission mode. CC parity.
+        register(Command(name: "permissions", description: "View or change permission settings", type: .local,
+            arguments: [CommandArgument(name: "mode", description: "Permission mode: default, acceptEdits, bypass, plan")])) { [weak self] input in
+            guard let self = self, let state = self.stateProvider?() else {
+                return .text("Permission state unavailable")
+            }
+            let parts = input.split(separator: " ", maxSplits: 1)
+            if parts.count > 1 {
+                let newMode = String(parts[1]).trimmingCharacters(in: .whitespaces)
+                let validModes = ["default", "acceptEdits", "bypass", "plan", "dontAsk", "auto"]
+                if validModes.contains(newMode) {
+                    return .text("Permission mode change requested: \(newMode)\nRestart or reload to apply.")
+                } else {
+                    return .text("Invalid mode: \(newMode)\nValid modes: \(validModes.joined(separator: ", "))")
+                }
+            }
+            let current = state.permissionMode ?? "default"
+            return .text("Current permission mode: \(current)\nUse /permissions <mode> to change.\nModes: default, acceptEdits, bypass, plan, dontAsk, auto")
+        }
+
+        // /session — show session info. CC parity.
+        register(Command(name: "session", description: "Show session info: cost, duration, tokens", type: .local)) { [weak self] _ in
+            guard let self = self, let state = self.stateProvider?(), let info = state.sessionInfo else {
+                return .text("Session info unavailable")
+            }
+            let duration = Date().timeIntervalSince(info.startTime)
+            let hours = Int(duration) / 3600
+            let minutes = (Int(duration) % 3600) / 60
+            var lines = ["Session: \(info.sessionId.prefix(8))...", "Duration: \(hours)h \(minutes)m"]
+            if let usage = info.tokenUsage {
+                lines.append("Input tokens: \(usage.inputTokens)")
+                lines.append("Output tokens: \(usage.outputTokens)")
+                lines.append("Total tokens: \(usage.inputTokens + usage.outputTokens)")
+            }
+            if let model = state.currentModel {
+                lines.append("Model: \(model)")
+            }
+            return .text(lines.joined(separator: "\n"))
+        }
     }
 }

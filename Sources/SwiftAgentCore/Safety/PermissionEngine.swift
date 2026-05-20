@@ -206,10 +206,14 @@ public struct PermissionEngine: Sendable {
             return PermissionVerdict(decision: .deny, reason: "Operation requires confirmation — blocked in dontAsk mode")
 
         case .auto:
-            // Build classifier input string from the tool
+            // Build classifier input from the tool (CC: returns unknown — string or object)
             let classifierInput: String
             if let tool = tool {
-                classifierInput = tool.toAutoClassifierInput(input)
+                let raw = tool.toAutoClassifierInput(input)
+                if let s = raw as? String { classifierInput = s }
+                else if let obj = raw as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: obj),
+                        let json = String(data: data, encoding: .utf8) { classifierInput = json }
+                else { classifierInput = "" }
             } else if toolName == "Bash", case .string(let cmd) = input["command"] {
                 classifierInput = cmd
             } else if toolName == "Write" || toolName == "Edit" {
