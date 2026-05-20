@@ -82,6 +82,8 @@ public struct QueryEngine: Sendable {
         var fullText = ""
         var completedTurns = conversation.turns
         var totalToolCalls = 0
+        /// CC: hasAttemptedReactiveCompact — prevents infinite reactive compact loops.
+        var hasAttemptedReactiveCompact = false
 
         // Track query chain identity and depth across compactions.
         // Matches CC's queryTracking creation at query.ts line 347-355.
@@ -458,6 +460,26 @@ public struct QueryEngine: Sendable {
                 }
 
             } catch {
+                // Reactive compact for 413/prompt_too_long (CC: isWithheld413 check).
+                // Attempts LLM-based compaction to recover from context overflow.
+                let errorMsg = error.localizedDescription.lowercased()
+                let is413 = errorMsg.contains("413") || errorMsg.contains("prompt_too_long")
+                    || errorMsg.contains("prompt too long") || errorMsg.contains("context length")
+                if is413 && !hasAttemptedReactiveCompact {
+                    let compactor = Compactor(client: client, modelRegistry: registry)
+                    if let compacted = await compactor.tryReactiveCompact(
+                        hasAttempted: hasAttemptedReactiveCompact,
+                        aborted: Task.isCancelled,
+                        messages: messages,
+                        model: model
+                    ) {
+                        messages = compacted.postCompactMessages
+                        hasAttemptedReactiveCompact = true
+                        await state.appendStreamingOutput("\n📦 Reactive compact — \(compacted.preCompactTokenCount) → ~\(compacted.postCompactTokenCount) tokens\n")
+                        continue
+                    }
+                }
+
                 // Dispatch stop failure hooks on API errors (rate limit, prompt-too-long,
                 // auth failure, etc.). Matches CC's executeStopFailureHooks in query.ts.
                 if let hs = hookSystem {

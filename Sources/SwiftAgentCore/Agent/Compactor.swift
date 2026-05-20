@@ -334,7 +334,87 @@ public struct Compactor: Sendable {
         }
     }
 
-    // MARK: - Build Post-Compact Messages
+    // MARK: - Reactive Compact
+
+    /// Result of a reactive compact attempt (triggered by 413/prompt_too_long).
+    /// Matches CC's ReactiveCompactResult.
+    public struct ReactiveCompactResult: Sendable {
+        public let boundaryMarker: SystemMessage
+        public let summaryMessages: [Message]
+        public let postCompactMessages: [Message]
+        public let preCompactTokenCount: Int
+        public let postCompactTokenCount: Int
+    }
+
+    /// Attempt reactive compaction in response to a 413/prompt_too_long error.
+    /// Matches CC's tryReactiveCompact() in query.ts.
+    /// Returns nil if compaction cannot proceed (already attempted, aborted, or failed).
+    public func tryReactiveCompact(
+        hasAttempted: Bool,
+        aborted: Bool,
+        messages: [Message],
+        model: String,
+        suppressFollowUpQuestions: Bool = true
+    ) async -> ReactiveCompactResult? {
+        guard !hasAttempted else { return nil }
+        guard !aborted else { return nil }
+
+        let tokenCount = estimateTokenCount(messages)
+        guard !isAtBlockingLimit(tokenCount: tokenCount, model: model) else { return nil }
+
+        do {
+            let summary = try await streamCompactSummary(
+                messages: messages,
+                customInstructions: nil,
+                model: model
+            )
+
+            let compactMessage = compactUserSummaryMessage(
+                summary,
+                suppressFollowUpQuestions: suppressFollowUpQuestions
+            )
+
+            let metadata = CompactMetadata(
+                trigger: .reactive,
+                preTokens: tokenCount,
+                messagesSummarized: messages.count
+            )
+            let boundaryMarker = SystemMessage(
+                subtype: .compactBoundary(
+                    content: compactMessage,
+                    level: .info,
+                    compactMetadata: metadata,
+                    logicalParentUuid: nil
+                )
+            )
+
+            let summaryMessage = Message(
+                type: .user,
+                content: [.text(compactMessage)],
+                isCompactSummary: true,
+                isVisibleInTranscriptOnly: true
+            )
+
+            let postCompactMessages = buildPostCompactMessages(
+                boundaryMarker: boundaryMarker,
+                summaryMessages: [summaryMessage],
+                attachments: [],
+                hookResults: []
+            )
+
+            let postCount = estimateTokenCount(postCompactMessages)
+
+            return ReactiveCompactResult(
+                boundaryMarker: boundaryMarker,
+                summaryMessages: [summaryMessage],
+                postCompactMessages: postCompactMessages,
+                preCompactTokenCount: tokenCount,
+                postCompactTokenCount: postCount
+            )
+        } catch {
+            return nil
+        }
+    }
 
     /// Assemble post-compact message array.
     /// Matches CC's buildPostCompactMessages().

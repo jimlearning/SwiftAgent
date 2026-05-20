@@ -10,10 +10,15 @@ public enum TaskStatus: String, Codable, Sendable {
 }
 
 /// Type of task — mirrors Claude Code's TaskType.
+/// CC: Task.ts:6-13 — 7 task types.
 public enum TaskType: String, Codable, Sendable {
     case localBash = "local_bash"
     case localAgent = "local_agent"
     case remoteAgent = "remote_agent"
+    case inProcessTeammate = "in_process_teammate"
+    case localWorkflow = "local_workflow"
+    case monitorMcp = "monitor_mcp"
+    case dream = "dream"
 }
 
 /// Represents a tracked background task.

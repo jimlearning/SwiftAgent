@@ -164,11 +164,19 @@ public final class ToolRegistry: @unchecked Sendable {
     }
 
     /// Build ToolDefinition list for API calls.
+    /// Matches CC's toolToAPISchema() pattern: calls tool.prompt() to get
+    /// the LLM-facing description, passing tools and permission context.
     public func toolDefinitions() async -> [ToolDefinition] {
         let toolList = syncGetToolList()
         var defs: [ToolDefinition] = []
+        let permContext = ToolPermissionContext()
         for tool in toolList {
-            let desc = await tool.description(input: [:], options: ToolDescriptionOptions())
+            let desc = await tool.prompt(
+                getToolPermissionContext: { permContext },
+                tools: toolList,
+                agents: [],
+                allowedAgentTypes: nil
+            )
             defs.append(ToolDefinition(name: tool.name, description: desc, inputSchema: tool.inputSchema))
         }
         return defs
@@ -187,13 +195,19 @@ public final class ToolRegistry: @unchecked Sendable {
     public func filterToolsByDenyRules(denyRules: [String]) async -> [ToolDefinition] {
         let toolList = syncGetToolList()
         var defs: [ToolDefinition] = []
+        let permContext = ToolPermissionContext()
         for tool in toolList {
             // Check if tool name matches any deny rule
             let isDenied = denyRules.contains { rule in
                 tool.name == rule || tool.aliases.contains(rule)
             }
             guard !isDenied else { continue }
-            let desc = await tool.description(input: [:], options: ToolDescriptionOptions())
+            let desc = await tool.prompt(
+                getToolPermissionContext: { permContext },
+                tools: toolList,
+                agents: [],
+                allowedAgentTypes: nil
+            )
             defs.append(ToolDefinition(name: tool.name, description: desc, inputSchema: tool.inputSchema))
         }
         return defs
