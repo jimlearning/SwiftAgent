@@ -464,6 +464,7 @@ public struct PreCompactHookInput: Sendable {
 public enum CompactTrigger: String, Codable, Sendable {
     case manual
     case auto
+    case reactive
 }
 
 /// Matches CC's PostCompactHookInput.

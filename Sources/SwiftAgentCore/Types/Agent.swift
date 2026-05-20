@@ -47,8 +47,12 @@ public struct AgentDefinition: Codable, Sendable, Identifiable {
     public let name: String
     /// When-to-use guidance for the model. Matches CC's whenToUse.
     public let description: String
-    /// System prompt (pre-computed string; CC uses getSystemPrompt() function).
+    /// System prompt. Stored pre-computed; getSystemPrompt() matches CC's lazy evaluation API.
     public let systemPrompt: String
+
+    /// CC API parity: CC uses getSystemPrompt(): string — a lazy evaluation function.
+    /// SA stores a pre-computed string and returns it via this method.
+    public func getSystemPrompt() -> String { systemPrompt }
     /// Tools available to this agent. nil or ["*"] means all tools.
     /// Matches CC's tools field.
     public let tools: [String]?
@@ -74,13 +78,25 @@ public struct AgentDefinition: Codable, Sendable, Identifiable {
     /// Maximum number of agentic turns. Matches CC's maxTurns.
     public let maxTurns: Int?
     /// Whether this agent always runs as a background task. Matches CC's background.
-    public let background: Bool
+    public let background: Bool?
     /// Permission mode override for the agent. Matches CC's permissionMode.
     public let permissionMode: PermissionMode?
     /// Prepended to the first user turn. Matches CC's initialPrompt.
     public let initialPrompt: String?
     /// Effort level override for this agent. Matches CC's effort field.
     public let effort: EffortValue?
+    /// Agent-specific MCP server configurations. Matches CC's mcpServers.
+    public let mcpServers: [AgentMcpServerSpec]?
+    /// Session-scoped hooks registered when agent starts. Matches CC's hooks.
+    public let hooks: HooksSettings?
+    /// Persistent memory scope for this agent. Matches CC's memory.
+    public let memory: AgentMemoryScope?
+    /// Sandbox isolation mode. Matches CC's isolation.
+    public let isolation: String?
+    /// Re-injected per-turn system reminder. Matches CC's criticalSystemReminder_EXPERIMENTAL.
+    public let criticalSystemReminder: String?
+    /// MCP servers required for this agent to run. Matches CC's requiredMcpServers.
+    public let requiredMcpServers: [String]?
 
     public init(
         id: String = UUID().uuidString,
@@ -97,10 +113,16 @@ public struct AgentDefinition: Codable, Sendable, Identifiable {
         skills: [String]? = nil,
         color: String? = nil,
         maxTurns: Int? = nil,
-        background: Bool = false,
+        background: Bool? = nil,
         permissionMode: PermissionMode? = nil,
         initialPrompt: String? = nil,
-        effort: EffortValue? = nil
+        effort: EffortValue? = nil,
+        mcpServers: [AgentMcpServerSpec]? = nil,
+        hooks: HooksSettings? = nil,
+        memory: AgentMemoryScope? = nil,
+        isolation: String? = nil,
+        criticalSystemReminder: String? = nil,
+        requiredMcpServers: [String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -120,6 +142,12 @@ public struct AgentDefinition: Codable, Sendable, Identifiable {
         self.permissionMode = permissionMode
         self.initialPrompt = initialPrompt
         self.effort = effort
+        self.mcpServers = mcpServers
+        self.hooks = hooks
+        self.memory = memory
+        self.isolation = isolation
+        self.criticalSystemReminder = criticalSystemReminder
+        self.requiredMcpServers = requiredMcpServers
     }
 
     /// Returns effective tool list: all tools minus disallowed tools.
@@ -149,6 +177,56 @@ public enum AgentRole: String, Codable, Sendable {
     case plan = "Plan"
     case verification = "verification"
     case custom
+}
+
+/// Agent memory scope matching CC's AgentMemoryScope from tools/AgentTool/agentMemory.ts.
+/// CC: export type AgentMemoryScope = 'user' | 'project' | 'local'
+public enum AgentMemoryScope: String, Codable, Sendable {
+    case user
+    case project
+    case local
+}
+
+/// Agent-specific MCP server spec matching CC's AgentMcpServerSpec from loadAgentsDir.ts.
+public struct AgentMcpServerSpec: Codable, Sendable {
+    public let name: String
+    public let command: String?
+    public let args: [String]?
+    public let env: [String: String]?
+    public let url: String?
+    public let headers: [String: String]?
+    public let timeout: Int?
+    public let trust: Bool?
+
+    public init(
+        name: String,
+        command: String? = nil,
+        args: [String]? = nil,
+        env: [String: String]? = nil,
+        url: String? = nil,
+        headers: [String: String]? = nil,
+        timeout: Int? = nil,
+        trust: Bool? = nil
+    ) {
+        self.name = name
+        self.command = command
+        self.args = args
+        self.env = env
+        self.url = url
+        self.headers = headers
+        self.timeout = timeout
+        self.trust = trust
+    }
+}
+
+/// Hooks settings type alias matching CC's HooksSettings from schemas/hooks.ts.
+/// CC: Partial<Record<HookEvent, HookMatcher[]>>
+public struct HooksSettings: Codable, Sendable {
+    public let events: [String: [String]]  // HookEvent name → HookMatcher names
+
+    public init(events: [String: [String]] = [:]) {
+        self.events = events
+    }
 }
 
 public struct AgentContext: Sendable {

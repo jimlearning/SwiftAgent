@@ -203,9 +203,12 @@ public enum CommandExecutionContext: String, Codable, Sendable {
 public struct LocalCommand: Sendable {
     public let type = "local"
     public let supportsNonInteractive: Bool
+    /// Lazy-load the command implementation module. CC: load: () => Promise<LocalCommandModule>.
+    public let load: (@Sendable () async -> Any)?
 
-    public init(supportsNonInteractive: Bool = true) {
+    public init(supportsNonInteractive: Bool = true, load: (@Sendable () async -> Any)? = nil) {
         self.supportsNonInteractive = supportsNonInteractive
+        self.load = load
     }
 }
 
@@ -222,8 +225,12 @@ public enum LocalCommandResult: Sendable {
 /// Matches CC's LocalJSXCommand (type: 'local-jsx').
 public struct LocalJSXCommand: Sendable {
     public let type = "local-jsx"
+    /// Lazy-load the JSX command implementation module. CC: load: () => Promise<LocalJSXCommandModule>.
+    public let load: (@Sendable () async -> Any)?
 
-    public init() {}
+    public init(load: (@Sendable () async -> Any)? = nil) {
+        self.load = load
+    }
 }
 
 // MARK: - Command (Discriminated Union)

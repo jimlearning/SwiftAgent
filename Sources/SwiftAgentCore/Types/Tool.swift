@@ -135,7 +135,8 @@ public protocol Tool: Sendable {
     func userFacingName(_ input: [String: JSONValue]) -> String
 
     /// Compact representation for auto-mode security classifier.
-    func toAutoClassifierInput(_ input: [String: JSONValue]) -> String
+    /// CC: returns unknown (string or object). Defaults to "" (skip in classifier).
+    func toAutoClassifierInput(_ input: [String: JSONValue]) -> Any
 
     /// Map tool result to API ToolResultBlockParam format.
     func mapToolResultToToolResultBlockParam(_ content: ToolResult, toolUseID: String) -> ToolResultBlockParam
@@ -247,7 +248,7 @@ extension Tool {
         agents: [any Sendable],
         allowedAgentTypes: [String]?
     ) async -> String {
-        ""
+        await description(input: [:], options: ToolDescriptionOptions())
     }
 
     public func checkPermissions(input: [String: JSONValue], context: ToolUseContext) async -> PermissionResult {
@@ -273,7 +274,7 @@ extension Tool {
         name
     }
 
-    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> String {
+    public func toAutoClassifierInput(_ input: [String: JSONValue]) -> Any {
         ""
     }
 
@@ -638,6 +639,80 @@ public struct ToolUseContext: Sendable {
     /// Resolved shell executable path (e.g. /bin/zsh, /bin/bash). Matches CC's options.shell.
     public var shell: String?
 
+    // MARK: - Notification & UI callbacks (CC: ToolUseContext closures)
+
+    /// Push a user-facing notification. CC: addNotification.
+    public var addNotification: (@Sendable (String, String) -> Void)?
+    /// Append a system message to the conversation. CC: appendSystemMessage.
+    public var appendSystemMessage: (@Sendable (String) -> Void)?
+    /// Send an OS-level desktop notification. CC: sendOSNotification.
+    public var sendOSNotification: (@Sendable (String, String) -> Void)?
+    /// Set the response length for streaming. CC: setResponseLength (updater pattern).
+    public var setResponseLength: (@Sendable (@Sendable (Int) -> Int) -> Void)?
+    /// Push API metrics entry. CC: pushApiMetricsEntry(ttftMs: number).
+    public var pushApiMetricsEntry: (@Sendable (Int) -> Void)?
+    /// Track in-progress tool use IDs. CC: setInProgressToolUseIDs (updater pattern).
+    public var setInProgressToolUseIDs: (@Sendable (@Sendable (Set<String>) -> Set<String>) -> Void)?
+    /// Open a message selector dialog. CC: openMessageSelector.
+    public var openMessageSelector: (@Sendable () -> Void)?
+    /// Update file history state. CC: updateFileHistoryState (updater pattern).
+    public var updateFileHistoryState: (@Sendable (@Sendable (Any) -> Any) -> Void)?
+    /// Set the conversation ID for persistence. CC: setConversationId.
+    public var setConversationId: (@Sendable (String) -> Void)?
+    /// Handle tool input elicitation. CC: handleElicitation(serverName, params, signal) → ElicitResult.
+    public var handleElicitation: (@Sendable (String, Any, @Sendable () -> Bool) async -> Any)?
+    /// Set SDK status for the frontend. CC: setSDKStatus.
+    public var setSDKStatus: (@Sendable (String) -> Void)?
+    /// Rendered system prompt (read-only, set by caller). CC: renderedSystemPrompt.
+    public var renderedSystemPrompt: String?
+    /// Whether user has modified content since last rendering. CC: userModified.
+    public var userModified: Bool
+    /// Nested memory attachment trigger paths. CC: nestedMemoryAttachmentTriggers. Uses Set for dedup.
+    public var nestedMemoryAttachmentTriggers: Set<String>?
+    /// Dynamic skill directory trigger paths. CC: dynamicSkillDirTriggers. Uses Set for dedup.
+    public var dynamicSkillDirTriggers: Set<String>?
+    /// Discovered skill names from skill directories. CC: discoveredSkillNames. Uses Set for dedup.
+    public var discoveredSkillNames: Set<String>?
+
+    // MARK: - Missing CC fields (Iteration 56)
+
+    /// Abort controller — triggers cancellation. CC: abortController: AbortController.
+    /// SA keeps abortSignal for checking; abortController triggers the abort.
+    public var abortController: (@Sendable () -> Void)?
+    /// Read app state snapshot. CC: getAppState(): AppState.
+    public var getAppState: (@Sendable () -> Any)?
+    /// Update app state. CC: setAppState(f: (prev: AppState) => AppState): void.
+    public var setAppState: (@Sendable (@Sendable (Any) -> Any) -> Void)?
+    /// Session-scoped setAppState fallback. CC: setAppStateForTasks.
+    public var setAppStateForTasks: (@Sendable (@Sendable (Any) -> Any) -> Void)?
+    /// JSX injection for UI. CC: setToolJSX: SetToolJSXFn (React-specific).
+    public var setToolJSX: (@Sendable (Any) -> Void)?
+    /// CLAUDE.md paths already injected as nested_memory attachments this session.
+    /// Dedup for memoryFilesToAttachments. CC: loadedNestedMemoryPaths: Set<string>.
+    public var loadedNestedMemoryPaths: Set<String>?
+    /// Only wired in interactive (REPL) contexts. CC: setHasInterruptibleToolInProgress.
+    public var setHasInterruptibleToolInProgress: (@Sendable (Bool) -> Void)?
+    /// Set spinner display mode. CC: setStreamMode(mode: SpinnerMode).
+    public var setStreamMode: (@Sendable (String) -> Void)?
+    /// Progress events emitted during compaction. CC: onCompactProgress.
+    public var onCompactProgress: (@Sendable (Any) -> Void)?
+    /// Update git attribution state. CC: updateAttributionState (updater pattern).
+    public var updateAttributionState: (@Sendable (@Sendable (Any) -> Any) -> Void)?
+    /// When true, canUseTool must always be called even when hooks auto-approve.
+    /// Used by speculation for overlay file path rewriting. CC: requireCanUseTool.
+    public var requireCanUseTool: Bool?
+    /// Callback factory for requesting interactive prompts from the user.
+    /// Returns a prompt callback bound to the given source name. CC: requestPrompt.
+    public var requestPrompt: (@Sendable (String, String?) -> (@Sendable (Any) async -> Any)?)?
+    /// Critical system reminder injected into system prompt. CC: criticalSystemReminder_EXPERIMENTAL.
+    public var criticalSystemReminder_EXPERIMENTAL: String?
+    /// When true, preserve toolUseResult on messages even for subagents.
+    /// Used by in-process teammates. CC: preserveToolUseResults.
+    public var preserveToolUseResults: Bool?
+    /// Per-conversation-thread content replacement state for the tool result budget.
+    /// CC: contentReplacementState: ContentReplacementState.
+    public var contentReplacementState: (any Sendable)?
+
     public init(
         workingDirectory: String,
         sessionID: String,
@@ -681,7 +756,39 @@ public struct ToolUseContext: Sendable {
         mainLoopModel: String? = nil,
         querySource: QuerySource? = nil,
         refreshTools: (@Sendable () -> [any Tool])? = nil,
-        permissionPromptHandler: PermissionPromptHandler? = nil
+        permissionPromptHandler: PermissionPromptHandler? = nil,
+        addNotification: (@Sendable (String, String) -> Void)? = nil,
+        appendSystemMessage: (@Sendable (String) -> Void)? = nil,
+        sendOSNotification: (@Sendable (String, String) -> Void)? = nil,
+        setResponseLength: (@Sendable (@Sendable (Int) -> Int) -> Void)? = nil,
+        pushApiMetricsEntry: (@Sendable (Int) -> Void)? = nil,
+        setInProgressToolUseIDs: (@Sendable (@Sendable (Set<String>) -> Set<String>) -> Void)? = nil,
+        openMessageSelector: (@Sendable () -> Void)? = nil,
+        updateFileHistoryState: (@Sendable (@Sendable (Any) -> Any) -> Void)? = nil,
+        setConversationId: (@Sendable (String) -> Void)? = nil,
+        handleElicitation: (@Sendable (String, Any, @Sendable () -> Bool) async -> Any)? = nil,
+        setSDKStatus: (@Sendable (String) -> Void)? = nil,
+        renderedSystemPrompt: String? = nil,
+        userModified: Bool = false,
+        nestedMemoryAttachmentTriggers: Set<String>? = nil,
+        dynamicSkillDirTriggers: Set<String>? = nil,
+        discoveredSkillNames: Set<String>? = nil,
+        // Iteration 56 — new CC-parity fields
+        abortController: (@Sendable () -> Void)? = nil,
+        getAppState: (@Sendable () -> Any)? = nil,
+        setAppState: (@Sendable (@Sendable (Any) -> Any) -> Void)? = nil,
+        setAppStateForTasks: (@Sendable (@Sendable (Any) -> Any) -> Void)? = nil,
+        setToolJSX: (@Sendable (Any) -> Void)? = nil,
+        loadedNestedMemoryPaths: Set<String>? = nil,
+        setHasInterruptibleToolInProgress: (@Sendable (Bool) -> Void)? = nil,
+        setStreamMode: (@Sendable (String) -> Void)? = nil,
+        onCompactProgress: (@Sendable (Any) -> Void)? = nil,
+        updateAttributionState: (@Sendable (@Sendable (Any) -> Any) -> Void)? = nil,
+        requireCanUseTool: Bool? = nil,
+        requestPrompt: (@Sendable (String, String?) -> (@Sendable (Any) async -> Any)?)? = nil,
+        criticalSystemReminder_EXPERIMENTAL: String? = nil,
+        preserveToolUseResults: Bool? = nil,
+        contentReplacementState: (any Sendable)? = nil
     ) {
         self.workingDirectory = workingDirectory
         self.sessionID = sessionID
@@ -726,6 +833,37 @@ public struct ToolUseContext: Sendable {
         self.abortSignal = abortSignal
         self.sandbox = sandbox
         self.shell = shell
+        self.addNotification = addNotification
+        self.appendSystemMessage = appendSystemMessage
+        self.sendOSNotification = sendOSNotification
+        self.setResponseLength = setResponseLength
+        self.pushApiMetricsEntry = pushApiMetricsEntry
+        self.setInProgressToolUseIDs = setInProgressToolUseIDs
+        self.openMessageSelector = openMessageSelector
+        self.updateFileHistoryState = updateFileHistoryState
+        self.setConversationId = setConversationId
+        self.handleElicitation = handleElicitation
+        self.setSDKStatus = setSDKStatus
+        self.renderedSystemPrompt = renderedSystemPrompt
+        self.userModified = userModified
+        self.nestedMemoryAttachmentTriggers = nestedMemoryAttachmentTriggers
+        self.dynamicSkillDirTriggers = dynamicSkillDirTriggers
+        self.discoveredSkillNames = discoveredSkillNames
+        self.abortController = abortController
+        self.getAppState = getAppState
+        self.setAppState = setAppState
+        self.setAppStateForTasks = setAppStateForTasks
+        self.setToolJSX = setToolJSX
+        self.loadedNestedMemoryPaths = loadedNestedMemoryPaths
+        self.setHasInterruptibleToolInProgress = setHasInterruptibleToolInProgress
+        self.setStreamMode = setStreamMode
+        self.onCompactProgress = onCompactProgress
+        self.updateAttributionState = updateAttributionState
+        self.requireCanUseTool = requireCanUseTool
+        self.requestPrompt = requestPrompt
+        self.criticalSystemReminder_EXPERIMENTAL = criticalSystemReminder_EXPERIMENTAL
+        self.preserveToolUseResults = preserveToolUseResults
+        self.contentReplacementState = contentReplacementState
     }
 }
 
