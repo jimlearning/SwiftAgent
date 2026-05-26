@@ -51,7 +51,8 @@ public final class LLMClient: Sendable {
         tools: [ToolDefinition]? = nil,
         thinking: ThinkingConfig? = nil,
         betas: [String]? = nil,
-        enablePromptCaching: Bool = false
+        enablePromptCaching: Bool = false,
+        toolChoice: String? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -65,6 +66,7 @@ public final class LLMClient: Sendable {
                         thinking: thinking,
                         betas: betas,
                         enablePromptCaching: enablePromptCaching,
+                        toolChoice: toolChoice,
                         continuation: continuation
                     )
                     continuation.finish()
@@ -88,7 +90,8 @@ public final class LLMClient: Sendable {
         thinking: ThinkingConfig? = nil,
         betas: [String]? = nil,
         enablePromptCaching: Bool = false,
-        options: RetryOptions? = nil
+        options: RetryOptions? = nil,
+        toolChoice: String? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         let retryOptions = options ?? RetryOptions(
             maxRetries: DEFAULT_MAX_RETRIES,
@@ -113,6 +116,7 @@ public final class LLMClient: Sendable {
                             thinking: thinking,
                             betas: betas,
                             enablePromptCaching: enablePromptCaching,
+                            toolChoice: toolChoice,
                             continuation: continuation
                         )
                         continuation.finish()
@@ -248,6 +252,7 @@ public final class LLMClient: Sendable {
 
         if let tools {
             body["tools"] = tools.map { $0.apiFormatted }
+            body["tool_choice"] = ["type": "auto"]
         }
 
         if let thinking, case .disabled = thinking {
@@ -369,6 +374,7 @@ public final class LLMClient: Sendable {
         thinking: ThinkingConfig?,
         betas: [String]?,
         enablePromptCaching: Bool,
+        toolChoice: String?,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         var request = URLRequest(url: URL(string: "\(baseURL)/v1/messages")!)
@@ -395,9 +401,8 @@ public final class LLMClient: Sendable {
 
         if let tools {
             body["tools"] = tools.map { $0.apiFormatted }
+            body["tool_choice"] = ["type": toolChoice ?? "auto"]
         }
-
-        // Thinking config
         let hasThinking: Bool
         if let thinking, case .disabled = thinking {
             hasThinking = false
@@ -672,6 +677,40 @@ public enum LLMError: Error {
     case noData
     /// Non-streaming API request failed.
     case nonStreamingError(status: Int, body: String? = nil)
+
+    /// Extract the HTTP status code from error cases that carry one.
+    public var statusCode: Int? {
+        switch self {
+        case .httpError(let status, _): return status
+        case .nonStreamingError(let status, _): return status
+        default: return nil
+        }
+    }
+
+    /// Human-readable diagnostic string for logging and debugging.
+    public var diagnosticDescription: String {
+        switch self {
+        case .httpError(let status, let body):
+            var desc = "HTTP \(status)"
+            if let body, !body.isEmpty { desc += ": \(body.prefix(500))" }
+            return desc
+        case .unauthorized: return "Unauthorized (401)"
+        case .rateLimited(let retryAfter):
+            var desc = "Rate limited (429)"
+            if let s = retryAfter { desc += ", retry after \(s)s" }
+            return desc
+        case .overloaded(let body):
+            var desc = "Overloaded (529)"
+            if let body, !body.isEmpty { desc += ": \(body.prefix(500))" }
+            return desc
+        case .parseError(let msg): return "Parse error: \(msg)"
+        case .noData: return "No data received"
+        case .nonStreamingError(let status, let body):
+            var desc = "Non-streaming HTTP \(status)"
+            if let body, !body.isEmpty { desc += ": \(body.prefix(500))" }
+            return desc
+        }
+    }
 
     /// Extract the retry-after header value in seconds, if any.
     public var retryAfterSeconds: Int? {
