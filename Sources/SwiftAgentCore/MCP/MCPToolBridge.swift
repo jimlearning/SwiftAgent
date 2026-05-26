@@ -45,14 +45,14 @@ public struct MCPToolBridge: Sendable {
             }
             transport = SSETransport(url: url, headers: config.headers ?? [:])
         case .ws, .wsIde:
-            guard let url = config.url.flatMap({ URL(string: $0) }) else {
+            guard config.url.flatMap({ URL(string: $0) }) != nil else {
                 throw MCPError.invalidResponse
             }
             throw MCPError.transportNotConnected
         case .sdk:
             throw MCPError.transportNotConnected
         case .claudeaiProxy:
-            guard let url = config.url.flatMap({ URL(string: $0) }) else {
+            guard config.url.flatMap({ URL(string: $0) }) != nil else {
                 throw MCPError.invalidResponse
             }
             throw MCPError.transportNotConnected

@@ -539,7 +539,7 @@ public final class LLMClient: Sendable {
         }
 
         // Try matching as a canonical first-party ID
-        for (key, config) in ALL_MODEL_CONFIGS {
+        for (_, config) in ALL_MODEL_CONFIGS {
             if config.firstParty == model {
                 switch provider {
                 case .firstParty: return config.firstParty
@@ -593,13 +593,13 @@ extension Message {
             case .toolResult(let toolID, let content, let isError):
                 let contentValue: Any = content.apiFormatted
                 return ["type": "tool_result", "tool_use_id": toolID, "content": contentValue, "is_error": isError] as [String: Any]
-            case .image(let type, let mediaType, let data, _):
+            case .image(_, let mediaType, let data, _):
                 return ["type": "image", "source": ["type": "base64", "media_type": mediaType, "data": data]] as [String: Any]
             case .thinking(let text, _):
                 return ["type": "thinking", "thinking": text] as [String: Any]
             case .redactedThinking(let text):
                 return ["type": "redacted_thinking", "data": text] as [String: Any]
-            case .document(let type, let mediaType, let data):
+            case .document(_, let mediaType, let data):
                 return ["type": "document", "source": ["type": "base64", "media_type": mediaType, "data": data]] as [String: Any]
             case .toolReference(let name, let description):
                 return ["type": "tool_reference", "name": name, "description": description] as [String: Any]
@@ -613,7 +613,7 @@ extension Message {
 
     /// Format with cache_control on the last content block.
     var apiFormattedWithCache: [String: Any] {
-        var contentBlocks: [[String: Any]] = content.enumerated().map { (i, block) in
+        let contentBlocks: [[String: Any]] = content.enumerated().map { (i, block) in
             switch block {
             case .text(let text):
                 var dict: [String: Any] = ["type": "text", "text": text]
@@ -632,13 +632,13 @@ extension Message {
                     dict["cache_control"] = ["type": "ephemeral"]
                 }
                 return dict
-            case .image(let type, let mediaType, let data, _):
+            case .image(_, let mediaType, let data, _):
                 return ["type": "image", "source": ["type": "base64", "media_type": mediaType, "data": data]] as [String: Any]
             case .thinking(let text, _):
                 return ["type": "thinking", "thinking": text] as [String: Any]
             case .redactedThinking(let text):
                 return ["type": "redacted_thinking", "data": text] as [String: Any]
-            case .document(let type, let mediaType, let data):
+            case .document(_, let mediaType, let data):
                 return ["type": "document", "source": ["type": "base64", "media_type": mediaType, "data": data]] as [String: Any]
             case .toolReference(let name, let description):
                 return ["type": "tool_reference", "name": name, "description": description] as [String: Any]

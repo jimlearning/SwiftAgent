@@ -254,7 +254,7 @@ public struct Compactor: Sendable {
         }
 
         let preCompactCount = tokenCount
-        let isRecompaction = tracking.compacted && tracking.turnCounter > 0
+        _ = tracking.compacted && tracking.turnCounter > 0
 
         do {
             let summary = try await streamCompactSummary(

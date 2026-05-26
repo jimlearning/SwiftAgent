@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import Dispatch
 #if os(macOS)
 import AppKit
 #endif
@@ -100,20 +101,18 @@ public actor OAuthCallbackServer {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            // Timeout handler
-            let timeoutTask = DispatchWorkItem { [weak self] in
+            // Timeout handler using Task (Sendable-safe, avoids DispatchWorkItem)
+            let timeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds) * 1_000_000_000)
                 guard let self else { return }
-                Task {
-                    if await self.isRunning {
-                        await self.cleanup()
-                        continuation.resume(throwing: OAuthFlowError.timeout)
-                    }
+                if await self.isRunning {
+                    await self.cleanup()
+                    continuation.resume(throwing: OAuthFlowError.timeout)
                 }
             }
-            DispatchQueue.global().asyncAfter(
-                deadline: .now() + .seconds(timeoutSeconds),
-                execute: timeoutTask
-            )
+
+            // Capture serverSocket before entering nonisolated Dispatch closure
+            let sock = self.serverSocket
 
             // Accept connection
             DispatchQueue.global().async { [weak self] in
@@ -123,7 +122,7 @@ public actor OAuthCallbackServer {
 
                 let clientSocket = withUnsafeMutablePointer(to: &clientAddr) {
                     $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        Darwin.accept(self.serverSocket, $0, &addrLen)
+                        Darwin.accept(sock, $0, &addrLen)
                     }
                 }
 
@@ -236,7 +235,7 @@ public actor OAuthCallbackServer {
         // the caller can invoke submit(url) which we parse as if it came from the browser.
         guard let url = URL(string: callbackUrl),
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let queryItems = components.queryItems else { return }
+              let _ = components.queryItems else { return }
         // Process the manual callback on the next connection
     }
 

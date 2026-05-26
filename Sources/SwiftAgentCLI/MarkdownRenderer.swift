@@ -100,7 +100,7 @@ public struct MarkdownRenderer: Sendable {
             renderCodeBlock(fenceLines, language: fenceLang, into: &result)
         }
 
-        return result.joined(separator: "\n")
+        return result.joined(separator: "\n") + "\n"
     }
 
     // MARK: - Code blocks (TermKit-style boxed)

@@ -50,15 +50,14 @@ struct ChatCommand: AsyncParsableCommand {
         let renderer = TerminalRenderer(capability: capability, theme: theme)
         let markdown = MarkdownRenderer(capability: capability, theme: theme)
 
-        print(renderer.renderBanner(version: "0.1.0"))
-        print("\nType [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
+        emitBlock(renderer.renderBanner(version: "0.1.0"))
+        emitBlock("Type [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
 
         // Set up debug logging
         let debugLog: DebugLogger? = debug ? DebugLogger() : nil
         if let dl = debugLog {
-            print("Debug logging enabled → \(dl.logFilePath)")
             dl.logInfo("Session started. Model: \(model), Base URL: \(baseURL)")
-            print()
+            emitBlock("Debug logging enabled → \(dl.logFilePath)\n")
         }
 
         // Set up client and tools
@@ -92,8 +91,11 @@ struct ChatCommand: AsyncParsableCommand {
                     conversationHistory = []
                     continue
                 }
-                if await handleCommand(input) { break }
-                print()
+                let (shouldExit, cmdOutput) = await handleCommand(input)
+                if let output = cmdOutput {
+                    emitBlock(output)
+                }
+                if shouldExit { break }
                 continue
             }
 
@@ -260,18 +262,27 @@ struct ChatCommand: AsyncParsableCommand {
             // Display response with left border
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                if noMarkdown {
-                    print(renderer.renderLeftBorder(content: trimmed))
-                } else {
-                    print(markdown.render(trimmed) + "\n")
-                }
+                let rendered = noMarkdown
+                    ? renderer.renderLeftBorder(content: trimmed)
+                    : markdown.render(trimmed)
+                emitBlock(rendered)
             } else {
-                print(renderer.renderLeftBorder(content: "(done)"))
+                emitBlock(renderer.renderLeftBorder(content: "(done)"))
             }
         }
 
         editor.save()
-        print("\nGoodbye!")
+        print("🐬 See you!")
+    }
+
+    // MARK: - Block output
+
+    /// Emit a content block followed by exactly one blank line.
+    /// Normalises trailing newlines: ensures exactly one `\n` at end,
+    /// then `print` adds a second, producing one blank line after the block.
+    private func emitBlock(_ text: String) {
+        let normalized = text.hasSuffix("\n") ? text : text + "\n"
+        print(normalized)
     }
 
     // MARK: - System prompt
@@ -324,19 +335,19 @@ struct ChatCommand: AsyncParsableCommand {
         }
     }
 
-    private func handleCommand(_ input: String) async -> Bool {
+    /// Returns (shouldExit, outputToDisplay).
+    private func handleCommand(_ input: String) async -> (Bool, String?) {
         let registry = CommandRegistry()
         switch await registry.execute(input: input) {
         case .exit:
-            return true
+            return (true, nil)
         case .text(let output):
-            print(output)
+            return (false, output)
         case .error(let msg):
-            print("Error: \(msg)")
+            return (false, "Error: \(msg)")
         case .none:
-            print("Unknown command: \(input). Type /help for available commands.")
+            return (false, "Unknown command: \(input). Type /help for available commands.")
         }
-        return false
     }
 
     private func registerBuiltinTools(into registry: ToolRegistry) {

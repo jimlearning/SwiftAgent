@@ -172,6 +172,13 @@ public struct FileAttachment: Codable, Sendable {
     public let truncated: Bool?
     public let displayPath: String
 
+    enum CodingKeys: String, CodingKey {
+        case filename
+        case content
+        case truncated
+        case displayPath
+    }
+
     public init(filename: String, content: String, truncated: Bool? = nil, displayPath: String) {
         self.filename = filename
         self.content = content
@@ -185,6 +192,11 @@ public struct CompactFileReferenceAttachment: Codable, Sendable {
     public let filename: String
     public let displayPath: String
 
+    enum CodingKeys: String, CodingKey {
+        case filename
+        case displayPath
+    }
+
     public init(filename: String, displayPath: String) {
         self.filename = filename
         self.displayPath = displayPath
@@ -197,6 +209,13 @@ public struct PDFReferenceAttachment: Codable, Sendable {
     public let pageCount: Int
     public let fileSize: Int
     public let displayPath: String
+
+    enum CodingKeys: String, CodingKey {
+        case filename
+        case pageCount
+        case fileSize
+        case displayPath
+    }
 
     public init(filename: String, pageCount: Int, fileSize: Int, displayPath: String) {
         self.filename = filename
@@ -213,6 +232,13 @@ public struct AlreadyReadFileAttachment: Codable, Sendable {
     public let truncated: Bool?
     public let displayPath: String
 
+    enum CodingKeys: String, CodingKey {
+        case filename
+        case content
+        case truncated
+        case displayPath
+    }
+
     public init(filename: String, content: String, truncated: Bool? = nil, displayPath: String) {
         self.filename = filename
         self.content = content
@@ -224,6 +250,10 @@ public struct AlreadyReadFileAttachment: Codable, Sendable {
 public struct AgentMentionAttachment: Codable, Sendable {
     public let type = "agent_mention"
     public let agentType: String
+
+    enum CodingKeys: String, CodingKey {
+        case agentType
+    }
 
     public init(agentType: String) {
         self.agentType = agentType
@@ -240,6 +270,17 @@ public struct AsyncHookResponseAttachment: Codable, Sendable {
     public let stdout: String
     public let stderr: String
     public let exitCode: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case processId
+        case hookName
+        case hookEvent
+        case toolName
+        case response
+        case stdout
+        case stderr
+        case exitCode
+    }
 
     public init(
         processId: String,
@@ -265,6 +306,10 @@ public struct AsyncHookResponseAttachment: Codable, Sendable {
 public struct TeammateMailboxAttachment: Codable, Sendable {
     public let type = "teammate_mailbox"
     public let messages: [TeammateMailboxMessage]
+
+    enum CodingKeys: String, CodingKey {
+        case messages
+    }
 
     public init(messages: [TeammateMailboxMessage]) {
         self.messages = messages
@@ -295,6 +340,14 @@ public struct TeamContextAttachment: Codable, Sendable {
     public let teamConfigPath: String
     public let taskListPath: String
 
+    enum CodingKeys: String, CodingKey {
+        case agentId
+        case agentName
+        case teamName
+        case teamConfigPath
+        case taskListPath
+    }
+
     public init(agentId: String, agentName: String, teamName: String, teamConfigPath: String, taskListPath: String) {
         self.agentId = agentId
         self.agentName = agentName
@@ -314,6 +367,14 @@ public struct HookCancelledAttachment: Codable, Sendable {
     public let command: String?
     public let durationMs: Int?
 
+    enum CodingKeys: String, CodingKey {
+        case hookName
+        case toolUseID
+        case hookEvent
+        case command
+        case durationMs
+    }
+
     public init(hookName: String, toolUseID: String, hookEvent: String, command: String? = nil, durationMs: Int? = nil) {
         self.hookName = hookName
         self.toolUseID = toolUseID
@@ -329,6 +390,13 @@ public struct HookBlockingErrorAttachment: Codable, Sendable {
     public let hookName: String
     public let toolUseID: String
     public let hookEvent: String
+
+    enum CodingKeys: String, CodingKey {
+        case blockingError
+        case hookName
+        case toolUseID
+        case hookEvent
+    }
 
     public init(blockingError: String, hookName: String, toolUseID: String, hookEvent: String) {
         self.blockingError = blockingError
@@ -348,6 +416,17 @@ public struct HookNonBlockingErrorAttachment: Codable, Sendable {
     public let hookEvent: String
     public let command: String?
     public let durationMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case hookName
+        case stderr
+        case stdout
+        case exitCode
+        case toolUseID
+        case hookEvent
+        case command
+        case durationMs
+    }
 
     public init(
         hookName: String,
@@ -379,6 +458,15 @@ public struct HookErrorDuringExecutionAttachment: Codable, Sendable {
     public let command: String?
     public let durationMs: Int?
 
+    enum CodingKeys: String, CodingKey {
+        case content
+        case hookName
+        case toolUseID
+        case hookEvent
+        case command
+        case durationMs
+    }
+
     public init(
         content: String,
         hookName: String,
@@ -403,6 +491,13 @@ public struct HookStoppedContinuationAttachment: Codable, Sendable {
     public let toolUseID: String
     public let hookEvent: String
 
+    enum CodingKeys: String, CodingKey {
+        case message
+        case hookName
+        case toolUseID
+        case hookEvent
+    }
+
     public init(message: String, hookName: String, toolUseID: String, hookEvent: String) {
         self.message = message
         self.hookName = hookName
@@ -422,6 +517,18 @@ public struct HookSuccessAttachment: Codable, Sendable {
     public let exitCode: Int?
     public let command: String?
     public let durationMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case content
+        case hookName
+        case toolUseID
+        case hookEvent
+        case stdout
+        case stderr
+        case exitCode
+        case command
+        case durationMs
+    }
 
     public init(
         content: String,
@@ -453,6 +560,13 @@ public struct HookAdditionalContextAttachment: Codable, Sendable {
     public let toolUseID: String
     public let hookEvent: String
 
+    enum CodingKeys: String, CodingKey {
+        case content
+        case hookName
+        case toolUseID
+        case hookEvent
+    }
+
     public init(content: [String], hookName: String, toolUseID: String, hookEvent: String) {
         self.content = content
         self.hookName = hookName
@@ -468,6 +582,13 @@ public struct HookSystemMessageAttachment: Codable, Sendable {
     public let toolUseID: String
     public let hookEvent: String
 
+    enum CodingKeys: String, CodingKey {
+        case content
+        case hookName
+        case toolUseID
+        case hookEvent
+    }
+
     public init(content: String, hookName: String, toolUseID: String, hookEvent: String) {
         self.content = content
         self.hookName = hookName
@@ -481,6 +602,12 @@ public struct HookPermissionDecisionAttachment: Codable, Sendable {
     public let decision: String  // "allow" | "deny"
     public let toolUseID: String
     public let hookEvent: String
+
+    enum CodingKeys: String, CodingKey {
+        case decision
+        case toolUseID
+        case hookEvent
+    }
 
     public init(decision: String, toolUseID: String, hookEvent: String) {
         self.decision = decision

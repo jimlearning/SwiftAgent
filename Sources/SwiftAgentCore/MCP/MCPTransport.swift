@@ -209,7 +209,7 @@ public final class SSETransport: MCPStreamingTransport, @unchecked Sendable {
             let task = session.dataTask(with: request) { [weak self] data, response, error in
                 guard let self else { return }
                 if error != nil {
-                    self.pendingLock.withLock { self.pendingRequests.removeValue(forKey: id) }
+                    _ = self.pendingLock.withLock { self.pendingRequests.removeValue(forKey: id) }
                     continuation.resume(throwing: MCPError.transportNotConnected)
                     return
                 }
@@ -218,7 +218,7 @@ public final class SSETransport: MCPStreamingTransport, @unchecked Sendable {
                     if ct.contains("text/event-stream") { return } // response via SSE stream
                 }
                 if let data, !data.isEmpty, let msg = try? MessageCoder.decode(data) {
-                    self.pendingLock.withLock { self.pendingRequests.removeValue(forKey: id) }
+                    _ = self.pendingLock.withLock { self.pendingRequests.removeValue(forKey: id) }
                     continuation.resume(returning: msg)
                 }
             }

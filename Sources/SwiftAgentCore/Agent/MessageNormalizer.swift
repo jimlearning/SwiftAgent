@@ -112,7 +112,7 @@ public func normalizeMessagesForAPI(_ messages: [Message], tools: [String] = [])
             var blocks = msg.content
             blocks = blocks.filter { block in
                 switch block {
-                case .toolUse(let id, let name, _), .serverToolUse(let id, let name, _):
+                case .toolUse(_, let name, _), .serverToolUse(_, let name, _):
                     // Strip tool_use blocks referencing unavailable tools
                     if !availableToolNames.contains(name) {
                         return false
@@ -308,7 +308,7 @@ public func normalizeMessagesForAPI(_ messages: [Message], tools: [String] = [])
     // and folds them into the last tool_result's content. Catches siblings
     // from attachment processing, tool reference relocation, and other paths.
     // Non-system-reminder text (real user input) stays untouched.
-    var smooshed = smooshSystemReminders(assistantMerged)
+    let smooshed = smooshSystemReminders(assistantMerged)
 
     // Pass 13: Sanitize error tool_result content.
     // Matches CC's sanitizeErrorToolResultContent — strips non-text blocks from

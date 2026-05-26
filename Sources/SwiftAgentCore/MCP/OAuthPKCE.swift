@@ -124,7 +124,7 @@ public func fetchAuthServerMetadata(
         return try await fetchMetadata(from: url)
     }
 
-    guard var baseURL = URL(string: serverUrl) else {
+    guard let baseURL = URL(string: serverUrl) else {
         throw OAuthFlowError.invalidServerUrl(serverUrl)
     }
 

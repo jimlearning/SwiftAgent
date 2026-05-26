@@ -72,7 +72,7 @@ public struct ClaudeMdLoader: Sendable {
     /// Returns files in loading order (earliest first, latest last overrides).
     public func loadAll(workingDirectory: String, homeDirectory: String = NSHomeDirectory()) -> [MemoryFileInfo] {
         var results: [MemoryFileInfo] = []
-        var processed = Set<String>()
+        _ = Set<String>()
 
         // 1. Managed (enterprise policy)
         results.append(contentsOf: loadManaged(homeDirectory: homeDirectory))
@@ -199,7 +199,7 @@ public struct ClaudeMdLoader: Sendable {
     /// Get ancestor directories from the given path up to root.
     private func ancestorDirectories(from path: String) -> [String] {
         let absolute = (path as NSString).standardizingPath
-        var components = (absolute as NSString).pathComponents
+        _ = (absolute as NSString).pathComponents
         // Remove last component if it's a file, but here we want directories
         var dirs: [String] = []
         var current = absolute

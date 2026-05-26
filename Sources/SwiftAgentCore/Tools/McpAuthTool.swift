@@ -69,7 +69,7 @@ public struct McpAuthTool: Tool {
     /// CC: looks up the connected/failed/pending server state.
     private func resolveServerUrl(serverName: String, context: ToolUseContext) -> String {
         // Try to find the server URL from MCP clients
-        if let clients = context.mcpClients {
+        if let _ = context.mcpClients {
             // Clients are MCPClient actors — the URL is embedded in their config
             // For now, construct a reasonable default from the server name
         }

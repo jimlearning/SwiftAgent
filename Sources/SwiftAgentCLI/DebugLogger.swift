@@ -117,20 +117,18 @@ public final class DebugLogger: LLMDebugLogger, @unchecked Sendable {
     }()
 
     private func append(_ dict: [String: Any]) {
+        let jsonObj = dict.mapValues { $0 as Any }
+        guard JSONSerialization.isValidJSONObject(jsonObj),
+              let raw = try? JSONSerialization.data(withJSONObject: jsonObj) else { return }
+        let data = raw + [10] // newline (JSONL format)
         writeQueue.async { [weak self] in
             guard let self else { return }
-            let captured = dict
-            let jsonObj = captured.mapValues { $0 as Any }
-            guard JSONSerialization.isValidJSONObject(jsonObj),
-                  let data = try? JSONSerialization.data(withJSONObject: jsonObj) else { return }
-            var line = data
-            line.append(10) // newline (JSONL format)
             if let handle = try? FileHandle(forWritingTo: self.logFile) {
                 _ = try? handle.seekToEndCompat()
-                try? handle.write(contentsOf: line)
+                try? handle.write(contentsOf: data)
                 try? handle.close()
             } else {
-                try? line.write(to: self.logFile, options: .atomic)
+                try? data.write(to: self.logFile, options: .atomic)
             }
         }
     }

@@ -335,7 +335,7 @@ public actor MCPConnectionManager {
         flushTask = Task {
             try? await Task.sleep(nanoseconds: Self.batchFlushMs * 1_000_000)
             if Task.isCancelled { return }
-            await applyPendingUpdates()
+            applyPendingUpdates()
         }
     }
 

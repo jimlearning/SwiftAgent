@@ -90,7 +90,7 @@ public struct TodoWriteTool: Tool {
         }
 
         let key = context.sessionID
-        let oldTodos = await todoStore.get(for: key)
+        _ = await todoStore.get(for: key)
         await todoStore.set(for: key, items: todoItems)
 
         // Check that exactly one task is in_progress
