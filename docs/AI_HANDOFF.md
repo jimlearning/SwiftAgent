@@ -7,7 +7,7 @@
 - **项目路径**: `/Users/jim/SwiftAgent/`
 - **CC 源码参考**: `/Users/jim/SwiftAgent/claude-code/`
 - **当前对齐度**: ~99.0%
-- **构建系统**: Swift Package Manager
+- **构建系统**: Swift Package Manager (0 warnings)
 - **测试**: 164 个测试 / 43 个测试套件，全部通过
 
 ---
@@ -33,7 +33,7 @@ Sources/
 │   │                             #   SettingSource, SlashCommand, SystemMessage,
 │   │                             #   ThinkingConfig
 │   │
-│   ├── Tools/                    # 41 个工具（一文件一工具，匹配 CC 约定）
+│   ├── Tools/                    # 43 个工具（一文件一工具，匹配 CC 约定）
 │   │   ├── BashTool.swift        # Shell 执行
 │   │   ├── FileReadTool.swift    # 文件读取
 │   │   ├── FileWriteTool.swift   # 文件写入
@@ -148,11 +148,14 @@ Sources/
 │
 ├── SwiftAgentCLI/                # CLI 入口
 │   ├── EntryPoint.swift          # 程序入口
-│   ├── ChatCommand.swift         # 主命令 + 全部工具注册
-│   ├── TerminalRenderer.swift    # 终端渲染
-│   ├── StatusLine.swift          # 状态栏
+│   ├── ChatCommand.swift         # 主命令 + 全部 43 工具注册 + 内联代理循环
+│   ├── TerminalRenderer.swift    # 终端渲染 (banner, spinner, left-border)
+│   ├── TerminalCapability.swift  # 终端能力检测
+│   ├── LineEditor.swift          # Raw-mode 行编辑器 (历史、粘贴检测、多行输入、ESC 取消)
+│   ├── MarkdownRenderer.swift    # Markdown → ANSI 渲染 (标题、代码块、表格、引用)
+│   ├── DebugLogger.swift         # JSONL 调试日志 (API 请求/响应)
 │   ├── ColorTheme.swift          # 色彩主题
-│   └── TerminalCapability.swift  # 终端能力检测
+│   └── StreamRenderer.swift      # SSE 流事件渲染
 │
 └── Tests/
     └── SwiftAgentCoreTests/      # 12 个测试文件，43 套件，164 测试
@@ -196,13 +199,14 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 | 领域 | 状态 |
 |------|------|
 | **Tool 协议** | ✅ 所有方法签名匹配 CC（call, description, prompt, validateInput, checkPermissions 等） |
-| **工具名称** | ✅ 全部 41 个工具的 LLM 名称匹配 CC（PascalCase，无 "Tool" 后缀） |
+| **工具名称** | ✅ 全部 43 个工具的 LLM 名称匹配 CC（PascalCase，无 "Tool" 后缀） |
 | **工具参数** | ✅ JSON schema 全部使用 camelCase，匹配 CC |
 | **searchHint** | ✅ 33 个工具有 CC 匹配的搜索提示 |
 | **shouldDefer** | ✅ 24 个工具设置为 true，匹配 CC |
 | **isConcurrencySafe** | ✅ 全部 9 个不匹配已修正 |
 | **aliases** | ✅ BriefTool 有 `["Brief"]` 别名 |
 | **REPL 模式** | ✅ 现在是配置概念（非可调用工具），匹配 CC |
+| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史 |
 | **类型系统** | ✅ 22 个类型文件涵盖全部 CC 领域类型 |
 | **QueryEngine** | ✅ streaming, batch, hooks, compaction, content block accumulation |
 | **MessageNormalizer** | ✅ 9 passes 匹配 CC（stripSignature, user-merge, assistant merge 等） |
@@ -226,8 +230,9 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 | **TeamCreateTool/TeamDeleteTool 为 stub** | 需要多代理 swarm 基础设施（tmux, team files） | 高 |
 | **prompt() 方法内容** | SA 在 description() 中有文档内容，prompt() 有协议但未被调用 | 中 |
 | **isEnabled() 覆盖** | 19 个工具需要功能开关检查（isTodoV2Enabled, isAgentSwarmsEnabled 等） | 中（需要基础设施） |
-| **CLI 标志** | CC 有 ~70 个 CLI 标志，SA 有 ~4 个 | 中 |
+| **CLI 标志** | CC 有 ~70 个 CLI 标志，SA 有 ~7 个（--model, --permission, --api-key, --no-color, --no-markdown, --debug/-d, --help） | 中 |
 | **TUI 功能** | 完整终端 UI（tmux, iTerm2 集成）未实现 | 高 |
+| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史 | 已完成 |
 | **CC 内部工具** | TungstenTool, SuggestBackgroundPRTool 等 ant-only 工具未复制 | 不需要 |
 
 ---
@@ -258,7 +263,7 @@ b307212 feat: add plugin manager with CC-aligned manifest loading
 6515b14 feat: add permission and safety system with CC-aligned pipeline
 989400e feat: add LLM client with streaming, retry, and token counting
 74339d0 feat: add agent loop engine with CC-aligned query and tool execution
-c6653ca feat: add 41 tools matching Claude Code tool ecosystem
+c6653ca feat: add 43 tools matching Claude Code tool ecosystem
 790f8e4 feat: add core type system matching Claude Code domain model
 ab74696 build: add project scaffold with package manifest and documentation
 ```

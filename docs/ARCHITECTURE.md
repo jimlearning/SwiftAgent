@@ -63,12 +63,16 @@ Sources/SwiftAgentCore/
 ├── Plugins/        PluginManager (actor, manifest validation)
 ├── Features/       FeatureFlags (compile-time + runtime)
 
-Tests/SwiftAgentCoreTests/ — 133 tests, 39 suites
+Tests/SwiftAgentCoreTests/ — 164 tests, 43 suites
 
 Sources/SwiftAgentCLI/
 ├── EntryPoint.swift, ChatCommand.swift
 ├── ColorTheme.swift, TerminalCapability.swift
-├── TerminalRenderer.swift, StatusLine.swift
+├── TerminalRenderer.swift
+├── LineEditor.swift (raw-mode editing, paste detection, multi-line, ESC cancel)
+├── MarkdownRenderer.swift (ANSI markdown: headings, code blocks, tables)
+├── DebugLogger.swift (JSONL API request/response logging)
+├── StreamRenderer.swift
 ```
 
 ## Reference Materials

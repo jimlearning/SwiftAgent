@@ -17,7 +17,7 @@ Two-module structure:
 ## Getting Started
 
 ```bash
-swift build
-swift test
-swift run swift-agent --help
+swift build --disable-sandbox     # 0 errors, 0 warnings
+swift test --disable-sandbox --no-parallel   # 164 tests pass
+swift run --disable-sandbox swift-agent chat
 ```

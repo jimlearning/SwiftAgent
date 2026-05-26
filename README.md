@@ -99,6 +99,11 @@ Full Claude Code tool ecosystem: Bash, Read, Write, Edit, Glob, Grep, WebFetch, 
 
 ### CLI Experience
 - **Nanobot-style REPL** with raw-mode line editor (arrow keys, history, UTF-8, Ctrl+A/E/K/U/W)
+- **Paste detection** — multi-line pastes show `[Pasted text #N +M lines]` summary instead of auto-submitting
+- **Multi-line input** — Option+Enter and Shift+Enter insert literal newlines with cursor alignment
+- **ESC to cancel** — press Escape during agent processing to immediately stop and restore your input
+- **Markdown rendering** — headings, bold/italic, fenced code blocks (boxed), tables, blockquotes, links
+- **`--no-markdown` flag** to disable rendering and display raw text
 - **Braille spinner** with live tool name display during execution
 - **Streaming thinking display** — model reasoning shown in dim ANSI style
 - **Left-border response** — clean output with `│` prefix, no box noise
@@ -173,7 +178,8 @@ SwiftAgent/
 │       ├── ChatCommand.swift    # Inline agent loop + all 43 tool registrations
 │       ├── TerminalRenderer.swift # ANSI rendering, panel/left-border/banner
 │       ├── TerminalCapability.swift
-│       ├── LineEditor.swift     # Raw-mode line editor with history
+│       ├── LineEditor.swift     # Raw-mode line editor with history, paste detection, multi-line
+│       ├── MarkdownRenderer.swift # ANSI markdown rendering (headings, code blocks, tables)
 │       ├── DebugLogger.swift    # JSONL debug log for API interactions
 │       ├── ColorTheme.swift
 │       └── StreamRenderer.swift # SSE stream event rendering

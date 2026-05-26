@@ -9,7 +9,7 @@
 | 2 | LLM Adapter & Streaming | ✅ Done | LLMClient, StreamParser, RetryPolicy, ModelRegistry, TokenCounter + 14 tests |
 | 3 | Agent Loop | ✅ Done | QueryEngine, PromptBuilder, ContextManager, ToolExecutor, StreamRenderer + 15 tests |
 | 4 | Tool System | ✅ Done | 6 tools (Read/Write/Edit/Bash/Glob/Grep) + 12 tests |
-| 5 | CLI & Terminal UI | ✅ Done | ChatCommand, TerminalRenderer, Capability, StatusLine, ColorTheme. CLI operational. |
+| 5 | CLI & Terminal UI | ✅ Done | ChatCommand, TerminalRenderer, Capability, ColorTheme, LineEditor (paste detection, multi-line, ESC cancel), MarkdownRenderer (headings, code blocks, tables, blockquotes). CLI operational. |
 | 6 | Permission & Safety | ✅ Done | PermissionEngine, SafetyChecker, PermissionStore + 13 tests |
 | 7 | Configuration System | ✅ Done | 5-layer ConfigLoader, ConfigSchema validation + 5 tests |
 | 8 | Slash Commands | ✅ Done | CommandRegistry with 7 built-ins + 8 tests |
@@ -32,4 +32,12 @@ None.
 
 ## Recently Completed
 
-All 12 phases complete (133 tests, 39 suites, build + test all green). Full SwiftAgent core: types, LLM adapter, agent loop, tools, CLI/TUI, safety, config, slash commands, session/memory, MCP, sub-agents, hooks, plugins, and feature flags.
+All 12 phases complete (164 tests, 43 suites, build: 0 errors + 0 warnings). Full SwiftAgent core: types, LLM adapter, agent loop, tools, CLI/TUI, safety, config, slash commands, session/memory, MCP, sub-agents, hooks, plugins, and feature flags.
+
+### Recent CLI Enhancements
+- **Paste detection**: Multi-line pastes show `[Pasted text #N +M lines]` summary instead of auto-submitting
+- **Multi-line input**: Option+Enter and Shift+Enter support with cursor alignment under first character
+- **ESC to cancel**: Immediately stops agent processing and restores user input
+- **Markdown rendering**: Headings, bold/italic, fenced code blocks (boxed), tables, blockquotes, links — toggle with `--no-markdown`
+- **emitBlock spacing**: Uniform single-blank-line spacing between all content blocks
+- **Zero build warnings**: All ~50 compiler warnings eliminated across 14 files
