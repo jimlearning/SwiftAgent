@@ -4,3 +4,7 @@
 claude-code/
 claude-code-system-prompts/
 Claude-Code-Source-Study/
+TermKit
+
+.swiftpm/xcode/package.xcworkspace/xcuserdata
+.swiftpm/xcode/xcuserdata/jim.xcuserdatad
