@@ -100,7 +100,18 @@ struct ChatCommand: AsyncParsableCommand {
             }
 
             // Append user message to conversation history
+            let historyCount = conversationHistory.count
             conversationHistory.append(Message(type: .user, content: [.text(input)]))
+
+            // Shared cancellation flag: escape watcher sets it, agent loop checks it
+            let isCancelled = AtomicBool()
+
+            // Escape watcher — runs in background, sets flag on bare ESC
+            let escapeTask = Task { [isCancelled] in
+                if await editor.interceptEscape() {
+                    isCancelled.value = true
+                }
+            }
 
             // Track current tool name for spinner display
             let currentTool = CurrentToolTracker()
@@ -130,6 +141,7 @@ struct ChatCommand: AsyncParsableCommand {
             }
 
             var responseText = ""
+            var wasCancelled = false
 
             do {
                 // --- Inline agent loop (ported from TUIApp's submitInput) ---
@@ -137,6 +149,9 @@ struct ChatCommand: AsyncParsableCommand {
                 var iteration = 0
 
                 while iteration < maxIterations {
+                    // Check for ESC cancellation before each LLM round
+                    if isCancelled.value { wasCancelled = true; break }
+
                     iteration += 1
                     var turnText = ""
                     var thinkingText = ""
@@ -155,6 +170,8 @@ struct ChatCommand: AsyncParsableCommand {
                     )
 
                     for try await event in stream {
+                        // Check for ESC cancellation during stream
+                        if isCancelled.value { wasCancelled = true; break }
                         switch event {
                         case .textDelta(let text):
                             if currentTool.isThinking {
@@ -209,6 +226,9 @@ struct ChatCommand: AsyncParsableCommand {
                         }
                     }
 
+                    // If stream was interrupted by ESC, break out of agent loop
+                    if wasCancelled { break }
+
                     // No tool calls → model signaled completion
                     if toolBlocks.isEmpty {
                         var blocks: [ContentBlock] = []
@@ -257,7 +277,13 @@ struct ChatCommand: AsyncParsableCommand {
             }
 
             spinnerTask.cancel()
+            escapeTask.cancel()
             try? await Task.sleep(nanoseconds: 50_000_000)
+
+            if wasCancelled {
+                conversationHistory.removeSubrange(historyCount...)
+                responseText = "(cancelled — press ↑ to recall previous input)"
+            }
 
             // Display response with left border
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -394,6 +420,18 @@ struct ChatCommand: AsyncParsableCommand {
         registry.register(RemoteTriggerTool())
         registry.register(TeamCreateTool())
         registry.register(TeamDeleteTool())
+    }
+}
+
+/// Thread-safe tracker for the currently executing tool name.
+/// Written by the agent loop and read by the spinner Task.
+/// Thread-safe boolean flag for ESC cancellation coordination between Tasks.
+private final class AtomicBool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = false
+    var value: Bool {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
     }
 }
 

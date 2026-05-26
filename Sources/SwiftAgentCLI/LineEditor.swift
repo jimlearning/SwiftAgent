@@ -58,6 +58,52 @@ public final class LineEditor: @unchecked Sendable {
         save()
     }
 
+    /// Watch stdin for a bare Escape key press. Manages its own raw-mode
+    /// terminal state so it can run between `readLine()` calls.
+    /// Returns `true` if ESC was pressed (no follow-up byte within 50ms),
+    /// `false` if the Task is cancelled.
+    public func interceptEscape() async -> Bool {
+        let fd = STDIN_FILENO
+
+        // Save current (cooked) terminal and enter raw mode independently
+        var saved = termios()
+        tcgetattr(fd, &saved)
+        var raw = saved
+        raw.c_iflag &= ~tcflag_t(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON)
+        raw.c_oflag &= ~tcflag_t(OPOST)
+        raw.c_lflag &= ~tcflag_t(ECHO | ECHONL | ICANON | ISIG | IEXTEN)
+        raw.c_cflag &= ~tcflag_t(CSIZE | PARENB)
+        raw.c_cflag |= tcflag_t(CS8)
+        raw.c_cc.0 = 1
+        raw.c_cc.1 = 0
+        tcsetattr(fd, TCSADRAIN, &raw)
+
+        defer {
+            tcsetattr(fd, TCSADRAIN, &saved)
+        }
+
+        while !Task.isCancelled {
+            var fds = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ret = poll(&fds, 1, 100)
+            if ret > 0 {
+                var byte: UInt8 = 0
+                let n = Darwin.read(fd, &byte, 1)
+                guard n > 0, byte == 27 else { continue }
+
+                // Distinguish bare ESC from escape sequences (arrow keys, etc.)
+                var fds2 = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                if poll(&fds2, 1, 50) == 0 {
+                    return true
+                }
+                // Drain the escape sequence bytes so they don't pollute the next readLine
+                while poll(&fds2, 1, 10) > 0 {
+                    _ = Darwin.read(fd, &byte, 1)
+                }
+            }
+        }
+        return false
+    }
+
     /// Restore terminal settings. Safe to call multiple times.
     public func restoreTerminal() {
         guard let saved = savedTermios else { return }
@@ -437,16 +483,22 @@ public final class LineEditor: @unchecked Sendable {
         }
         writeToStdout("\r\u{001B}[J")
 
-        // Draw prompt + buffer (embedded \n produces multi-line terminal output)
-        writeToStdout(styledPrompt + buffer)
+        // Draw prompt + buffer. \n in buffer is padded with prompt-width spaces
+        // so continuation lines align under the first character of the first line:
+        //   You: first line
+        //        second line
+        let pad = String(repeating: " ", count: promptLen)
+        let displayBuffer = buffer.replacingOccurrences(of: "\n", with: "\n" + pad)
+        writeToStdout(styledPrompt + displayBuffer)
 
-        // Calculate cursor row/col within the displayed region
+        // Calculate cursor row/col within the displayed region.
+        // Continuation lines are indented by promptLen, so col includes that offset.
         let prefix = String(buffer.prefix(cursorPos))
         let cursorRows = prefix.components(separatedBy: "\n").count - 1
         let lastNL = prefix.lastIndex(of: "\n")
         let colOffset: Int
         if let nl = lastNL {
-            colOffset = prefix.distance(from: prefix.index(after: nl), to: prefix.endIndex)
+            colOffset = promptLen + prefix.distance(from: prefix.index(after: nl), to: prefix.endIndex)
         } else {
             colOffset = promptLen + cursorPos
         }
