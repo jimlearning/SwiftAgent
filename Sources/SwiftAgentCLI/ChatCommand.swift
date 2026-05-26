@@ -68,6 +68,11 @@ struct ChatCommand: AsyncParsableCommand {
 
         let editor = LineEditor()
 
+        // Session tracking for slash commands (/cost, /status, /stats, etc.)
+        let sessionStartTime = Date()
+        let sessionId = UUID().uuidString
+        let sessionState = SessionState()
+
         // Conversation history accumulates across turns so the LLM has full context.
         // Each turn appends user message → assistant message(s) → tool results.
         var conversationHistory: [Message] = []
@@ -91,7 +96,12 @@ struct ChatCommand: AsyncParsableCommand {
                     conversationHistory = []
                     continue
                 }
-                let (shouldExit, cmdOutput) = await handleCommand(input)
+                let (shouldExit, cmdOutput) = await handleCommand(
+                    input, model: model, permission: permission,
+                    sessionId: sessionId, startTime: sessionStartTime,
+                    tokensIn: sessionState.totalTokensIn, tokensOut: sessionState.totalTokensOut,
+                    planActive: sessionState.isPlanModeActive
+                )
                 if let output = cmdOutput {
                     emitBlock(output)
                 }
@@ -206,6 +216,11 @@ struct ChatCommand: AsyncParsableCommand {
                         case .inputJSONDelta(let delta):
                             currentToolInputJSON += delta
 
+                        case .messageDelta(_, let usage):
+                            if let u = usage {
+                                sessionState.addTokens(in: u.inputTokens, out: u.outputTokens)
+                            }
+
                         case .contentBlockStop:
                             if !currentToolInputJSON.isEmpty, !currentToolID.isEmpty {
                                 if let data = currentToolInputJSON.data(using: .utf8),
@@ -256,7 +271,7 @@ struct ChatCommand: AsyncParsableCommand {
                     // Execute tools and collect results
                     var resultBlocks: [ContentBlock] = []
                     for tb in toolBlocks {
-                        let summary = await executeTool(name: tb.name, input: tb.input, registry: registry)
+                        let summary = await executeTool(name: tb.name, input: tb.input, registry: registry, sessionState: sessionState)
                         resultBlocks.append(.toolResult(
                             toolUseID: tb.id,
                             content: .string(summary),
@@ -326,20 +341,33 @@ struct ChatCommand: AsyncParsableCommand {
     private func executeTool(
         name: String,
         input: [String: JSONValue],
-        registry: ToolRegistry
+        registry: ToolRegistry,
+        sessionState: SessionState
     ) async -> String {
         let bylassAvailable = permission == "bypass"
 
-        let context = ToolUseContext(
+        var context = ToolUseContext(
             workingDirectory: FileManager.default.currentDirectoryPath,
             sessionID: "repl",
-            mode: parsePermissionMode(permission),
+            mode: sessionState.isPlanModeActive ? .plan : parsePermissionMode(permission),
             isBypassPermissionsModeAvailable: bylassAvailable,
             isAutoModeAvailable: bylassAvailable,
+            prePlanMode: sessionState.isPlanModeActive ? .plan : nil,
             permissionPromptHandler: { _, _, _ in
                 bylassAvailable ? .allow : .deny(reason: "Permission prompts not available in REPL mode")
             }
         )
+
+        // Plan mode state callback — allows EnterPlanMode/ExitPlanMode tools to toggle state
+        context.setPlanModeActive = { active in
+            sessionState.setPlanModeActive(active)
+        }
+
+        // Register agent definitions for AgentTool
+        context.agentDefinitions = BuiltInAgents.all.values.map { $0 }
+
+        // Register bundled skills as commands for SkillTool
+        context.commands = buildBundledSkillCommands()
 
         let executor = ToolExecutor(registry: registry)
         do {
@@ -349,6 +377,76 @@ struct ChatCommand: AsyncParsableCommand {
             return "Error: \(error.localizedDescription)"
         }
     }
+
+    /// Build FullCommand wrappers for all bundled skills.
+    /// These are passed to SkillTool via context.commands so the LLM can invoke skills.
+    private func buildBundledSkillCommands() -> [any Sendable] {
+        BundledSkills.all.map { skill -> FullCommand in
+            let base = CommandBase(
+                description: skill.description,
+                name: skill.name,
+                aliases: skill.aliases,
+                argumentHint: skill.argumentHint,
+                whenToUse: skill.whenToUse,
+                disableModelInvocation: skill.disableModelInvocation,
+                userInvocable: skill.userInvocable,
+                loadedFrom: .bundled
+            )
+            return FullCommand(
+                base: base,
+                type: .prompt(PromptCommand(
+                    progressMessage: skill.progressMessage,
+                    contentLength: skill.contentLength,
+                    argNames: skill.argNames,
+                    allowedTools: skill.allowedTools,
+                    model: skill.model,
+                    source: .bundled,
+                    context: skill.context != nil ? (skill.context == .fork ? .fork : .inline) : nil,
+                    agent: skill.agent,
+                    effort: skill.effort,
+                    paths: skill.paths,
+                    getPromptForCommand: skill.getPromptForCommand
+                ))
+            )
+        }
+    }
+
+/// Thread-safe session state shared between the REPL loop and tool execution.
+/// Enables plan mode state changes and token tracking from within tool callbacks.
+private final class SessionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _planModeActive = false
+    private var _totalTokensIn = 0
+    private var _totalTokensOut = 0
+
+    var planModeActive: Bool {
+        get { lock.withLock { _planModeActive } }
+        set { lock.withLock { _planModeActive = newValue } }
+    }
+
+    var totalTokensIn: Int {
+        get { lock.withLock { _totalTokensIn } }
+        set { lock.withLock { _totalTokensIn = newValue } }
+    }
+
+    var totalTokensOut: Int {
+        get { lock.withLock { _totalTokensOut } }
+        set { lock.withLock { _totalTokensOut = newValue } }
+    }
+
+    var isPlanModeActive: Bool { planModeActive }
+
+    func setPlanModeActive(_ active: Bool) {
+        planModeActive = active
+    }
+
+    func addTokens(in: Int, out: Int) {
+        lock.withLock {
+            _totalTokensIn += `in`
+            _totalTokensOut += out
+        }
+    }
+}
 
     // MARK: - Helpers
 
@@ -362,8 +460,25 @@ struct ChatCommand: AsyncParsableCommand {
     }
 
     /// Returns (shouldExit, outputToDisplay).
-    private func handleCommand(_ input: String) async -> (Bool, String?) {
+    private func handleCommand(_ input: String, model: String, permission: String,
+                                sessionId: String, startTime: Date,
+                                tokensIn: Int, tokensOut: Int, planActive: Bool) async -> (Bool, String?) {
         let registry = CommandRegistry()
+        registry.stateProvider = {
+            CommandStateProvider(
+                currentModel: model,
+                permissionMode: permission,
+                sessionInfo: .init(
+                    sessionId: sessionId,
+                    startTime: startTime,
+                    tokenUsage: .init(inputTokens: tokensIn, outputTokens: tokensOut)
+                ),
+                workingDirectory: FileManager.default.currentDirectoryPath,
+                planModeActive: planActive,
+                totalTokensIn: tokensIn,
+                totalTokensOut: tokensOut
+            )
+        }
         switch await registry.execute(input: input) {
         case .exit:
             return (true, nil)
@@ -404,7 +519,7 @@ struct ChatCommand: AsyncParsableCommand {
         registry.register(TaskUpdateTool(taskManager: taskManager))
         registry.register(TaskStopTool(taskManager: taskManager))
         registry.register(AgentTool())
-        registry.register(SkillTool())
+        registry.register(SkillTool(knownSkills: BundledSkills.all.map { $0.name }))
         registry.register(SendMessageTool())
         registry.register(AskUserQuestionTool())
         registry.register(LSPTool())
