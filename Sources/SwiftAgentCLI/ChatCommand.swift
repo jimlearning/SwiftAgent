@@ -82,9 +82,6 @@ struct ChatCommand: AsyncParsableCommand {
                 continue
             }
 
-            // Store in history (editor saves on valid input)
-            editor.addEntry(input)
-
             print()
 
             // Show spinner while thinking (like nanobot's console.status)

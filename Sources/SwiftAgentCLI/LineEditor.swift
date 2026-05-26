@@ -1,62 +1,361 @@
 import Foundation
+import Darwin
 
-/// Readline wrapper with persistent history, mirroring nanobot's `_enable_line_editing`.
-/// On macOS, `readLine()` uses libedit which provides basic line editing (arrows, backspace).
-/// We layer history persistence on top via a flat file.
+/// Line editor with raw terminal mode, supporting arrow-key history navigation,
+/// left/right cursor movement, and persistent history file.
+///
+/// Swift equivalent of Nanobot's `_enable_line_editing()` which uses Python's
+/// `readline` module (GNU readline / libedit wrapper).
 public final class LineEditor: @unchecked Sendable {
     private let historyFile: URL
     private var entries: [String] = []
     private var historyIndex: Int = 0
+    private var savedTermios: termios?
+    private let isTTY: Bool
+
+    // MARK: - Init
 
     public init(historyDir: URL? = nil) {
         let dir = historyDir ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".swift-agent/history", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.historyFile = dir.appendingPathComponent("cli_history")
+        self.isTTY = isatty(STDIN_FILENO) != 0 && isatty(STDOUT_FILENO) != 0
         load()
     }
 
-    /// Read a line with the given prompt. Returns nil on EOF.
-    public func readLine(prompt: String) -> String? {
-        // Print the prompt in blue (like nanobot's "\033[1;34mYou:\033[0m ")
-        let styledPrompt = isTTY ? "\u{001B}[1;34m\(prompt)\u{001B}[0m" : prompt
-        print(styledPrompt, terminator: "")
-        fflush(stdout)
-
-        guard let line = Swift.readLine() else { return nil }
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            addEntry(trimmed)
-        }
-        return line
+    deinit {
+        restoreTerminal()
     }
 
-    // MARK: - History management
+    // MARK: - Public API
 
+    /// Read a line with the given prompt and full line-editing support.
+    /// Returns nil on EOF or Ctrl+D on an empty line.
+    public func readLine(prompt: String) -> String? {
+        guard isTTY else {
+            return fallbackReadLine(prompt: prompt)
+        }
+        return rawModeReadLine(prompt: prompt)
+    }
+
+    /// Save history to disk.
+    public func save() {
+        let content = entries.joined(separator: "\n")
+        try? content.write(to: historyFile, atomically: true, encoding: .utf8)
+    }
+
+    /// Add an entry to history (deduplicates consecutive identical entries).
     public func addEntry(_ entry: String) {
-        // Deduplicate consecutive identical entries
-        if entries.last == entry { return }
-        entries.append(entry)
-        // Keep last 500 entries
+        let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if entries.last == trimmed { return }
+        entries.append(trimmed)
         if entries.count > 500 { entries.removeFirst(entries.count - 500) }
         historyIndex = entries.count
         save()
     }
 
-    public func previousEntry() -> String? {
-        guard !entries.isEmpty else { return nil }
-        if historyIndex > 0 { historyIndex -= 1 }
-        return entries[historyIndex]
+    /// Restore terminal settings. Safe to call multiple times.
+    public func restoreTerminal() {
+        guard let saved = savedTermios else { return }
+        var attrs = saved
+        tcsetattr(STDIN_FILENO, TCSADRAIN, &attrs)
+        savedTermios = nil
     }
 
-    public func nextEntry() -> String? {
-        guard !entries.isEmpty else { return nil }
-        if historyIndex < entries.count - 1 {
-            historyIndex += 1
-            return entries[historyIndex]
+    // MARK: - Raw mode line editor
+
+    private func rawModeReadLine(prompt: String) -> String? {
+        // Print styled prompt
+        let styledPrompt = "\u{001B}[1;34m\(prompt)\u{001B}[0m"
+        writeToStdout(styledPrompt)
+
+        // Enter raw mode
+        enterRawMode()
+
+        defer {
+            restoreTerminal()
+            writeToStdout("\r\n")
         }
-        historyIndex = entries.count
-        return nil
+
+        var buffer = ""
+        var cursorPos = 0  // cursor position within buffer (0...buffer.count)
+
+        while true {
+            let byte = readByte()
+            if byte == nil { return nil }  // EOF
+
+            switch byte {
+            case 3:  // Ctrl+C
+                writeToStdout("^C\r\n")
+                return nil
+
+            case 4:  // Ctrl+D
+                if buffer.isEmpty {
+                    return nil  // EOF on empty line
+                }
+                // Otherwise ignore (like bash)
+
+            case 10, 13:  // Enter (\n or \r)
+                writeToStdout("\r\n")
+                let line = buffer.trimmingCharacters(in: .newlines)
+                if !line.isEmpty {
+                    addEntry(line)
+                }
+                return line
+
+            case 127:  // Backspace (DEL)
+                if cursorPos > 0 {
+                    buffer.remove(at: buffer.index(buffer.startIndex, offsetBy: cursorPos - 1))
+                    cursorPos -= 1
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                }
+
+            case 27:  // Escape sequence (arrow keys, etc.)
+                let seq = readEscapeSequence()
+                switch seq {
+                case .up:
+                    navigateHistory(direction: -1, prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                case .down:
+                    navigateHistory(direction: 1, prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                case .left:
+                    if cursorPos > 0 { cursorPos -= 1; moveCursorLeft() }
+                case .right:
+                    if cursorPos < buffer.count { cursorPos += 1; moveCursorRight() }
+                case .home:
+                    cursorPos = 0
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                case .end:
+                    cursorPos = buffer.count
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                case .deleteWord:
+                    // Alt+Backspace / Ctrl+W: delete word before cursor
+                    if cursorPos > 0 {
+                        let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                        let prefix = buffer[..<idx]
+                        if let lastSpace = prefix.lastIndex(of: " ") {
+                            let removeCount = cursorPos - (prefix.distance(from: prefix.startIndex, to: lastSpace) + 1)
+                            let startIdx = buffer.index(buffer.startIndex, offsetBy: cursorPos - removeCount)
+                            buffer.removeSubrange(startIdx..<idx)
+                            cursorPos -= removeCount
+                        } else {
+                            buffer.removeSubrange(..<idx)
+                            cursorPos = 0
+                        }
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    }
+                case .none:
+                    break  // Unknown escape sequence, ignore
+                }
+
+            case 21:  // Ctrl+U — clear line
+                buffer = ""
+                cursorPos = 0
+                redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+
+            case 23:  // Ctrl+W — delete word before cursor
+                if cursorPos > 0 {
+                    let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                    // Skip trailing whitespace
+                    var endIdx = idx
+                    while endIdx > buffer.startIndex, buffer[buffer.index(before: endIdx)] == " " {
+                        endIdx = buffer.index(before: endIdx)
+                    }
+                    // Find word start
+                    while endIdx > buffer.startIndex, buffer[buffer.index(before: endIdx)] != " " {
+                        endIdx = buffer.index(before: endIdx)
+                    }
+                    let removeCount = buffer.distance(from: endIdx, to: idx)
+                    buffer.removeSubrange(endIdx..<idx)
+                    cursorPos -= removeCount
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                }
+
+            case 11:  // Ctrl+K — delete from cursor to end
+                if cursorPos < buffer.count {
+                    let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                    buffer.removeSubrange(idx...)
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                }
+
+            case 1:  // Ctrl+A — beginning of line
+                cursorPos = 0
+                redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+
+            case 5:  // Ctrl+E — end of line
+                cursorPos = buffer.count
+                redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+
+            default:
+                // Printable ASCII or multi-byte UTF-8
+                if let (char, _) = decodeUTF8Char(leadByte: byte!) {
+                    // Put back any extra bytes we already consumed from the continuation
+                    // (decodeUTF8Char reads them, so we insert all at once)
+                    let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                    buffer.insert(char, at: idx)
+                    cursorPos += 1
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                }
+            }
+        }
+    }
+
+    // MARK: - Terminal control
+
+    private func enterRawMode() {
+        var raw = termios()
+        tcgetattr(STDIN_FILENO, &raw)
+        savedTermios = raw
+
+        // cfmakeraw equivalent
+        raw.c_iflag &= ~tcflag_t(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON)
+        raw.c_oflag &= ~tcflag_t(OPOST)
+        raw.c_lflag &= ~tcflag_t(ECHO | ECHONL | ICANON | ISIG | IEXTEN)
+        raw.c_cflag &= ~tcflag_t(CSIZE | PARENB)
+        raw.c_cflag |= tcflag_t(CS8)
+
+        // Minimum characters and timeout for read
+        raw.c_cc.0 = 1     // VMIN: return after 1 byte
+        raw.c_cc.1 = 0     // VTIME: no timeout
+
+        tcsetattr(STDIN_FILENO, TCSADRAIN, &raw)
+    }
+
+    private func readByte() -> UInt8? {
+        var byte: UInt8 = 0
+        let n = Darwin.read(STDIN_FILENO, &byte, 1)
+        if n <= 0 { return nil }
+        return byte
+    }
+
+    /// Read a byte with a short timeout. Returns nil if no data within the timeout.
+    /// Used for escape sequences to avoid hanging on lone ESC key.
+    private func readByteWithTimeout(ms: Int = 50) -> UInt8? {
+        var fds = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+        let ret = poll(&fds, 1, Int32(ms))
+        if ret <= 0 { return nil }
+        return readByte()
+    }
+
+    private enum EscapeSequence {
+        case up, down, left, right, home, end, deleteWord, none
+    }
+
+    private func readEscapeSequence() -> EscapeSequence {
+        // We already consumed \033. Now read the rest with timeouts to avoid
+        // hanging when Escape is pressed alone (no following bytes).
+        guard let second = readByteWithTimeout() else { return .none }
+
+        if second == 127 {  // \033\177 = Alt+Backspace on macOS
+            return .deleteWord
+        }
+
+        guard second == 91 else { return .none }  // '['
+
+        guard let third = readByteWithTimeout() else { return .none }
+
+        switch third {
+        case 65: return .up      // A
+        case 66: return .down    // B
+        case 67: return .right   // C
+        case 68: return .left    // D
+        case 72: return .home    // H
+        case 70: return .end     // F
+        case 51:                 // '3' → Delete key: \033[3~
+            _ = readByteWithTimeout()  // consume '~'
+            return .none
+        default:
+            return .none
+        }
+    }
+
+    /// Decode a multi-byte UTF-8 character starting from a lead byte.
+    /// Returns the character and number of bytes consumed, or nil if invalid.
+    private func decodeUTF8Char(leadByte: UInt8) -> (Character, Int)? {
+        // Determine sequence length from lead byte
+        let seqLen: Int
+        var codepoint: UInt32
+        if leadByte & 0x80 == 0 {
+            return (Character(UnicodeScalar(leadByte)), 1)
+        } else if leadByte & 0xE0 == 0xC0 {
+            seqLen = 2
+            codepoint = UInt32(leadByte & 0x1F)
+        } else if leadByte & 0xF0 == 0xE0 {
+            seqLen = 3
+            codepoint = UInt32(leadByte & 0x0F)
+        } else if leadByte & 0xF8 == 0xF0 {
+            seqLen = 4
+            codepoint = UInt32(leadByte & 0x07)
+        } else {
+            return nil  // Invalid lead byte
+        }
+
+        // Read continuation bytes (use timeout since they may not arrive)
+        var bytesRead = 1
+        for _ in 1..<seqLen {
+            guard let cont = readByteWithTimeout(ms: 20),
+                  cont & 0xC0 == 0x80 else { return nil }
+            codepoint = (codepoint << 6) | UInt32(cont & 0x3F)
+            bytesRead += 1
+        }
+
+        guard let scalar = UnicodeScalar(codepoint) else { return nil }
+        return (Character(scalar), bytesRead)
+    }
+
+    // MARK: - History navigation
+
+    private func navigateHistory(direction: Int, prompt: String, buffer: inout String, cursorPos: inout Int) {
+        guard !entries.isEmpty else { return }
+
+        let newIndex = historyIndex + direction
+        guard newIndex >= 0, newIndex < entries.count else { return }
+
+        historyIndex = newIndex
+        buffer = entries[historyIndex]
+        cursorPos = buffer.count
+        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+    }
+
+    // MARK: - Display helpers
+
+    private func redrawLine(prompt: String, buffer: String, cursorPos: Int) {
+        // Clear line, redraw prompt + buffer, reposition cursor
+        let styledPrompt = "\u{001B}[1;34m\(prompt)\u{001B}[0m"
+        var output = "\r\u{001B}[K" + styledPrompt + buffer
+        // Move cursor to correct position
+        let promptLen = prompt.count  // ANSI codes don't consume visible columns
+        let targetCol = promptLen + cursorPos
+        if targetCol < promptLen + buffer.count {
+            output += "\u{001B}[\(promptLen + buffer.count - targetCol)D"
+        }
+        writeToStdout(output)
+    }
+
+    private func moveCursorLeft() {
+        writeToStdout("\u{001B}[1D")
+    }
+
+    private func moveCursorRight() {
+        writeToStdout("\u{001B}[1C")
+    }
+
+    private func writeToStdout(_ string: String) {
+        guard let data = string.data(using: .utf8) else { return }
+        _ = Darwin.write(STDOUT_FILENO, (data as NSData).bytes, data.count)
+    }
+
+    // MARK: - Fallback (non-TTY)
+
+    private func fallbackReadLine(prompt: String) -> String? {
+        let styledPrompt = isTTY ? "\u{001B}[1;34m\(prompt)\u{001B}[0m" : prompt
+        print(styledPrompt, terminator: "")
+        fflush(stdout)
+        guard let line = Swift.readLine() else { return nil }
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { addEntry(trimmed) }
+        return line
     }
 
     // MARK: - Persistence
@@ -66,14 +365,5 @@ public final class LineEditor: @unchecked Sendable {
               let content = String(data: data, encoding: .utf8) else { return }
         entries = content.components(separatedBy: "\n").filter { !$0.isEmpty }
         historyIndex = entries.count
-    }
-
-    public func save() {
-        let content = entries.joined(separator: "\n")
-        try? content.write(to: historyFile, atomically: true, encoding: .utf8)
-    }
-
-    private var isTTY: Bool {
-        isatty(STDIN_FILENO) != 0 && isatty(STDOUT_FILENO) != 0
     }
 }
