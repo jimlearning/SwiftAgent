@@ -77,6 +77,7 @@ public final class LineEditor: @unchecked Sendable {
         raw.c_cc.0 = 1
         raw.c_cc.1 = 0
         tcsetattr(fd, TCSADRAIN, &raw)
+        tcflush(fd, TCIFLUSH)  // drain any stale bytes from cooked-mode buffer
 
         defer {
             tcsetattr(fd, TCSADRAIN, &saved)
@@ -475,24 +476,25 @@ public final class LineEditor: @unchecked Sendable {
     private func redrawLine(prompt: String, buffer: String, cursorPos: Int) {
         let styledPrompt = "\u{001B}[1;34m\(prompt)\u{001B}[0m"
         let promptLen = prompt.count
-        let newlineCount = buffer.components(separatedBy: "\n").count - 1
+        let lines = buffer.components(separatedBy: "\n")
+        let totalRows = lines.count  // 1+ for multiline
 
-        // Move up to clear all previously drawn lines, then clear to end of display
+        // Move up to clear previous output, then clear to end of display
         if drawnLines > 1 {
             writeToStdout("\u{001B}[\(drawnLines - 1)A")
         }
         writeToStdout("\r\u{001B}[J")
 
-        // Draw prompt + buffer. \n in buffer is padded with prompt-width spaces
-        // so continuation lines align under the first character of the first line:
-        //   You: first line
-        //        second line
-        let pad = String(repeating: " ", count: promptLen)
-        let displayBuffer = buffer.replacingOccurrences(of: "\n", with: "\n" + pad)
-        writeToStdout(styledPrompt + displayBuffer)
+        // Draw first line with prompt
+        writeToStdout(styledPrompt + lines[0])
 
-        // Calculate cursor row/col within the displayed region.
-        // Continuation lines are indented by promptLen, so col includes that offset.
+        // Draw continuation lines: each at column promptLen (aligned under first char)
+        let pad = String(repeating: " ", count: promptLen)
+        for i in 1..<lines.count {
+            writeToStdout("\r\n" + pad + lines[i])
+        }
+
+        // Calculate target cursor row/col
         let prefix = String(buffer.prefix(cursorPos))
         let cursorRows = prefix.components(separatedBy: "\n").count - 1
         let lastNL = prefix.lastIndex(of: "\n")
@@ -503,9 +505,8 @@ public final class LineEditor: @unchecked Sendable {
             colOffset = promptLen + cursorPos
         }
 
-        // Move cursor from end of drawn content back to target position
-        let totalRows = newlineCount
-        let upRows = totalRows - cursorRows
+        // Move cursor from end of drawn content up to the target row
+        let upRows = (lines.count - 1) - cursorRows
         if upRows > 0 {
             writeToStdout("\u{001B}[\(upRows)A")
         }
@@ -514,7 +515,7 @@ public final class LineEditor: @unchecked Sendable {
             writeToStdout("\u{001B}[\(colOffset)C")
         }
 
-        drawnLines = 1 + newlineCount
+        drawnLines = totalRows
     }
 
     private func moveCursorLeft() {
