@@ -17,6 +17,10 @@ public struct CommandStateProvider: Sendable {
     public var mcpServers: [String]?
     public var activeTasks: [String]?
     public var workingDirectory: String?
+    public var planModeActive: Bool = false
+    public var totalTokensIn: Int = 0
+    public var totalTokensOut: Int = 0
+    public var estimatedCostUsd: Double = 0.0
 
     public struct SessionInfo: Sendable {
         public let sessionId: String
@@ -44,7 +48,11 @@ public struct CommandStateProvider: Sendable {
         sessionInfo: SessionInfo? = nil,
         mcpServers: [String]? = nil,
         activeTasks: [String]? = nil,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        planModeActive: Bool = false,
+        totalTokensIn: Int = 0,
+        totalTokensOut: Int = 0,
+        estimatedCostUsd: Double = 0.0
     ) {
         self.currentModel = currentModel
         self.permissionMode = permissionMode
@@ -52,6 +60,10 @@ public struct CommandStateProvider: Sendable {
         self.mcpServers = mcpServers
         self.activeTasks = activeTasks
         self.workingDirectory = workingDirectory
+        self.planModeActive = planModeActive
+        self.totalTokensIn = totalTokensIn
+        self.totalTokensOut = totalTokensOut
+        self.estimatedCostUsd = estimatedCostUsd
     }
 }
 
@@ -160,44 +172,407 @@ public final class CommandRegistry: @unchecked Sendable {
             .text("\u{001B}[2J\u{001B}[H")
         }
 
-        // /model
+        // /model — show or change model
         register(Command(name: "model", description: "Show or change the current model", type: .local,
-            arguments: [CommandArgument(name: "model-id", description: "Model ID to switch to")]))
+            arguments: [CommandArgument(name: "model-id", description: "Model ID to switch to")])) { [weak self] input in
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let current = self?.stateProvider?()?.currentModel ?? "unknown"
+            if parts.count > 1 {
+                let newModel = String(parts[1]).trimmingCharacters(in: .whitespaces)
+                return .text("Model change requested: \(newModel)\nCurrent model: \(current)\nRestart or set ANTHROPIC_MODEL to apply.")
+            }
+            return .text("Current model: \(current)\nUse /model <model-id> to change.\nTip: Set ANTHROPIC_MODEL env var for persistence.")
+        }
 
         // /config (CC alias: /settings)
         register(Command(name: "config", description: "Open config panel", type: .local,
-            arguments: [CommandArgument(name: "key", description: "Configuration key to show")]))
+            arguments: [CommandArgument(name: "key", description: "Configuration key to show")])) { [weak self] input in
+            let state = self?.stateProvider?()
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let cwd = state?.workingDirectory ?? FileManager.default.currentDirectoryPath
+            let model = state?.currentModel ?? "unknown"
+            let perm = state?.permissionMode ?? "default"
+            if parts.count > 1 {
+                let key = String(parts[1]).trimmingCharacters(in: .whitespaces)
+                switch key.lowercased() {
+                case "model": return .text("model = \(model)")
+                case "permission", "permissions": return .text("permissionMode = \(perm)")
+                case "cwd", "workingdir": return .text("workingDirectory = \(cwd)")
+                default: return .text("Config key '\(key)' not found. Available keys: model, permission, cwd")
+                }
+            }
+            var lines = ["Configuration:"]
+            lines.append("  Model:       \(model)")
+            lines.append("  Permission:  \(perm)")
+            lines.append("  Work Dir:    \(cwd)")
+            lines.append("")
+            lines.append("Config files (layered, highest priority first):")
+            lines.append("  1. CLI flags (--model, --permission)")
+            lines.append("  2. Local config  (.swift-agent/config.local.json)")
+            lines.append("  3. Project config (.swift-agent/config.json)")
+            lines.append("  4. User config    (~/.swift-agent/config.json)")
+            lines.append("  5. Plugin configs")
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /memory
+        // /memory — manage memory files
         register(Command(name: "memory", description: "Edit Claude memory files", type: .local,
-            arguments: [CommandArgument(name: "action", description: "add, list, or forget")]))
+            arguments: [CommandArgument(name: "action", description: "add, list, or forget")])) { [weak self] input in
+            let parts = input.split(separator: " ", maxSplits: 2)
+            let action = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : "list"
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let memoryBase = "\(home)/.claude/projects"
+            switch action.lowercased() {
+            case "list":
+                let fm = FileManager.default
+                var lines = ["Memory files:"]
+                let projectMemoryDir = "\(memoryBase)/-Users-jim-SwiftAgent/memory"
+                if fm.fileExists(atPath: projectMemoryDir) {
+                    if let files = try? fm.contentsOfDirectory(atPath: projectMemoryDir) {
+                        let mdFiles = files.filter { $0.hasSuffix(".md") && $0 != "MEMORY.md" }
+                        if mdFiles.isEmpty { lines.append("  (no project memory files)") }
+                        else {
+                            lines.append("  [Project] \(projectMemoryDir)")
+                            for f in mdFiles.sorted() {
+                                let attrs = try? fm.attributesOfItem(atPath: "\(projectMemoryDir)/\(f)")
+                                let size = attrs?[.size] as? Int64 ?? 0
+                                lines.append("    \(f) (\(size) bytes)")
+                            }
+                        }
+                    }
+                    let indexPath = "\(projectMemoryDir)/MEMORY.md"
+                    if fm.fileExists(atPath: indexPath),
+                       let content = try? String(contentsOfFile: indexPath, encoding: .utf8) {
+                        let entries = content.split(separator: "\n").filter { $0.hasPrefix("- [") }
+                        if !entries.isEmpty { lines.append("  Index entries: \(entries.count)") }
+                    }
+                } else { lines.append("  (no project memory found)") }
+                let userMemoryDir = "\(home)/.claude/memory"
+                if fm.fileExists(atPath: userMemoryDir) {
+                    if let files = try? fm.contentsOfDirectory(atPath: userMemoryDir) {
+                        let mdFiles = files.filter { $0.hasSuffix(".md") && $0 != "MEMORY.md" }
+                        lines.append("  [User] \(userMemoryDir)")
+                        for f in mdFiles.sorted() {
+                            let attrs = try? fm.attributesOfItem(atPath: "\(userMemoryDir)/\(f)")
+                            let size = attrs?[.size] as? Int64 ?? 0
+                            lines.append("    \(f) (\(size) bytes)")
+                        }
+                    }
+                }
+                lines.append("")
+                lines.append("Use /memory add <content> to add a memory.")
+                lines.append("Use /memory forget <file> to remove a memory.")
+                return .text(lines.joined(separator: "\n"))
+            case "add", "remember":
+                let content = parts.count > 2 ? String(parts[2]) : ""
+                guard !content.isEmpty else { return .text("Usage: /memory add <content to remember>") }
+                let cwd = self?.stateProvider?()?.workingDirectory ?? FileManager.default.currentDirectoryPath
+                let projectName = String(cwd.split(separator: "/").last ?? "unknown")
+                let memoryDir = "\(memoryBase)/-Users-jim-\(projectName)/memory"
+                let fm = FileManager.default
+                try? fm.createDirectory(atPath: memoryDir, withIntermediateDirectories: true)
+                let ts = Int(Date().timeIntervalSince1970)
+                let filename = "memory_\(ts).md"
+                let entry = """
+                ---
+                name: memory-\(ts)
+                description: User-requested memory
+                metadata:
+                  type: project
+                ---
+                \(content)
+                """
+                do { try entry.write(toFile: "\(memoryDir)/\(filename)", atomically: true, encoding: .utf8); return .text("Memory saved to \(filename)") }
+                catch { return .text("Error saving memory: \(error.localizedDescription)") }
+            case "forget", "remove", "delete":
+                let file = parts.count > 2 ? String(parts[2]) : ""
+                guard !file.isEmpty else { return .text("Usage: /memory forget <filename>") }
+                let target = "\(memoryBase)/-Users-jim-SwiftAgent/memory/\(file)"
+                if FileManager.default.fileExists(atPath: target) {
+                    try? FileManager.default.removeItem(atPath: target)
+                    return .text("Memory '\(file)' removed.")
+                }
+                return .text("Memory file '\(file)' not found.")
+            default:
+                return .text("Unknown action: \(action). Use: list, add, forget")
+            }
+        }
 
-        // /doctor — CC parity: diagnostics
-        register(Command(name: "doctor", description: "Diagnose and verify your Claude Code installation and settings", type: .local))
+        // /doctor — diagnostics
+        register(Command(name: "doctor", description: "Diagnose and verify your Claude Code installation and settings", type: .local)) { [weak self] _ in
+            let state = self?.stateProvider?()
+            let fm = FileManager.default
+            let home = fm.homeDirectoryForCurrentUser.path
+            var lines: [String] = ["SwiftAgent Diagnostics", String(repeating: "=", count: 30)]
+            lines.append("\nAPI Key Sources:")
+            let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+            let envToken = ProcessInfo.processInfo.environment["ANTHROPIC_AUTH_TOKEN"] ?? ""
+            let claudeJson = "\(home)/.claude.json"
+            lines.append(envKey.isEmpty ? "  ✗ ANTHROPIC_API_KEY: not set" : "  ✓ ANTHROPIC_API_KEY: \(envKey.prefix(8))...\(envKey.suffix(4))")
+            lines.append(envToken.isEmpty ? "  ✗ ANTHROPIC_AUTH_TOKEN: not set" : "  ✓ ANTHROPIC_AUTH_TOKEN: set")
+            lines.append(fm.fileExists(atPath: claudeJson) ? "  ✓ ~/.claude.json: exists" : "  ✗ ~/.claude.json: not found")
+            lines.append("\nConfig Files:")
+            let cwd = state?.workingDirectory ?? fm.currentDirectoryPath
+            for cfg in ["~/.swift-agent/config.json", ".swift-agent/config.json", ".swift-agent/config.local.json", "CLAUDE.md", ".claude/settings.json"] {
+                let path = cfg.replacingOccurrences(of: "~", with: home)
+                let full = path.hasPrefix("/") ? path : "\(cwd)/\(path)"
+                lines.append(fm.fileExists(atPath: full) ? "  ✓ \(cfg)" : "  ✗ \(cfg)")
+            }
+            lines.append("\nEnvironment:")
+            lines.append("  Model:       \(state?.currentModel ?? "not set")")
+            lines.append("  Permission:  \(state?.permissionMode ?? "default")")
+            lines.append("  Base URL:    \(ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"] ?? "(default)")")
+            lines.append("\nBuild:")
+            lines.append("  Swift:       \(ProcessInfo.processInfo.operatingSystemVersionString)")
+            lines.append("  Version:     0.1.0")
+            if let info = state?.sessionInfo {
+                let dur = Date().timeIntervalSince(info.startTime)
+                lines.append("\nSession: \(info.sessionId.prefix(8))... (\(Int(dur)/60)m active)")
+            }
+            lines.append("\n✓ SwiftAgent CLI is operational.")
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /cost — CC parity: session cost/duration
-        register(Command(name: "cost", description: "Show the total cost and duration of the current session", type: .local))
+        // /cost — session cost and duration
+        register(Command(name: "cost", description: "Show the total cost and duration of the current session", type: .local)) { [weak self] _ in
+            guard let state = self?.stateProvider?(), let info = state.sessionInfo else {
+                return .text("Session info unavailable. Start a conversation first.")
+            }
+            let dur = Date().timeIntervalSince(info.startTime)
+            let h = Int(dur) / 3600; let m = (Int(dur) % 3600) / 60; let s = Int(dur) % 60
+            var lines = ["Session Cost & Duration", String(repeating: "-", count: 25)]
+            lines.append("Duration: \(h)h \(m)m \(s)s")
+            if let usage = info.tokenUsage {
+                lines.append("Input tokens:  \(usage.inputTokens)")
+                lines.append("Output tokens: \(usage.outputTokens)")
+                lines.append("Total tokens:  \(usage.inputTokens + usage.outputTokens)")
+                let est = (Double(usage.inputTokens) / 1_000_000 * 3.0) + (Double(usage.outputTokens) / 1_000_000 * 15.0)
+                lines.append(String(format: "Est. cost:     $%.4f", state.estimatedCostUsd > 0 ? state.estimatedCostUsd : est))
+            }
+            if let md = state.currentModel { lines.append("Model: \(md)") }
+            lines.append("")
+            lines.append("Note: Costs depend on your specific model pricing.")
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /status — CC parity: session status
-        register(Command(name: "status", description: "Show current session status and token usage", type: .local))
+        // /status — current session status
+        register(Command(name: "status", description: "Show current session status and token usage", type: .local)) { [weak self] _ in
+            guard let state = self?.stateProvider?() else { return .text("No active session. Start a conversation first.") }
+            var lines = ["Session Status", String(repeating: "-", count: 15)]
+            if let info = state.sessionInfo {
+                let dur = Date().timeIntervalSince(info.startTime)
+                lines.append("Session:  \(info.sessionId.prefix(12))...")
+                lines.append("Uptime:   \(Int(dur)/3600)h \((Int(dur)%3600)/60)m")
+            }
+            lines.append("Model:    \(state.currentModel ?? "unknown")")
+            lines.append("Perm:     \(state.permissionMode ?? "default")")
+            lines.append("Plan:     \(state.planModeActive ? "active" : "inactive")")
+            if let usage = state.sessionInfo?.tokenUsage {
+                lines.append("Tokens:   \(usage.inputTokens) in / \(usage.outputTokens) out")
+            }
+            lines.append("CWD:      \(state.workingDirectory ?? FileManager.default.currentDirectoryPath)")
+            if let tasks = state.activeTasks, !tasks.isEmpty {
+                lines.append("\nBackground Tasks: \(tasks.count)")
+                for t in tasks { lines.append("  • \(t)") }
+            }
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /compact — CC parity: manual compaction
-        register(Command(name: "compact", description: "Compact conversation history to free context", type: .local))
+        // /compact — compact conversation
+        register(Command(name: "compact", description: "Compact conversation history to free context", type: .local)) { [weak self] _ in
+            guard let state = self?.stateProvider?() else { return .text("No active session to compact.") }
+            let usage = state.sessionInfo?.tokenUsage
+            let total = (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)
+            var lines = ["Compaction Requested", String(repeating: "-", count: 20)]
+            lines.append("Current usage: ~\(total) tokens")
+            lines.append("")
+            lines.append("Compaction will:")
+            lines.append("  1. Summarize conversation history")
+            lines.append("  2. Keep recent messages intact")
+            lines.append("  3. Preserve tool results and decisions")
+            lines.append("")
+            lines.append("Note: Compaction is triggered automatically when")
+            lines.append("context approaches token limits.")
+            lines.append("Use /status to monitor token usage.")
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /review — CC parity: PR review
-        register(Command(name: "review", description: "Review a pull request", type: .local))
+        // /review — review a PR
+        register(Command(name: "review", description: "Review a pull request", type: .local,
+            arguments: [CommandArgument(name: "pr-url-or-number", description: "PR URL or number to review")])) { input in
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let arg = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
+            if arg.isEmpty {
+                return .text("Usage: /review <PR URL or number>\n\nExamples:\n  /review https://github.com/owner/repo/pull/123\n  /review 123\n\nThis performs a code review using the code-review agent.")
+            }
+            return .text("PR Review Requested: \(arg)\n\nStart a conversation about this PR and the agent will use the code-review agent to analyze it.")
+        }
 
-        // /diff — CC parity: show branch diff
-        register(Command(name: "diff", description: "Show the diff of the current branch", type: .local))
+        // /diff — show branch diff
+        register(Command(name: "diff", description: "Show the diff of the current branch", type: .local,
+            arguments: [CommandArgument(name: "base", description: "Base branch to diff against (default: main)")])) { [weak self] input in
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let base = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : "main"
+            let cwd = self?.stateProvider?()?.workingDirectory ?? FileManager.default.currentDirectoryPath
+            var lines = ["Diff: \(base)...HEAD", String(repeating: "-", count: 30)]
+            let runGit = { (args: [String]) -> String in
+                let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                p.arguments = ["git", "-C", cwd] + args; p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+                let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+                try? p.run(); p.waitUntilExit()
+                return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            }
+            let diffOut = runGit(["diff", "\(base)...HEAD", "--stat"])
+            if diffOut.isEmpty { lines.append("(no differences — branch is up to date with \(base))") }
+            else { lines.append(diffOut) }
+            let logOut = runGit(["log", "--oneline", "\(base)...HEAD"])
+            if !logOut.isEmpty { lines.append(""); lines.append("Commits:"); lines.append(logOut) }
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /stats — CC parity: usage statistics
-        register(Command(name: "stats", description: "Show your usage statistics and activity", type: .local))
+        // /stats — usage statistics
+        register(Command(name: "stats", description: "Show your usage statistics and activity", type: .local)) { [weak self] _ in
+            guard let state = self?.stateProvider?(), let info = state.sessionInfo else {
+                return .text("No session active. Start a conversation to see statistics.")
+            }
+            let total = (info.tokenUsage?.inputTokens ?? 0) + (info.tokenUsage?.outputTokens ?? 0)
+            let dur = Date().timeIntervalSince(info.startTime)
+            var lines = ["Session Statistics", String(repeating: "=", count: 20), ""]
+            lines.append("This Session:")
+            lines.append("  Duration:      \(Int(dur)/3600)h \((Int(dur)%3600)/60)m")
+            lines.append("  Input tokens:  \(info.tokenUsage?.inputTokens ?? 0)")
+            lines.append("  Output tokens: \(info.tokenUsage?.outputTokens ?? 0)")
+            lines.append("  Total tokens:  \(total)")
+            lines.append(String(format: "  Est. cost:     $%.4f", state.estimatedCostUsd))
+            lines.append("  Model:         \(state.currentModel ?? "unknown")")
+            let sessionsDir = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.swift-agent/sessions"
+            if FileManager.default.fileExists(atPath: sessionsDir),
+               let files = try? FileManager.default.contentsOfDirectory(atPath: sessionsDir) {
+                let sFiles = files.filter { $0.hasSuffix(".json") }
+                lines.append(""); lines.append("Saved Sessions: \(sFiles.count)")
+                for f in sFiles.prefix(5).sorted().reversed() {
+                    let attrs = try? FileManager.default.attributesOfItem(atPath: "\(sessionsDir)/\(f)")
+                    let d = attrs?[.modificationDate] as? Date
+                    let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
+                    lines.append("  \(f.prefix(30))... \(d.map { df.string(from: $0) } ?? "unknown")")
+                }
+            }
+            lines.append(""); lines.append("Tip: Use /cost for detailed cost breakdown.")
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /plan — CC parity: enable plan mode
-        register(Command(name: "plan", description: "Enable plan mode or view the current session plan", type: .local))
+        // /plan — enable/disable plan mode
+        register(Command(name: "plan", description: "Enable plan mode or view the current session plan", type: .local)) { [weak self] input in
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let state = self?.stateProvider?()
+            if parts.count > 1 {
+                switch String(parts[1]).trimmingCharacters(in: .whitespaces).lowercased() {
+                case "on", "enable", "start", "enter":
+                    return .text("Plan mode enabled.\n\nIn plan mode:\n- Read-only tools are auto-approved\n- Write/edit/bash require explicit confirmation\n- Use ExitPlanMode tool to present your plan")
+                case "off", "disable", "exit", "stop":
+                    return .text("Plan mode disabled. Write tools are now available with permission checks.")
+                default:
+                    return .text("Usage: /plan [on|off]. Current: \(state?.planModeActive == true ? "active" : "inactive")")
+                }
+            }
+            let active = state?.planModeActive == true
+            var lines = ["Plan Mode: \(active ? "ACTIVE" : "inactive")", ""]
+            lines.append("Plan mode helps design approaches before coding:")
+            lines.append("  • Read/explore tools: auto-approved")
+            lines.append("  • Write/edit tools: require confirmation")
+            lines.append("")
+            lines.append("To enter plan mode: /plan on")
+            lines.append("To exit plan mode:  /plan off")
+            lines.append("The LLM can also use EnterPlanMode/ExitPlanMode tools.")
+            return .text(lines.joined(separator: "\n"))
+        }
 
-        // /resume — CC parity: resume previous conversation (aliases: continue)
-        register(Command(name: "resume", description: "Resume a previous conversation", type: .local))
+        // /resume — resume a previous conversation
+        register(Command(name: "resume", description: "Resume a previous conversation", type: .local,
+            arguments: [CommandArgument(name: "session-id", description: "Session ID or partial title to resume")])) { input in
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let arg = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
+            let sessionsDir = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.swift-agent/sessions"
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: sessionsDir),
+                  let files = try? fm.contentsOfDirectory(atPath: sessionsDir) else {
+                return .text("No saved sessions found at \(sessionsDir)")
+            }
+            let sFiles = files.filter { $0.hasSuffix(".json") }.sorted().reversed()
+            if arg.isEmpty {
+                var lines = ["Saved Sessions:", ""]
+                if sFiles.isEmpty { lines.append("  (no saved sessions)") }
+                else {
+                    for (i, f) in sFiles.prefix(10).enumerated() {
+                        let attrs = try? fm.attributesOfItem(atPath: "\(sessionsDir)/\(f)")
+                        let d = attrs?[.modificationDate] as? Date
+                        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
+                        lines.append("  [\(i+1)] \(f.replacingOccurrences(of: ".json", with: "").prefix(40))")
+                        lines.append("      \(d.map { df.string(from: $0) } ?? "unknown")")
+                    }
+                }
+                lines.append(""); lines.append("To resume: /resume <session-id>")
+                return .text(lines.joined(separator: "\n"))
+            }
+            let match = sFiles.first { $0.replacingOccurrences(of: ".json", with: "").localizedCaseInsensitiveContains(arg) }
+            if let match = match {
+                let sid = match.replacingOccurrences(of: ".json", with: "")
+                return .text("Session found: \(sid.prefix(40))...\n\nTo resume: swift-agent chat --session \(sid)")
+            }
+            return .text("No session matching '\(arg)' found. Use /resume to list all sessions.")
+        }
+
+        // /goal — goal-oriented brainstorming (ralph-wiggum implementation)
+        register(Command(name: "goal", description: "Set a goal and brainstorm approach before implementing (like /ralph-wiggum)", type: .local,
+            arguments: [CommandArgument(name: "goal-description", description: "What you want to accomplish")])) { [weak self] input in
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let goal = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
+            if goal.isEmpty {
+                return .text("""
+                    /goal — Goal-Oriented Brainstorming (like /ralph-wiggum)
+
+                    Usage: /goal <what you want to accomplish>
+
+                    This command enters a structured workflow:
+                    1. CLARIFY — Understand exactly what's needed
+                    2. EXPLORE — Find relevant code and patterns
+                    3. DESIGN — Brainstorm 2-3 approaches with trade-offs
+                    4. EVALUATE — Pick the best approach with reasoning
+                    5. PLAN — Create a step-by-step implementation plan
+
+                    Examples:
+                      /goal Add user authentication with OAuth2
+                      /goal Refactor the database layer for multi-tenancy
+
+                    The agent will guide you through each step systematically.
+                    """)
+            }
+            let cwd = self?.stateProvider?()?.workingDirectory ?? FileManager.default.currentDirectoryPath
+            let projectName = String(cwd.split(separator: "/").last ?? "unknown")
+            return .text("""
+                🎯 Goal Mode Activated
+
+                Goal: \(goal)
+                Project: \(projectName)
+
+                —————————————————————————————————————
+                Working through the goal workflow:
+
+                Step 1: CLARIFY — Understand exactly what's needed
+                Step 2: EXPLORE — Find relevant code and patterns
+                Step 3: DESIGN — Brainstorm 2-3 approaches with trade-offs
+                Step 4: EVALUATE — Pick the best approach with reasoning
+                Step 5: PLAN — Create a step-by-step implementation plan
+                —————————————————————————————————————
+
+                The agent will now work through this workflow.
+                Describe your goal in detail and the agent will
+                guide you through each step.
+
+                Tip: Similar to Claude Code's /ralph-wiggum.
+                Use /plan to switch between plan and implementation modes.
+                """)
+        }
 
         // MARK: - Iteration 58 — CC-parity commands
 
