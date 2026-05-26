@@ -24,6 +24,9 @@ public struct ExitPlanModeV2Tool: Tool {
             return ToolResult(content: "Error: plan is required", isError: true)
         }
 
+        // Deactivate plan mode state
+        context.setPlanModeActive?(false)
+
         return ToolResult(content: """
             ## Implementation Plan
 

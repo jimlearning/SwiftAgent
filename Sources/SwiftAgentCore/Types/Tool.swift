@@ -706,6 +706,9 @@ public struct ToolUseContext: Sendable {
     public var requestPrompt: (@Sendable (String, String?) -> (@Sendable (Any) async -> Any)?)?
     /// Critical system reminder injected into system prompt. CC: criticalSystemReminder_EXPERIMENTAL.
     public var criticalSystemReminder_EXPERIMENTAL: String?
+    /// Toggle plan mode active state. Called by EnterPlanMode / ExitPlanMode tools.
+    /// Matches CC's setPlanMode(active: boolean) on AppState.
+    public var setPlanModeActive: (@Sendable (Bool) -> Void)?
     /// When true, preserve toolUseResult on messages even for subagents.
     /// Used by in-process teammates. CC: preserveToolUseResults.
     public var preserveToolUseResults: Bool?
@@ -788,6 +791,7 @@ public struct ToolUseContext: Sendable {
         requestPrompt: (@Sendable (String, String?) -> (@Sendable (Any) async -> Any)?)? = nil,
         criticalSystemReminder_EXPERIMENTAL: String? = nil,
         preserveToolUseResults: Bool? = nil,
+        setPlanModeActive: (@Sendable (Bool) -> Void)? = nil,
         contentReplacementState: (any Sendable)? = nil
     ) {
         self.workingDirectory = workingDirectory
@@ -863,6 +867,7 @@ public struct ToolUseContext: Sendable {
         self.requestPrompt = requestPrompt
         self.criticalSystemReminder_EXPERIMENTAL = criticalSystemReminder_EXPERIMENTAL
         self.preserveToolUseResults = preserveToolUseResults
+        self.setPlanModeActive = setPlanModeActive
         self.contentReplacementState = contentReplacementState
     }
 }

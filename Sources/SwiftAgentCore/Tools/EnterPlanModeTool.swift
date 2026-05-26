@@ -23,6 +23,9 @@ public struct EnterPlanModeTool: Tool {
         if let d = input["description"], case .string(let s) = d { planDesc = s }
         else { planDesc = "No description provided" }
 
+        // Activate plan mode state
+        context.setPlanModeActive?(true)
+
         return ToolResult(content: """
             Entering plan mode: \(planDesc)
 
