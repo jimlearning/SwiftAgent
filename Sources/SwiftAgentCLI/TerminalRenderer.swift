@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SwiftAgentCore
 
 /// Terminal output rendering utilities.
@@ -99,5 +100,118 @@ public struct TerminalRenderer: Sendable {
     /// Restore cursor position.
     public func restoreCursor() -> String {
         capability.isTTY ? "\u{001B}[u" : ""
+    }
+
+    // MARK: - Panel rendering (Nanobot-style Rich Panel equivalent)
+
+    /// Render a boxed panel around content text, similar to Rich's `Panel(Markdown(content))`.
+    /// Uses Unicode box-drawing characters with optional colored border.
+    public func renderPanel(title: String, content: String, borderColor: ANSIColor = .cyan) -> String {
+        let termWidth = capability.columns
+        let panelWidth = min(termWidth, 80)
+        let innerWidth = panelWidth - 4 // "│ " + " │"
+
+        // Wrap lines to inner width
+        let rawLines = content.components(separatedBy: "\n")
+        var wrappedLines: [String] = []
+        for line in rawLines {
+            if line.isEmpty {
+                wrappedLines.append("")
+                continue
+            }
+            var remaining = line
+            while !remaining.isEmpty {
+                if remaining.count <= innerWidth {
+                    wrappedLines.append(remaining)
+                    break
+                }
+                // Try to break at a word boundary
+                let breakIndex = remaining.index(
+                    remaining.startIndex, offsetBy: innerWidth, limitedBy: remaining.endIndex
+                ) ?? remaining.endIndex
+                if breakIndex == remaining.endIndex || remaining[breakIndex] == " " {
+                    wrappedLines.append(String(remaining[..<breakIndex]))
+                    remaining = String(remaining[remaining.index(after: breakIndex)...])
+                    if remaining.first == " " { remaining = String(remaining.dropFirst()) }
+                } else {
+                    // Find last space within the width
+                    if let lastSpace = remaining[..<breakIndex].lastIndex(of: " ") {
+                        wrappedLines.append(String(remaining[..<lastSpace]))
+                        remaining = String(remaining[remaining.index(after: lastSpace)...])
+                    } else {
+                        // Hard break — no spaces found
+                        wrappedLines.append(String(remaining[..<breakIndex]))
+                        remaining = String(remaining[breakIndex...])
+                    }
+                }
+            }
+        }
+
+        let colorize = { (s: String) -> String in self.capability.color(s, color: borderColor) }
+
+        // Top border: ╭── title ────────────────────────╮
+        let titleSegment = "── " + title + " ──"
+        let remainingTop = max(0, panelWidth - 2 - titleSegment.count)
+        var result = ""
+        result += colorize("╭" + titleSegment + String(repeating: "─", count: remainingTop) + "╮")
+        result += "\n"
+
+        // Empty padding line after top border
+        result += colorize("│" + String(repeating: " ", count: panelWidth - 2) + "│")
+        result += "\n"
+
+        // Content lines
+        for line in wrappedLines {
+            let padded = line.padding(toLength: innerWidth, withPad: " ", startingAt: 0)
+            result += colorize("│ ") + padded + colorize(" │")
+            result += "\n"
+        }
+
+        // Empty padding line before bottom border
+        result += colorize("│" + String(repeating: " ", count: panelWidth - 2) + "│")
+        result += "\n"
+
+        // Bottom border
+        result += colorize("╰" + String(repeating: "─", count: panelWidth - 2) + "╯")
+
+        return capability.scrubANSICodes(result)
+    }
+
+    // MARK: - Spinner
+
+    /// A single spinner frame for inline animation (e.g., during LLM generation).
+    /// Returns the ANSI string for one frame of a dots spinner.
+    public func spinnerFrame(index: Int) -> String {
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        let frame = frames[index % frames.count]
+        return capability.color(frame, color: .cyan)
+    }
+
+    /// Renders a "Thinking..." line with spinner.
+    public func renderThinkingLine(frame: Int) -> String {
+        return "\r  \(spinnerFrame(index: frame)) Thinking..."
+    }
+
+    // MARK: - TTY drain (Nanobot's `_flush_pending_tty_input`)
+
+    /// Discard unread keypresses typed while the model was generating, so they
+    /// don't appear as the next input line.
+    public func drainTTYInput() {
+        let fd = STDIN_FILENO
+        guard isatty(fd) != 0 else { return }
+
+        // Try termios flush first (faster, comprehensive)
+        var term = termios()
+        if tcgetattr(fd, &term) == 0 {
+            tcflush(fd, TCIFLUSH)
+            return
+        }
+
+        // Fallback: non-blocking read to drain buffer
+        var fds = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        var buf = [UInt8](repeating: 0, count: 4096)
+        while poll(&fds, 1, 0) > 0 && (fds.revents & Int16(POLLIN)) != 0 {
+            if read(fd, &buf, buf.count) <= 0 { break }
+        }
     }
 }

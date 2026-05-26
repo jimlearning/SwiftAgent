@@ -3,6 +3,8 @@ import ArgumentParser
 import SwiftAgentCore
 
 /// Interactive chat command — the primary interaction mode.
+/// Uses a Nanobot-style REPL: colored prompt, spinner while thinking,
+/// write-once response panel, readline history.
 struct ChatCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "chat",
@@ -21,8 +23,11 @@ struct ChatCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable colors")
     var noColor: Bool = false
 
+    @Flag(name: .long, help: "Disable markdown rendering in responses")
+    var noMarkdown: Bool = false
+
     func run() async throws {
-        // Resolve API key: --api-key flag > env var > keychain > ~/.claude.json
+        // Resolve API key
         let resolver = APIKeyResolver()
         let key = apiKey ?? resolver.resolve() ?? ""
         if key.isEmpty {
@@ -43,7 +48,7 @@ struct ChatCommand: AsyncParsableCommand {
         let streamRenderer = StreamRenderer()
 
         print(renderer.renderBanner(version: "0.1.0"))
-        print("Type /help for commands, /exit to quit.\n")
+        print("\nType [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
 
         // Set up engine
         let client = LLMClient(apiKey: key, baseURL: baseURL, model: model)
@@ -53,25 +58,50 @@ struct ChatCommand: AsyncParsableCommand {
         let state = AppState()
         _ = AppStateStore(state: state)
 
-        // REPL
+        let editor = LineEditor()
+
+        // Nanobot-style REPL
         while true {
-            let prompt = "swift-agent › "
+            // Drain any keystrokes typed while the model was generating
+            renderer.drainTTYInput()
 
-            print(prompt, terminator: "")
-            fflush(stdout)
-
-            guard let line = readLine() else { break }
-
+            guard let line = editor.readLine(prompt: "swift-agent › ") else { break }
             let input = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if input.isEmpty { continue }
 
-            // Handle slash commands via CommandRegistry
+            // Handle slash commands
             if input.hasPrefix("/") {
+                let parts = input.split(separator: " ", maxSplits: 1)
+                let cmd = String(parts[0])
+                if cmd == "/exit" || cmd == "/quit" { break }
+                if cmd == "/clear" {
+                    print(renderer.clearScreen())
+                    continue
+                }
                 if await handleCommand(input) { break }
                 continue
             }
 
+            // Store in history (editor saves on valid input)
+            editor.addEntry(input)
+
             print()
+
+            // Show spinner while thinking (like nanobot's console.status)
+            let spinnerTask = Task {
+                var frame = 0
+                while !Task.isCancelled {
+                    print(renderer.renderThinkingLine(frame: frame), terminator: "")
+                    fflush(stdout)
+                    frame += 1
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                }
+                // Clear the spinner line
+                print("\r\u{001B}[K", terminator: "")
+                fflush(stdout)
+            }
+
+            var responseText = ""
 
             do {
                 let stream = client.send(
@@ -80,21 +110,35 @@ struct ChatCommand: AsyncParsableCommand {
                     maxTokens: 4096
                 )
 
+                // Buffer the entire response (Nanobot's write-once approach)
                 for try await event in stream {
-                    let output = streamRenderer.render(event: event, currentOutput: "")
+                    let output = streamRenderer.render(event: event, currentOutput: responseText)
                     let sanitized = output.replacingOccurrences(of: "\r\n", with: "\n")
                     if !sanitized.isEmpty {
-                        print(sanitized, terminator: "")
-                        fflush(stdout)
+                        responseText = sanitized
                     }
                 }
-
-                print("\n")
             } catch {
-                print("\nError: \(error.localizedDescription)\n")
+                responseText = "Error: \(error.localizedDescription)"
+            }
+
+            // Cancel spinner and clear its line
+            spinnerTask.cancel()
+            // Brief pause so the spinner's cancellation handler can clear the line
+            try? await Task.sleep(nanoseconds: 50_000_000)
+
+            // Display response in a panel (Nanobot's _print_agent_response)
+            let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                print(renderer.renderPanel(title: "swift-agent", content: trimmed))
+                print()
+            } else {
+                print(renderer.renderPanel(title: "swift-agent", content: "(empty response)"))
+                print()
             }
         }
 
+        editor.save()
         print("\nGoodbye!")
     }
 
@@ -134,36 +178,25 @@ struct ChatCommand: AsyncParsableCommand {
         registry.register(ListMcpResourcesTool())
         registry.register(ReadMcpResourceTool())
         registry.register(BriefTool())
-        // Task management (shared TaskManager)
         registry.register(TaskCreateTool(taskManager: taskManager))
         registry.register(TaskGetTool(taskManager: taskManager))
         registry.register(TaskListTool(taskManager: taskManager))
         registry.register(TaskOutputTool(taskManager: taskManager))
         registry.register(TaskUpdateTool(taskManager: taskManager))
         registry.register(TaskStopTool(taskManager: taskManager))
-        // Agent delegation
         registry.register(AgentTool())
         registry.register(SkillTool())
         registry.register(SendMessageTool())
         registry.register(AskUserQuestionTool())
-        // Code intelligence
         registry.register(LSPTool())
-        // Utility tools
         registry.register(EnterPlanModeTool())
         registry.register(ExitPlanModeV2Tool())
-        // Scheduled cron
         registry.register(CronCreateTool())
         registry.register(CronDeleteTool())
         registry.register(CronListTool())
-        // Platform-specific tools
         registry.register(PowerShellTool())
-        // REPL mode is a concept (REPLMode.swift), not a callable tool.
-        // registry.register(REPLTool())
-        // Deferred tool search
         registry.register(ToolSearchTool(toolRegistry: registry))
-        // Sleep / pause
         registry.register(SleepTool())
-        // Missing stubs (synthetic output, remote trigger, team)
         registry.register(SyntheticOutputTool())
         registry.register(RemoteTriggerTool())
         registry.register(TeamCreateTool())
