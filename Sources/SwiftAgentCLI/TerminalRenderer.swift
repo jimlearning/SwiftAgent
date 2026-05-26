@@ -23,12 +23,14 @@ public struct TerminalRenderer: Sendable {
 
     /// Render a welcome banner.
     public func renderBanner(version: String) -> String {
-        let banner = """
-        ┌─────────────────────────────────────────┐
-        │  SwiftAgent \(version.padding(toLength: 23, withPad: " ", startingAt: 0))│
-        │  Swift-native AI coding agent            │
-        └─────────────────────────────────────────┘
-        """
+        let innerWidth = 41 // must match the number of ─ in the box borders
+        func padLine(_ text: String) -> String {
+            text.padding(toLength: innerWidth, withPad: " ", startingAt: 0)
+        }
+        let line1 = "│" + padLine("  SwiftAgent \(version)") + "│"
+        let line2 = "│" + padLine("  Swift-native AI coding agent") + "│"
+        let hline = String(repeating: "─", count: innerWidth)
+        let banner = "┌\(hline)┐\n\(line1)\n\(line2)\n└\(hline)┘"
         return capability.scrubANSICodes(ansi(banner, color: theme.primary, style: theme.bold))
     }
 
@@ -174,6 +176,18 @@ public struct TerminalRenderer: Sendable {
         // Bottom border
         result += colorize("╰" + String(repeating: "─", count: panelWidth - 2) + "╯")
 
+        return capability.scrubANSICodes(result)
+    }
+
+    /// Render content with a simple left border (no top/bottom/right borders).
+    /// Used for AI response display — cleaner than the full panel.
+    public func renderLeftBorder(content: String, color: ANSIColor = .cyan) -> String {
+        let colorize = { (s: String) -> String in self.capability.color(s, color: color) }
+        let rawLines = content.components(separatedBy: "\n")
+        var result = ""
+        for line in rawLines {
+            result += colorize("│ ") + line + "\n"
+        }
         return capability.scrubANSICodes(result)
     }
 

@@ -48,7 +48,6 @@ struct ChatCommand: AsyncParsableCommand {
         let capability = TerminalCapability()
         let theme: ColorTheme = noColor ? .monochrome : .default
         let renderer = TerminalRenderer(capability: capability, theme: theme)
-        let streamRenderer = StreamRenderer()
 
         print(renderer.renderBanner(version: "0.1.0"))
         print("\nType [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
@@ -60,15 +59,17 @@ struct ChatCommand: AsyncParsableCommand {
             dl.logInfo("Session started. Model: \(model), Base URL: \(baseURL)")
         }
 
-        // Set up engine
+        // Set up client and tools
         let client = LLMClient(apiKey: key, baseURL: baseURL, model: model, debugLogger: debugLog)
         let registry = ToolRegistry()
         registerBuiltinTools(into: registry)
-
-        let state = AppState()
-        _ = AppStateStore(state: state)
+        let toolDefs = await registry.toolDefinitions()
 
         let editor = LineEditor()
+
+        // Conversation history accumulates across turns so the LLM has full context.
+        // Each turn appends user message → assistant message(s) → tool results.
+        var conversationHistory: [Message] = []
 
         // Nanobot-style REPL
         while true {
@@ -86,6 +87,7 @@ struct ChatCommand: AsyncParsableCommand {
                 if cmd == "/exit" || cmd == "/quit" { break }
                 if cmd == "/clear" {
                     print(renderer.clearScreen())
+                    conversationHistory = []
                     continue
                 }
                 if await handleCommand(input) { break }
@@ -94,16 +96,32 @@ struct ChatCommand: AsyncParsableCommand {
 
             print()
 
-            // Show spinner while thinking (like nanobot's console.status)
+            // Append user message to conversation history
+            conversationHistory.append(Message(type: .user, content: [.text(input)]))
+
+            // Track current tool name for spinner display
+            let currentTool = CurrentToolTracker()
+
+            // Spinner runs during the entire agent loop (may involve multiple
+            // LLM calls and tool executions)
             let spinnerTask = Task {
                 var frame = 0
                 while !Task.isCancelled {
-                    print(renderer.renderThinkingLine(frame: frame), terminator: "")
+                    if currentTool.isThinking {
+                        try? await Task.sleep(nanoseconds: 100_000_000)
+                        continue
+                    }
+                    let line: String
+                    if let toolName = currentTool.name {
+                        line = "\r  \(renderer.spinnerFrame(index: frame)) Running \(toolName)..."
+                    } else {
+                        line = renderer.renderThinkingLine(frame: frame)
+                    }
+                    print(line, terminator: "")
                     fflush(stdout)
                     frame += 1
-                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                    try? await Task.sleep(nanoseconds: 100_000_000)
                 }
-                // Clear the spinner line
                 print("\r\u{001B}[K", terminator: "")
                 fflush(stdout)
             }
@@ -111,43 +129,194 @@ struct ChatCommand: AsyncParsableCommand {
             var responseText = ""
 
             do {
-                let stream = client.send(
-                    messages: [Message(type: .user, content: [.text(input)])],
-                    model: model,
-                    maxTokens: 4096
-                )
+                // --- Inline agent loop (ported from TUIApp's submitInput) ---
+                let maxIterations = 25
+                var iteration = 0
 
-                // Buffer the entire response (Nanobot's write-once approach)
-                for try await event in stream {
-                    let output = streamRenderer.render(event: event, currentOutput: responseText)
-                    let sanitized = output.replacingOccurrences(of: "\r\n", with: "\n")
-                    if !sanitized.isEmpty {
-                        responseText += sanitized
+                while iteration < maxIterations {
+                    iteration += 1
+                    var turnText = ""
+                    var thinkingText = ""
+                    var toolBlocks: [(name: String, id: String, input: [String: JSONValue])] = []
+                    var currentToolName: String = ""
+                    var currentToolID: String = ""
+                    var currentToolInputJSON: String = ""
+
+                    let sysPrompt = systemPrompt()
+                    let stream = client.send(
+                        messages: conversationHistory,
+                        model: model,
+                        systemPrompt: sysPrompt,
+                        maxTokens: 8192,
+                        tools: toolDefs
+                    )
+
+                    for try await event in stream {
+                        switch event {
+                        case .textDelta(let text):
+                            if currentTool.isThinking {
+                                print("\u{001B}[0m")  // end dim + newline
+                                currentTool.isThinking = false
+                            }
+                            turnText += text
+
+                        case .thinkingDelta(let text):
+                            if !currentTool.isThinking {
+                                // First thinking delta: clear spinner and start dim mode
+                                print("\r\u{001B}[K  \u{001B}[2m\(text)", terminator: "")
+                                currentTool.isThinking = true
+                            } else {
+                                print(text, terminator: "")
+                            }
+                            thinkingText += text
+                            fflush(stdout)
+
+                        case .contentBlockStart(_, let block):
+                            if currentTool.isThinking {
+                                print("\u{001B}[0m")  // end dim + newline
+                                currentTool.isThinking = false
+                            }
+                            if case .toolUse(let name, let id) = block {
+                                currentToolName = name
+                                currentToolID = id
+                                currentToolInputJSON = ""
+                                currentTool.name = name
+                            }
+
+                        case .inputJSONDelta(let delta):
+                            currentToolInputJSON += delta
+
+                        case .contentBlockStop:
+                            if !currentToolInputJSON.isEmpty, !currentToolID.isEmpty {
+                                if let data = currentToolInputJSON.data(using: .utf8),
+                                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                    var input: [String: JSONValue] = [:]
+                                    for (k, v) in json {
+                                        if let jv = JSONValue.fromAny(v) { input[k] = jv }
+                                    }
+                                    toolBlocks.append((name: currentToolName, id: currentToolID, input: input))
+                                }
+                                currentToolInputJSON = ""
+                                currentToolID = ""
+                                currentTool.name = nil
+                            }
+
+                        default:
+                            break
+                        }
                     }
+
+                    // No tool calls → model signaled completion
+                    if toolBlocks.isEmpty {
+                        var blocks: [ContentBlock] = []
+                        if !thinkingText.isEmpty { blocks.append(.thinking(thinkingText)) }
+                        if !turnText.isEmpty { blocks.append(.text(turnText)) }
+                        if !blocks.isEmpty {
+                            conversationHistory.append(Message(type: .assistant, content: blocks))
+                        } else {
+                            conversationHistory.append(Message(type: .assistant, content: [.text("[OK]")]))
+                        }
+                        responseText = turnText
+                        break
+                    }
+
+                    // Build assistant message with thinking + tool_use blocks.
+                    // Must include thinking block per API requirements (echoed back).
+                    var assistantBlocks: [ContentBlock] = []
+                    if !thinkingText.isEmpty { assistantBlocks.append(.thinking(thinkingText)) }
+                    if !turnText.isEmpty { assistantBlocks.append(.text(turnText)) }
+                    for tb in toolBlocks {
+                        assistantBlocks.append(.toolUse(id: tb.id, name: tb.name, input: JSONValue.object(tb.input)))
+                    }
+                    conversationHistory.append(Message(type: .assistant, content: assistantBlocks))
+
+                    // Execute tools and collect results
+                    var resultBlocks: [ContentBlock] = []
+                    for tb in toolBlocks {
+                        let summary = await executeTool(name: tb.name, input: tb.input, registry: registry)
+                        resultBlocks.append(.toolResult(
+                            toolUseID: tb.id,
+                            content: .string(summary),
+                            isError: summary.hasPrefix("Error:")
+                        ))
+                    }
+
+                    // Send tool results as a user message with tool_result blocks
+                    conversationHistory.append(Message(type: .user, content: resultBlocks))
+                }
+
+                if iteration >= maxIterations {
+                    responseText = "(Reached max iterations — task may be incomplete)"
                 }
             } catch {
                 debugLog?.logError(error)
                 responseText = "Error: \(error.localizedDescription)"
             }
 
-            // Cancel spinner and clear its line
             spinnerTask.cancel()
-            // Brief pause so the spinner's cancellation handler can clear the line
             try? await Task.sleep(nanoseconds: 50_000_000)
 
-            // Display response in a panel (Nanobot's _print_agent_response)
+            // Display response with left border
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                print(renderer.renderPanel(title: "swift-agent", content: trimmed))
-                print()
+                print(renderer.renderLeftBorder(content: trimmed))
             } else {
-                print(renderer.renderPanel(title: "swift-agent", content: "(empty response)"))
-                print()
+                print(renderer.renderLeftBorder(content: "(done)"))
             }
         }
 
         editor.save()
         print("\nGoodbye!")
+    }
+
+    // MARK: - System prompt
+
+    private func systemPrompt() -> String {
+        let builder = SystemPromptBuilder()
+        return builder.build(for: Conversation())
+    }
+
+    // MARK: - Tool execution
+
+    /// Execute a tool by name and return a string result.
+    /// Uses ToolExecutor for full permission checking and validation,
+    /// falling back to direct Process execution for Bash commands.
+    private func executeTool(
+        name: String,
+        input: [String: JSONValue],
+        registry: ToolRegistry
+    ) async -> String {
+        let bylassAvailable = permission == "bypass"
+
+        let context = ToolUseContext(
+            workingDirectory: FileManager.default.currentDirectoryPath,
+            sessionID: "repl",
+            mode: parsePermissionMode(permission),
+            isBypassPermissionsModeAvailable: bylassAvailable,
+            isAutoModeAvailable: bylassAvailable,
+            permissionPromptHandler: { _, _, _ in
+                bylassAvailable ? .allow : .deny(reason: "Permission prompts not available in REPL mode")
+            }
+        )
+
+        let executor = ToolExecutor(registry: registry)
+        do {
+            let result = try await executor.execute(name: name, input: input, context: context)
+            return result.content
+        } catch {
+            return "Error: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func parsePermissionMode(_ mode: String) -> PermissionMode {
+        switch mode {
+        case "plan": return .plan
+        case "acceptEdits": return .acceptEdits
+        case "bypass": return .bypassPermissions
+        default: return .default
+        }
     }
 
     private func handleCommand(_ input: String) async -> Bool {
@@ -209,5 +378,23 @@ struct ChatCommand: AsyncParsableCommand {
         registry.register(RemoteTriggerTool())
         registry.register(TeamCreateTool())
         registry.register(TeamDeleteTool())
+    }
+}
+
+/// Thread-safe tracker for the currently executing tool name.
+/// Written by the agent loop and read by the spinner Task.
+private final class CurrentToolTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _name: String?
+    private var _isThinking: Bool = false
+
+    var name: String? {
+        get { lock.withLock { _name } }
+        set { lock.withLock { _name = newValue } }
+    }
+
+    var isThinking: Bool {
+        get { lock.withLock { _isThinking } }
+        set { lock.withLock { _isThinking = newValue } }
     }
 }

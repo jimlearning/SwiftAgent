@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0-F05138?logo=swift" alt="Swift 6.0">
   <img src="https://img.shields.io/badge/macOS-14+-lightgrey?logo=apple" alt="macOS 14+">
-  <img src="https://img.shields.io/badge/tests-133%20passing-brightgreen" alt="133 tests">
+  <img src="https://img.shields.io/badge/tests-164%20passing-brightgreen" alt="164 tests">
 </p>
 
 SwiftAgent is a Swift-native coding agent CLI modeled after Claude Code. It provides the full agentic coding experience: read, write, edit, search, shell, git, permission control, MCP integration, multi-agent delegation, and more.
@@ -75,6 +75,8 @@ Run `swift-agent --help` for details.
 --model <model>       Model ID (or set ANTHROPIC_MODEL, default: deepseek-v4-pro)
 --permission <mode>   Permission mode: default, plan, acceptEdits, bypass
 --no-color            Disable ANSI color output
+--no-markdown         Disable markdown rendering in responses
+--debug, -d           Enable debug logging of all API requests and responses
 ```
 
 ### Slash Commands (in-chat)
@@ -90,17 +92,17 @@ Run `swift-agent --help` for details.
 ## Features
 
 ### Agentic Loop
-User input → stream LLM response → parse tool calls → execute tools → loop back. Context auto-compaction with token budget awareness.
+Inline agent loop (ported from TUIApp): user input → stream LLM with thinking display → parse tool calls → execute tools → loop back. Supports up to 25 iterations per turn with full conversation history.
 
-### Tools (6 built-in)
-| Tool | Description |
-|---|---|
-| `ReadTool` | Read files with offset/limit |
-| `WriteTool` | Write/create files |
-| `EditTool` | Exact string replacement editing |
-| `BashTool` | Shell execution with dangerous pattern detection |
-| `GlobTool` | File pattern matching (`**/*.swift`) |
-| `GrepTool` | Regex content search |
+### Tools (43 built-in, CC-aligned)
+Full Claude Code tool ecosystem: Bash, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch, Agent, Skill, TaskCreate/Get/List/Output/Update/Stop, TodoWrite, NotebookEdit, LSP, MCP, Config, Brief, AskUserQuestion, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree, SendMessage, ToolSearch, PowerShell, CronCreate/List/Delete, Sleep, SyntheticOutput, RemoteTrigger, TeamCreate/Delete.
+
+### CLI Experience
+- **Nanobot-style REPL** with raw-mode line editor (arrow keys, history, UTF-8, Ctrl+A/E/K/U/W)
+- **Braille spinner** with live tool name display during execution
+- **Streaming thinking display** — model reasoning shown in dim ANSI style
+- **Left-border response** — clean output with `│` prefix, no box noise
+- **Debug logging** — `--debug` flag writes all API requests/responses to `~/.swift-agent/logs/`
 
 ### Permission & Safety (7-step pipeline)
 1. Bypass check (bypassPermissions mode)
@@ -168,13 +170,15 @@ SwiftAgent/
 │   │   └── Features/           # FeatureFlags (compile-time + runtime)
 │   └── SwiftAgentCLI/          # CLI executable (ArgumentParser)
 │       ├── EntryPoint.swift
-│       ├── ChatCommand.swift
-│       ├── TerminalRenderer.swift
+│       ├── ChatCommand.swift    # Inline agent loop + all 43 tool registrations
+│       ├── TerminalRenderer.swift # ANSI rendering, panel/left-border/banner
 │       ├── TerminalCapability.swift
-│       ├── StatusLine.swift
-│       └── ColorTheme.swift
+│       ├── LineEditor.swift     # Raw-mode line editor with history
+│       ├── DebugLogger.swift    # JSONL debug log for API interactions
+│       ├── ColorTheme.swift
+│       └── StreamRenderer.swift # SSE stream event rendering
 ├── Tests/
-│   └── SwiftAgentCoreTests/    # 133 tests, 39 suites
+│   └── SwiftAgentCoreTests/    # 164 tests, 43 suites
 ├── specs/                      # Phase specifications
 ├── docs/                       # Architecture & roadmap docs
 └── scripts/                    # Build & test scripts
