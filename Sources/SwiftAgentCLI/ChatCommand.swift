@@ -57,6 +57,7 @@ struct ChatCommand: AsyncParsableCommand {
         if let dl = debugLog {
             print("Debug logging enabled → \(dl.logFilePath)")
             dl.logInfo("Session started. Model: \(model), Base URL: \(baseURL)")
+            print()
         }
 
         // Set up client and tools
@@ -76,7 +77,7 @@ struct ChatCommand: AsyncParsableCommand {
             // Drain any keystrokes typed while the model was generating
             renderer.drainTTYInput()
 
-            guard let line = editor.readLine(prompt: "swift-agent › ") else { break }
+            guard let line = editor.readLine(prompt: "You: ") else { break }
             let input = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if input.isEmpty { continue }
 
@@ -93,8 +94,6 @@ struct ChatCommand: AsyncParsableCommand {
                 if await handleCommand(input) { break }
                 continue
             }
-
-            print()
 
             // Append user message to conversation history
             conversationHistory.append(Message(type: .user, content: [.text(input)]))
@@ -155,7 +154,7 @@ struct ChatCommand: AsyncParsableCommand {
                         switch event {
                         case .textDelta(let text):
                             if currentTool.isThinking {
-                                print("\u{001B}[0m")  // end dim + newline
+                                print("\u{001B}[0m\n")  // end dim + blank line separator
                                 currentTool.isThinking = false
                             }
                             turnText += text
@@ -173,7 +172,7 @@ struct ChatCommand: AsyncParsableCommand {
 
                         case .contentBlockStart(_, let block):
                             if currentTool.isThinking {
-                                print("\u{001B}[0m")  // end dim + newline
+                                print("\u{001B}[0m\n")  // end dim + blank line separator
                                 currentTool.isThinking = false
                             }
                             if case .toolUse(let name, let id) = block {
