@@ -48,6 +48,7 @@ struct ChatCommand: AsyncParsableCommand {
         let capability = TerminalCapability()
         let theme: ColorTheme = noColor ? .monochrome : .default
         let renderer = TerminalRenderer(capability: capability, theme: theme)
+        let markdown = MarkdownRenderer(capability: capability, theme: theme)
 
         print(renderer.renderBanner(version: "0.1.0"))
         print("\nType [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
@@ -258,7 +259,11 @@ struct ChatCommand: AsyncParsableCommand {
             // Display response with left border
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                print(renderer.renderLeftBorder(content: trimmed))
+                if noMarkdown {
+                    print(renderer.renderLeftBorder(content: trimmed))
+                } else {
+                    print(markdown.render(trimmed))
+                }
             } else {
                 print(renderer.renderLeftBorder(content: "(done)"))
             }
