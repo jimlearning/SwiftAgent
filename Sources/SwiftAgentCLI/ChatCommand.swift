@@ -112,7 +112,7 @@ struct ChatCommand: AsyncParsableCommand {
                     }
                     let line: String
                     if let toolName = currentTool.name {
-                        line = "\r  \(renderer.spinnerFrame(index: frame)) Running \(toolName)..."
+                        line = "\r\u{001B}[K  \(renderer.spinnerFrame(index: frame)) Running \(toolName)..."
                     } else {
                         line = renderer.renderThinkingLine(frame: frame)
                     }

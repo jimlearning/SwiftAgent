@@ -203,7 +203,7 @@ public struct TerminalRenderer: Sendable {
 
     /// Renders a "Thinking..." line with spinner.
     public func renderThinkingLine(frame: Int) -> String {
-        return "\r  \(spinnerFrame(index: frame)) Thinking..."
+        return "\r\u{001B}[K  \(spinnerFrame(index: frame)) Thinking..."
     }
 
     // MARK: - TTY drain (Nanobot's `_flush_pending_tty_input`)
