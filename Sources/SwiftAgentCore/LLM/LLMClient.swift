@@ -1,5 +1,15 @@
 import Foundation
 
+/// Protocol for debug logging of LLM API interactions.
+/// Implementations receive raw request/response data for diagnostics.
+public protocol LLMDebugLogger: Sendable {
+    func logRequest(url: String, method: String, headers: [String: String], body: String)
+    func logResponse(status: Int, headers: [String: String])
+    func logStreamEvent(_ rawJSON: String)
+    func logError(_ error: Error)
+    func logResponseBody(_ body: String)
+}
+
 /// Anthropic Messages API client with streaming, thinking, caching, and beta support.
 /// Mirrors Claude Code's `claude.ts` (~3300 lines).
 public final class LLMClient: Sendable {
@@ -9,19 +19,22 @@ public final class LLMClient: Sendable {
     private let parser: LLMStreamParser
     private let sessionID: String
     private let provider: APIProvider
+    private let debugLogger: (any LLMDebugLogger)?
 
     public init(
         apiKey: String,
         baseURL: String = "https://api.anthropic.com",
         model: String = "claude-sonnet-4-6",
         sessionID: String = UUID().uuidString,
-        provider: APIProvider = .firstParty
+        provider: APIProvider = .firstParty,
+        debugLogger: (any LLMDebugLogger)? = nil
     ) {
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.parser = LLMStreamParser()
         self.sessionID = sessionID
         self.provider = provider
+        self.debugLogger = debugLogger
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 120
@@ -414,10 +427,18 @@ public final class LLMClient: Sendable {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+        // Debug: log outgoing request
+        if let logger = debugLogger {
+            let reqHeaders = request.allHTTPHeaderFields ?? [:]
+            let bodyStr = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "(binary)"
+            logger.logRequest(url: request.url?.absoluteString ?? "", method: "POST", headers: reqHeaders, body: bodyStr)
+        }
+
         let (bytes, response) = try await session.bytes(for: request)
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let retryAfterHeader = (response as? HTTPURLResponse)?.allHeaderFields["retry-after"] as? String
+            let respHeaders = ((response as? HTTPURLResponse)?.allHeaderFields as? [String: String]) ?? [:]
             var errorBody: String?
             var bodyData = Data()
             do {
@@ -429,16 +450,33 @@ public final class LLMClient: Sendable {
                 // Body read failed — proceed without it
             }
 
+            // Debug: log error response
+            if let logger = debugLogger {
+                logger.logResponse(status: status, headers: respHeaders)
+                if let body = errorBody { logger.logResponseBody(body) }
+            }
+
             if status == 401 { throw LLMError.unauthorized }
             if status == 429 { throw LLMError.rateLimited(retryAfter: retryAfterHeader.flatMap { Int($0) }) }
             if status == 529 { throw LLMError.overloaded(body: errorBody) }
             throw LLMError.httpError(status: status, body: errorBody)
         }
 
+        // Debug: log successful response status
+        if let logger = debugLogger {
+            let respHeaders = (httpResponse.allHeaderFields as? [String: String]) ?? [:]
+            logger.logResponse(status: httpResponse.statusCode, headers: respHeaders)
+        }
+
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
             let jsonStr = String(line.dropFirst(6))
             guard let data = jsonStr.data(using: .utf8) else { continue }
+
+            // Debug: log raw SSE event
+            if let logger = debugLogger {
+                logger.logStreamEvent(jsonStr)
+            }
 
             if let event = parser.parse(data: data) {
                 continuation.yield(event)

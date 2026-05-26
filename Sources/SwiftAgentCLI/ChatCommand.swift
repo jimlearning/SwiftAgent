@@ -26,6 +26,9 @@ struct ChatCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable markdown rendering in responses")
     var noMarkdown: Bool = false
 
+    @Flag(name: .shortAndLong, help: "Enable debug logging of all API requests and responses")
+    var debug: Bool = false
+
     func run() async throws {
         // Resolve API key
         let resolver = APIKeyResolver()
@@ -50,8 +53,15 @@ struct ChatCommand: AsyncParsableCommand {
         print(renderer.renderBanner(version: "0.1.0"))
         print("\nType [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
 
+        // Set up debug logging
+        let debugLog: DebugLogger? = debug ? DebugLogger() : nil
+        if let dl = debugLog {
+            print("Debug logging enabled → \(dl.logFilePath)")
+            dl.logInfo("Session started. Model: \(model), Base URL: \(baseURL)")
+        }
+
         // Set up engine
-        let client = LLMClient(apiKey: key, baseURL: baseURL, model: model)
+        let client = LLMClient(apiKey: key, baseURL: baseURL, model: model, debugLogger: debugLog)
         let registry = ToolRegistry()
         registerBuiltinTools(into: registry)
 
@@ -116,6 +126,7 @@ struct ChatCommand: AsyncParsableCommand {
                     }
                 }
             } catch {
+                debugLog?.logError(error)
                 responseText = "Error: \(error.localizedDescription)"
             }
 
