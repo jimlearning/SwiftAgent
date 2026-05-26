@@ -122,7 +122,7 @@ struct ChatCommand: AsyncParsableCommand {
                     let output = streamRenderer.render(event: event, currentOutput: responseText)
                     let sanitized = output.replacingOccurrences(of: "\r\n", with: "\n")
                     if !sanitized.isEmpty {
-                        responseText = sanitized
+                        responseText += sanitized
                     }
                 }
             } catch {
