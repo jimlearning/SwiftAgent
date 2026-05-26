@@ -93,6 +93,7 @@ struct ChatCommand: AsyncParsableCommand {
                     continue
                 }
                 if await handleCommand(input) { break }
+                print()
                 continue
             }
 
@@ -262,7 +263,7 @@ struct ChatCommand: AsyncParsableCommand {
                 if noMarkdown {
                     print(renderer.renderLeftBorder(content: trimmed))
                 } else {
-                    print(markdown.render(trimmed))
+                    print(markdown.render(trimmed) + "\n")
                 }
             } else {
                 print(renderer.renderLeftBorder(content: "(done)"))
