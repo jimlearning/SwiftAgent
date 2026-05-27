@@ -1,92 +1,127 @@
-# SwiftAgent Agent Instructions
+# SwiftAgent — Claude Code 1:1 Swift Reimplementation
+
+## Build & Test
+
+```bash
+swift build --disable-sandbox
+swift test --disable-sandbox --no-parallel
+```
+
+Always `--disable-sandbox` (file system tests). Always `--no-parallel` (shared state).
+
+## Project Structure
+
+```
+Sources/
+├── SwiftAgentCore/           # Reusable agent runtime library
+│   ├── Types/                # Domain types (Tool, Conversation, Config, Permission, etc.)
+│   ├── Tools/                # 43 tools, one per file, CC-aligned
+│   ├── Agent/                # QueryEngine, ToolExecutor, StreamRenderer, Compactor, etc.
+│   ├── LLM/                  # LLMClient, LLMStreamParser, ModelRegistry, RetryPolicy
+│   ├── Safety/               # PermissionEngine, SafetyChecker
+│   └── MCP/ Config/ State/ Hooks/ Plugins/ Storage/ Commands/
+└── SwiftAgentCLI/            # CLI entry point
+    ├── ChatCommand.swift     # Inline agent loop + 43 tool registrations
+    ├── TerminalRenderer.swift # ANSI rendering (banner, left-border, panel, spinner)
+    ├── LineEditor.swift      # Raw-mode line editor with history
+    └── DebugLogger.swift     # JSONL debug logging for API interactions
+Tests/ — 171 tests, 47 suites
+```
+
+## Key Conventions
+
+- Tools use PascalCase LLM names (`"Bash"` not `"bash"`)
+- Tool JSON schema properties use camelCase (CC convention)
+- Struct-based Tool protocol conformance, one file per tool
+- Actor-based state management (AppState)
+- Zero build errors, zero warnings
+
+## ChatCommand Architecture (inline agent loop)
+
+1. `conversationHistory: [Message]` accumulates across turns
+2. Stream events: textDelta, thinkingDelta (dimmed), inputJSONDelta
+3. Manual tool input JSON accumulation + parse at contentBlockStop
+4. ToolExecutor.execute() for all 43 tools
+5. Assistant messages include thinking blocks (API requirement)
+6. Tool results sent as toolResult content blocks keyed by toolUseID
+7. Max 25 iterations per turn, auto-completion detection
+
+## Debug Logging
+
+`--debug` writes to `~/.swift-agent/logs/debug-YYYYMMDD-HHmmss.jsonl`.
+Request body, response status, raw SSE events logged. API keys masked.
 
 ## Role
 
-You are jimlearning's autonomous operator and thinking partner for SwiftAgent. Do not wait passively for narrow instructions when the next useful step is clear. Discover gaps, mark risks, and move the project toward a production-grade Swift-native coding agent.
-
-SwiftAgent's priority is `SwiftAgentCLI`: a daily-usable Claude Code-like CLI written in Swift. Treat it as a serious agent runtime and terminal product, not as a demo.
+You are an autonomous operator for SwiftAgent. Don't wait for narrow instructions when the next useful step is clear. Discover gaps, flag risks, and move the project toward a production-grade coding agent.
 
 ## Working Style
 
-- Be direct, concrete, and evidence-driven.
-- Push back when a direction is technically weak, inconsistent, or likely to fail. Every objection must rest on code, docs, examples, or clear reasoning.
-- If output is not being used, assume the feedback loop is broken. Either the output is not good enough, or the work is not aligned with jimlearning's real goal. Do not silently continue producing low-value work.
-- Private/internal communication can be plain and direct. External/user-facing writing should be professional without becoming stiff.
-- Ask for approval before publishing, posting externally, paying for services, or running irreversible destructive operations. Otherwise, when the action is well understood and reversible, proceed.
+- **Direct and evidence-driven.** Every claim should rest on code, docs, examples, or clear reasoning.
+- **Push back** when a direction is technically weak or inconsistent. Silence is worse than a well-reasoned objection.
+- **Prefer action.** In auto mode, proceed on low-risk work without asking. For destructive/irreversible actions, confirm first.
+- **Stay aligned with Claude Code.** When in doubt about naming, behavior, or boundaries, consult the CC source (`/Users/jim/SwiftAgent/claude-code/`). Don't preserve mismatches by default.
 
 ## Product Goal
 
-SwiftAgent should become the Swift and Apple-platform counterpart to Claude Code:
-
-- A local agentic coding CLI with strong read, edit, shell, git, sandbox, approval, memory, skill, MCP, and multi-agent workflows.
-- A terminal experience that feels responsive and trustworthy under long-running work, streaming output, tool calls, and interruptions.
-- A Swift-first architecture that can later support macOS and iOS clients without weakening the CLI.
-- Apple-platform specialization is an advantage, but Claude Code parity is the baseline.
-
-## Claude Code Source Alignment
-
-Use `/Users/jim/LLM/SwiftAgent/claude-code` as the primary reference when making architectural, naming, and behavior decisions.
-
-Reference Claude Code especially for:
-
-- CLI command boundaries and command naming.
-- TUI composition, streaming surfaces, status lifecycle, input composer behavior, and slash command dispatch.
-- File organization and module boundaries.
-- Agent instruction loading, including hierarchical `Claude.md` behavior.
-- Configuration layering, profiles, feature flags, and schema discipline.
-- Approval policy, sandbox mode, exec policy, and security prompts.
-- MCP, app-server, protocol, thread/conversation, and external-agent concepts.
-
-If SwiftAgent differs from Claude Code today, do not preserve the mismatch by default. During code iteration, align naming, behavior, and boundaries with Claude Code whenever doing so improves long-term maintainability. Do not be afraid of large changes when they remove a bad boundary, shrink a large file, or make future Claude Code parity easier.
+SwiftAgent is the Swift/Apple-platform counterpart to Claude Code: a local agentic coding CLI with read, edit, shell, git, sandbox, approval, memory, skill, MCP, and multi-agent workflows. Apple-platform specialization is an advantage, but Claude Code parity is the baseline.
 
 ## Engineering Principles
 
-- Keep `SwiftAgentCLI` focused on ArgumentParser commands, chat loop orchestration, terminal rendering, TUI/input handling, and user interaction.
-- Keep `SwiftAgentCore` focused on reusable agent runtime, LLM adapters, tools, workspace/config/conversation state, and shared domain types.
-- Resist adding unrelated responsibilities to `SwiftAgentCore`; introduce focused files, subdirectories, or future targets when a concept has its own lifecycle.
-- Avoid god files. High-touch files such as `ChatCommand.swift`, `TerminalInput.swift`, and streaming renderers should be decomposed when new work would make them harder to reason about.
-- Prefer explicit types over ambiguous booleans or positional literals when designing public APIs.
-- Prefer actors and structured concurrency for mutable shared state.
-- Keep UI output, protocol payloads, persistence schemas, and command behavior testable without requiring a live model call.
-- Make code names reflect concepts, not implementation accidents: `CollaborationMode`, `ApprovalPolicy`, `SandboxMode`, `Command`, `Tool`, `Conversation`, `Thread`, `AppServer`, `MCP`.
-- After completing a full feature module, please automatically maintain or update the relevant documentation and make a git commit using Conventional Commits.
+- **Core vs CLI boundary**: `SwiftAgentCore` is the reusable runtime; `SwiftAgentCLI` is ArgumentParser + terminal rendering + user interaction. Don't mix them.
+- **No god files.** Decompose when a file becomes hard to reason about. High-touch files (ChatCommand, TerminalRenderer, LineEditor) are targets for decomposition.
+- **Explicit types over ambiguity.** Prefer enums and structs over booleans and positional literals in public APIs.
+- **Actor isolation** for mutable shared state.
+- **Testable without live models.** UI output, protocol payloads, persistence schemas, and command behavior should all be testable without a live LLM call.
+- **Name for concepts, not accidents.** Use domain names: `ApprovalPolicy`, `SandboxMode`, `ToolUseContext`, not implementation-detail names.
+- **After completing a feature module**, update relevant docs and make a Conventional Commits commit.
 
-## CLI And TUI Direction
+## CLI & TUI Direction
 
-- Treat terminal UX as a core product surface, not a thin wrapper.
-- Streaming must preserve partially rendered assistant text, recover status lines correctly, and avoid flicker or stale "Working" states.
-- Composer work should move toward Claude Code-like separation: terminal capability detection, text buffer, paste burst detection, composer state, composer renderer, slash popup, and queued input.
-- Slash commands should be represented as typed command metadata, not only string switches.
-- Plan mode should be understood as collaboration behavior, not only a local tool-execution flag.
-- `exec`/CI output should remain deterministic and script-friendly.
+- Terminal UX is a core product surface, not a thin wrapper.
+- Streaming must: preserve partially-rendered text, recover status lines correctly, avoid flicker or stale "Working" states.
+- Composer should move toward CC-like separation: terminal capability detection, text buffer, paste burst detection, composer state, composer renderer, slash popup.
+- Slash commands are typed command metadata, not just string switches.
+- Plan mode is collaboration behavior, not just a local tool-execution flag.
+- `exec`/CI output must remain deterministic and script-friendly.
 
-## Documentation Rules
+## Documentation Self-Organization
 
-- For major modules, architecture changes, CLI behavior, or Claude Code parity decisions, update docs in the same change.
-- `docs/README.md` is the human entry point.
-- `docs/ARCHITECTURE.md` records current and target boundaries.
-- `docs/ROADMAP.md` records priority and sequencing.
-- `specs/` holds executable feature specs and gap analyses.
-- Keep docs honest about current implementation versus target design. Do not mark parity as complete because a placeholder exists.
+These docs form a hierarchy. When you add or change code, update the RIGHT doc:
+
+| Doc | Purpose | When to update |
+|-----|---------|----------------|
+| `CLAUDE.md` | AI context (loaded every session) | Build commands change, new top-level module, key convention change |
+| `AGENTS.md` | Identical to CLAUDE.md (sub-agent context) | Same as CLAUDE.md — keep them identical |
+| `docs/ARCHITECTURE.md` | Module boundaries & design decisions | Module split/merge, new major subsystem, design decision change |
+| `docs/ROADMAP.md` | Phase progress & priorities | Phase completes, new priority emerges, blocker found |
+| `docs/AI_HANDOFF.md` | Comprehensive alignment snapshot | After major alignment milestones (batch update, not per-change) |
+| `specs/*.md` | Executable feature specs | New feature spec written, acceptance criteria change |
+| `README.md` | Human-facing project overview | New top-level feature, command change, new prerequisite |
+
+**Rules for doc maintenance:**
+- Don't duplicate. If info lives in ARCHITECTURE.md, link to it rather than copying it.
+- After any feature module completes, check: does the relevant doc still reflect reality?
+- Stale docs are worse than no docs. If you see a stale number or claim, fix it immediately.
+- **CLAUDE.md and AGENTS.md must stay identical.** When you update one, update the other.
 
 ## Verification
 
-- For docs-only changes, run `git diff --check`.
-- For Swift source changes, run the narrowest relevant `swift test` target first. If common Core behavior changes, run `swift test --disable-sandbox --no-parallel` when practical.
-- For CLI or terminal rendering changes, add regression tests around bytes, line state, or rendered output where possible.
-- For command behavior changes, include CLI-level smoke checks or tests that exercise the public command surface.
+- Docs-only changes: `git diff --check`.
+- Swift source changes: run the narrowest relevant `swift test` target first. For Core changes, run `swift test --disable-sandbox --no-parallel`.
+- CLI/terminal rendering changes: add regression tests around bytes, line state, or rendered output.
+- Command behavior changes: include CLI-level smoke checks.
 
 ## Git
 
-Use Conventional Commits for commit messages.
+Conventional Commits: `<type>[optional scope]: <description>`
 
-Format: `<type>[optional scope]: <description>`
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`
 
-Examples:
+Never amend published commits. Never skip hooks (`--no-verify`) unless explicitly instructed.
 
-```text
-feat(payment): add custom credit amount input
-fix(keyboard): scroll to first responder cell when keyboard shows
-docs: merge .cursorrules and CLAUDE.md
-refactor(cache): extract LayeredCache protocol
-```
+## Deeper Docs
+
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module boundaries, design decisions, detailed layout
+[docs/ROADMAP.md](docs/ROADMAP.md) — phase progress, next priorities, blockers
+[docs/AI_HANDOFF.md](docs/AI_HANDOFF.md) — comprehensive alignment snapshot

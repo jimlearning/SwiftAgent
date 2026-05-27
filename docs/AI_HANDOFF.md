@@ -1,5 +1,14 @@
 # SwiftAgent — AI Handoff 文档
 
+> **This is a point-in-time snapshot.** For living documentation, see the files below. This document is updated after major alignment milestones, not per-commit.
+>
+> | Living doc | Covers |
+> |---|---|
+> | [ARCHITECTURE.md](ARCHITECTURE.md) | Module boundaries, design decisions, conventions |
+> | [ROADMAP.md](ROADMAP.md) | Phase progress, next priorities |
+> | [../CLAUDE.md](../CLAUDE.md) | AI quick-reference (build, structure, conventions) |
+> | [../AGENTS.md](../AGENTS.md) | Agent behavior, principles, guardrails |
+
 ## 项目概述
 
 **SwiftAgent** 是 [Claude Code](https://github.com/anthropics/claude-code) 的 Swift 语言 1:1 复刻版。目标是完整复刻 Claude Code 的源码架构、类型系统、工具生态和交互行为。
@@ -196,6 +205,13 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 
 ## 当前对齐状态（~99.0%）
 
+### 最近修复：后台 subagent 进度 UX
+
+- `TaskManager` now stores structured progress (`TaskProgressEvent` / `TaskProgressSummary`) alongside the legacy accumulated `output` text.
+- `SubAgentManager` maps streaming agent events into structured phases such as `thinking`, `using_tool`, `writing_results`, and `turn_complete`.
+- `TaskOutputTool(block: true)` polls task snapshots while waiting and emits `TaskOutputProgressData`, allowing the CLI spinner to show compact background-task summaries instead of only `Running TaskOutput...`.
+- Regression coverage lives in `Phase11SubAgentTests` and `TerminalRenderingTests`.
+
 ### ✅ 已完成对齐（主要）
 
 | 领域 | 状态 |
@@ -250,31 +266,4 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 
 ---
 
-## Git 提交历史
-
-```
-83982a0 docs: add architecture docs, specs, build scripts, and ralph history
-a2e6b43 test: add comprehensive test suite across all subsystems
-b3ac7fb feat: add CLI layer with terminal UI, workspace, and utilities
-a732bc2 feat: add command registry with slash command support
-313aa33 feat: add storage layer with memory store and session persistence
-b307212 feat: add plugin manager with CC-aligned manifest loading
-64429b2 feat: add hooks system matching Claude Code hook events
-3364ab6 feat: add MCP client with SSE and HTTP transports
-30acfe6 feat: add config loading, app state, and feature flags
-6515b14 feat: add permission and safety system with CC-aligned pipeline
-989400e feat: add LLM client with streaming, retry, and token counting
-74339d0 feat: add agent loop engine with CC-aligned query and tool execution
-c6653ca feat: add 43 tools matching Claude Code tool ecosystem
-790f8e4 feat: add core type system matching Claude Code domain model
-ab74696 build: add project scaffold with package manifest and documentation
-```
-
----
-
 ## 如果继续开发，建议的优先级
-
-1. **为 prompt() 接线**: 让 SystemPromptBuilder 调用 `tool.prompt()`，将工具文档注入系统提示（这是 CC 的做法）
-2. **实现 isEnabled() 功能开关**: 为工具添加特征标志基础设施，匹配 CC 的条件工具启用
-3. **充实 stub 工具**: 优先 RemoteTriggerTool（最独立的 API 集成），然后是 MCP 工具
-4. **扩展 CLI 标志**: 添加更多 CC 命令行选项

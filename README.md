@@ -140,8 +140,9 @@ Full Claude Code tool ecosystem: Bash, Read, Write, Edit, Glob, Grep, WebFetch, 
 - Tool bridge: MCP tools → ToolDefinition
 
 ### Sub-Agent System
-- `SubAgentManager` for isolated agent execution
-- `TaskManager` (actor) for background task lifecycle
+- `SubAgentManager` for isolated agent execution; REPL `Agent` calls can run foreground sub-agents synchronously or launch background sub-agents with `runInBackground`
+- Foreground sub-agent progress is surfaced in the spinner/status line; background sub-agent progress and final output are available through `TaskOutput`
+- `TaskManager` (actor) for background task lifecycle, including local agent task metadata
 - `WorktreeManager` for git worktree isolation
 
 ### Hooks & Plugins
@@ -195,24 +196,18 @@ SwiftAgent/
 
 ---
 
-## Development
+## Documentation
 
-### Building
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module boundaries, design decisions
+- [docs/ROADMAP.md](docs/ROADMAP.md) — phase progress and priorities
+- [docs/AI_HANDOFF.md](docs/AI_HANDOFF.md) — comprehensive alignment snapshot
+
+## Development
 
 ```bash
 swift build --disable-sandbox
-```
-
-### Testing
-
-```bash
 swift test --disable-sandbox --no-parallel
 ```
-
-### Architecture
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and design decisions.
-See [docs/ROADMAP.md](docs/ROADMAP.md) for phase progress and priorities.
 
 ---
 
