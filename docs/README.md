@@ -18,6 +18,6 @@ Two-module structure:
 
 ```bash
 swift build --disable-sandbox     # 0 errors, 0 warnings
-swift test --disable-sandbox --no-parallel   # 164 tests pass
+swift test --disable-sandbox --no-parallel   # 171 tests pass
 swift run --disable-sandbox swift-agent chat
 ```

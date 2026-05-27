@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0-F05138?logo=swift" alt="Swift 6.0">
   <img src="https://img.shields.io/badge/macOS-14+-lightgrey?logo=apple" alt="macOS 14+">
-  <img src="https://img.shields.io/badge/tests-164%20passing-brightgreen" alt="164 tests">
+  <img src="https://img.shields.io/badge/tests-171%20passing-brightgreen" alt="171 tests">
 </p>
 
 SwiftAgent is a Swift-native coding agent CLI modeled after Claude Code. It provides the full agentic coding experience: read, write, edit, search, shell, git, permission control, MCP integration, multi-agent delegation, and more.
@@ -99,8 +99,9 @@ Full Claude Code tool ecosystem: Bash, Read, Write, Edit, Glob, Grep, WebFetch, 
 
 ### CLI Experience
 - **Nanobot-style REPL** with raw-mode line editor (arrow keys, history, UTF-8, Ctrl+A/E/K/U/W)
-- **Paste detection** — multi-line pastes show `[Pasted text #N +M lines]` summary instead of auto-submitting
+- **Paste detection** — multi-line pastes show `[Pasted text #N +M lines]` while submitting the original pasted text
 - **Multi-line input** — Option+Enter and Shift+Enter insert literal newlines with cursor alignment
+- **Wide-character alignment** — Chinese/CJK input, wrapped prompts, code blocks, and markdown tables use terminal display width
 - **ESC to cancel** — press Escape during agent processing to immediately stop and restore your input
 - **Markdown rendering** — headings, bold/italic, fenced code blocks (boxed), tables, blockquotes, links
 - **`--no-markdown` flag** to disable rendering and display raw text
@@ -178,13 +179,15 @@ SwiftAgent/
 │       ├── ChatCommand.swift    # Inline agent loop + all 43 tool registrations
 │       ├── TerminalRenderer.swift # ANSI rendering, panel/left-border/banner
 │       ├── TerminalCapability.swift
-│       ├── LineEditor.swift     # Raw-mode line editor with history, paste detection, multi-line
+│       ├── LineEditor.swift     # Raw-mode line editor with history, bracketed paste, multi-line
 │       ├── MarkdownRenderer.swift # ANSI markdown rendering (headings, code blocks, tables)
+│       ├── TerminalDisplayWidth.swift # CJK/emoji-aware terminal width helpers
 │       ├── DebugLogger.swift    # JSONL debug log for API interactions
 │       ├── ColorTheme.swift
 │       └── StreamRenderer.swift # SSE stream event rendering
 ├── Tests/
-│   └── SwiftAgentCoreTests/    # 164 tests, 43 suites
+│   ├── SwiftAgentCoreTests/
+│   └── SwiftAgentCLITests/     # terminal rendering and input regression tests
 ├── specs/                      # Phase specifications
 ├── docs/                       # Architecture & roadmap docs
 └── scripts/                    # Build & test scripts
@@ -216,5 +219,3 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phase progress and priorities.
 ## License
 
 MIT © SwiftAgent Contributors
-
-

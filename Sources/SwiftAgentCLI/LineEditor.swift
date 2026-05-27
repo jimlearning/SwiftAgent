@@ -14,6 +14,7 @@ public final class LineEditor: @unchecked Sendable {
     private let isTTY: Bool
     private var pasteCount: Int = 0
     private var drawnLines: Int = 1  // terminal lines currently occupied by prompt+buffer
+    private var bracketedPasteEnabled = false
 
     // MARK: - Init
 
@@ -68,12 +69,7 @@ public final class LineEditor: @unchecked Sendable {
         // Save current (cooked) terminal and enter raw mode independently
         var saved = termios()
         tcgetattr(fd, &saved)
-        var raw = saved
-        raw.c_iflag &= ~tcflag_t(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON)
-        raw.c_oflag &= ~tcflag_t(OPOST)
-        raw.c_lflag &= ~tcflag_t(ECHO | ECHONL | ICANON | ISIG | IEXTEN)
-        raw.c_cflag &= ~tcflag_t(CSIZE | PARENB)
-        raw.c_cflag |= tcflag_t(CS8)
+        var raw = Self.rawInputAttributes(from: saved, preserveOutputProcessing: true)
         raw.c_cc.0 = 1
         raw.c_cc.1 = 0
         tcsetattr(fd, TCSADRAIN, &raw)
@@ -108,6 +104,10 @@ public final class LineEditor: @unchecked Sendable {
     /// Restore terminal settings. Safe to call multiple times.
     public func restoreTerminal() {
         guard let saved = savedTermios else { return }
+        if bracketedPasteEnabled {
+            writeToStdout("\u{001B}[?2004l")
+            bracketedPasteEnabled = false
+        }
         var attrs = saved
         tcsetattr(STDIN_FILENO, TCSADRAIN, &attrs)
         savedTermios = nil
@@ -130,6 +130,8 @@ public final class LineEditor: @unchecked Sendable {
 
         var buffer = ""
         var cursorPos = 0  // cursor position within buffer (0...buffer.count)
+        var pasteExpansions: [String: String] = [:]
+        drawnLines = 1
 
         while true {
             let byte = readByte()
@@ -147,16 +149,25 @@ public final class LineEditor: @unchecked Sendable {
                 // Otherwise ignore (like bash)
 
             case 10, 13:  // Enter (\n or \r)
-                // Detect paste: if more data is immediately available (within 0ms poll),
-                // this \n is part of pasted content, not a manual Enter press.
+                // Fallback for terminals without bracketed paste: if more bytes
+                // are already queued, this newline belongs to the same paste.
                 var fds = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
                 if poll(&fds, 1, 0) > 0 {
                     let pasted = readPasteBytes()
                     let fullContent = buffer + "\n" + pasted
-                    handlePaste(fullContent, prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                    replaceBufferWithPasteSummary(
+                        fullContent,
+                        prompt: prompt,
+                        buffer: &buffer,
+                        cursorPos: &cursorPos,
+                        pasteExpansions: &pasteExpansions
+                    )
                 } else {
                     writeToStdout("\r\n")
-                    let line = buffer.trimmingCharacters(in: .newlines)
+                    let line = Self.expandPastePlaceholders(
+                        in: buffer,
+                        expansions: pasteExpansions
+                    ).trimmingCharacters(in: .newlines)
                     if !line.isEmpty {
                         addEntry(line)
                     }
@@ -180,14 +191,12 @@ public final class LineEditor: @unchecked Sendable {
                 case .left:
                     if cursorPos > 0 {
                         cursorPos -= 1
-                        if buffer.contains("\n") { redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos) }
-                        else { moveCursorLeft() }
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                     }
                 case .right:
                     if cursorPos < buffer.count {
                         cursorPos += 1
-                        if buffer.contains("\n") { redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos) }
-                        else { moveCursorRight() }
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                     }
                 case .home:
                     cursorPos = 0
@@ -217,6 +226,14 @@ public final class LineEditor: @unchecked Sendable {
                     buffer.insert(contentsOf: "\n", at: idx)
                     cursorPos += 1
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                case .paste(let content):
+                    handlePaste(
+                        content,
+                        prompt: prompt,
+                        buffer: &buffer,
+                        cursorPos: &cursorPos,
+                        pasteExpansions: &pasteExpansions
+                    )
                 case .none:
                     break  // Unknown escape sequence, ignore
                 }
@@ -291,20 +308,74 @@ public final class LineEditor: @unchecked Sendable {
 
     /// Handle pasted content. Multi-line pastes show a summary instead of
     /// auto-submitting. Single-line or very short pastes are inserted directly.
-    private func handlePaste(_ content: String, prompt: String, buffer: inout String, cursorPos: inout Int) {
-        pasteCount += 1
-        let lines = content.components(separatedBy: "\n")
+    static func makePastePlaceholder(pasteIndex: Int, content: String) -> String {
+        let normalized = normalizePastedContent(content)
+        let lineCount = normalized.isEmpty ? 0 : normalized.components(separatedBy: "\n").count
+        return "[Pasted text #\(pasteIndex) +\(max(0, lineCount - 1)) lines]"
+    }
 
-        // Strip leading/trailing empty lines from paste
-        let trimmed = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-
-        if trimmed.count <= 1 {
-            // Single meaningful line — insert directly
-            buffer = trimmed.first ?? ""
-        } else {
-            // Multi-line paste — display summary, don't auto-submit
-            buffer = "[Pasted text #\(pasteCount) +\(trimmed.count) lines]"
+    static func expandPastePlaceholders(in text: String, expansions: [String: String]) -> String {
+        var expanded = text
+        for (placeholder, content) in expansions {
+            expanded = expanded.replacingOccurrences(of: placeholder, with: content)
         }
+        return expanded
+    }
+
+    private static func normalizePastedContent(_ content: String) -> String {
+        let normalizedNewlines = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        var lines = normalizedNewlines.components(separatedBy: "\n")
+        while let first = lines.first, first.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeFirst()
+        }
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeLast()
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func handlePaste(
+        _ content: String,
+        prompt: String,
+        buffer: inout String,
+        cursorPos: inout Int,
+        pasteExpansions: inout [String: String]
+    ) {
+        pasteCount += 1
+        let normalized = Self.normalizePastedContent(content)
+        let lineCount = normalized.isEmpty ? 0 : normalized.components(separatedBy: "\n").count
+
+        let insertedText: String
+        if lineCount <= 1 {
+            // Single meaningful line — insert directly
+            insertedText = normalized
+        } else {
+            // Multi-line paste — display summary, submit the original content.
+            let placeholder = Self.makePastePlaceholder(pasteIndex: pasteCount, content: normalized)
+            pasteExpansions[placeholder] = normalized
+            insertedText = placeholder
+        }
+
+        let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+        buffer.insert(contentsOf: insertedText, at: idx)
+        cursorPos += insertedText.count
+        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+    }
+
+    private func replaceBufferWithPasteSummary(
+        _ content: String,
+        prompt: String,
+        buffer: inout String,
+        cursorPos: inout Int,
+        pasteExpansions: inout [String: String]
+    ) {
+        pasteCount += 1
+        let normalized = Self.normalizePastedContent(content)
+        let placeholder = Self.makePastePlaceholder(pasteIndex: pasteCount, content: normalized)
+        pasteExpansions[placeholder] = normalized
+        buffer = placeholder
         cursorPos = buffer.count
         redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
     }
@@ -316,18 +387,27 @@ public final class LineEditor: @unchecked Sendable {
         tcgetattr(STDIN_FILENO, &raw)
         savedTermios = raw
 
-        // cfmakeraw equivalent
-        raw.c_iflag &= ~tcflag_t(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON)
-        raw.c_oflag &= ~tcflag_t(OPOST)
-        raw.c_lflag &= ~tcflag_t(ECHO | ECHONL | ICANON | ISIG | IEXTEN)
-        raw.c_cflag &= ~tcflag_t(CSIZE | PARENB)
-        raw.c_cflag |= tcflag_t(CS8)
+        raw = Self.rawInputAttributes(from: raw, preserveOutputProcessing: false)
 
         // Minimum characters and timeout for read
         raw.c_cc.0 = 1     // VMIN: return after 1 byte
         raw.c_cc.1 = 0     // VTIME: no timeout
 
         tcsetattr(STDIN_FILENO, TCSADRAIN, &raw)
+        writeToStdout("\u{001B}[?2004h")
+        bracketedPasteEnabled = true
+    }
+
+    static func rawInputAttributes(from saved: termios, preserveOutputProcessing: Bool) -> termios {
+        var raw = saved
+        raw.c_iflag &= ~tcflag_t(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON)
+        if !preserveOutputProcessing {
+            raw.c_oflag &= ~tcflag_t(OPOST)
+        }
+        raw.c_lflag &= ~tcflag_t(ECHO | ECHONL | ICANON | ISIG | IEXTEN)
+        raw.c_cflag &= ~tcflag_t(CSIZE | PARENB)
+        raw.c_cflag |= tcflag_t(CS8)
+        return raw
     }
 
     private func readByte() -> UInt8? {
@@ -347,7 +427,7 @@ public final class LineEditor: @unchecked Sendable {
     }
 
     private enum EscapeSequence {
-        case up, down, left, right, home, end, deleteWord, newline, none
+        case up, down, left, right, home, end, deleteWord, newline, paste(String), none
     }
 
     private func readEscapeSequence() -> EscapeSequence {
@@ -412,6 +492,10 @@ public final class LineEditor: @unchecked Sendable {
             }
 
             // xterm modified keys: CSI <key>;<mods>;<char> ~
+            if byte == 126 /* '~' */, paramStr == "200" {
+                return .paste(readBracketedPasteContent())
+            }
+
             if byte == 126 /* '~' */ {
                 let parts = paramStr.split(separator: ";")
                 if parts.count >= 3, parts[2] == "13" {
@@ -421,6 +505,22 @@ public final class LineEditor: @unchecked Sendable {
 
             return .none
         }
+    }
+
+    private func readBracketedPasteContent() -> String {
+        let terminator: [UInt8] = [27, 91, 50, 48, 49, 126] // ESC [ 201 ~
+        var bytes: [UInt8] = []
+
+        while let byte = readByte() {
+            bytes.append(byte)
+            if bytes.count >= terminator.count,
+               Array(bytes.suffix(terminator.count)) == terminator {
+                bytes.removeLast(terminator.count)
+                break
+            }
+        }
+
+        return String(bytes: bytes, encoding: .utf8) ?? ""
     }
 
     /// Decode a multi-byte UTF-8 character starting from a lead byte.
@@ -475,9 +575,9 @@ public final class LineEditor: @unchecked Sendable {
 
     private func redrawLine(prompt: String, buffer: String, cursorPos: Int) {
         let styledPrompt = "\u{001B}[1;34m\(prompt)\u{001B}[0m"
-        let promptLen = prompt.count
+        let promptLen = TerminalDisplayWidth.width(prompt)
         let lines = buffer.components(separatedBy: "\n")
-        let totalRows = lines.count  // 1+ for multiline
+        let totalRows = renderedRows(promptWidth: promptLen, lines: lines)
 
         // Move up to clear previous output, then clear to end of display
         if drawnLines > 1 {
@@ -496,34 +596,49 @@ public final class LineEditor: @unchecked Sendable {
 
         // Calculate target cursor row/col
         let prefix = String(buffer.prefix(cursorPos))
-        let cursorRows = prefix.components(separatedBy: "\n").count - 1
-        let lastNL = prefix.lastIndex(of: "\n")
-        let colOffset: Int
-        if let nl = lastNL {
-            colOffset = promptLen + prefix.distance(from: prefix.index(after: nl), to: prefix.endIndex)
-        } else {
-            colOffset = promptLen + cursorPos
-        }
+        let target = cursorPosition(promptWidth: promptLen, prefix: prefix)
 
         // Move cursor from end of drawn content up to the target row
-        let upRows = (lines.count - 1) - cursorRows
+        let upRows = (totalRows - 1) - target.row
         if upRows > 0 {
             writeToStdout("\u{001B}[\(upRows)A")
         }
         writeToStdout("\r")
-        if colOffset > 0 {
-            writeToStdout("\u{001B}[\(colOffset)C")
+        if target.column > 0 {
+            writeToStdout("\u{001B}[\(target.column)C")
         }
 
         drawnLines = totalRows
     }
 
-    private func moveCursorLeft() {
-        writeToStdout("\u{001B}[1D")
+    private func renderedRows(promptWidth: Int, lines: [String]) -> Int {
+        lines.reduce(0) { total, line in
+            let width = promptWidth + TerminalDisplayWidth.width(line)
+            return total + TerminalDisplayWidth.rows(forWidth: width, columns: terminalColumns)
+        }
     }
 
-    private func moveCursorRight() {
-        writeToStdout("\u{001B}[1C")
+    private func cursorPosition(promptWidth: Int, prefix: String) -> (row: Int, column: Int) {
+        let prefixLines = prefix.components(separatedBy: "\n")
+        var row = 0
+
+        for line in prefixLines.dropLast() {
+            let width = promptWidth + TerminalDisplayWidth.width(line)
+            row += TerminalDisplayWidth.rows(forWidth: width, columns: terminalColumns)
+        }
+
+        let currentLine = prefixLines.last ?? ""
+        let offset = promptWidth + TerminalDisplayWidth.width(currentLine)
+        let position = TerminalDisplayWidth.cursorPosition(forOffset: offset, columns: terminalColumns)
+        return (row + position.row, position.column)
+    }
+
+    private var terminalColumns: Int {
+        var size = winsize()
+        if ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size) == 0, size.ws_col > 0 {
+            return Int(size.ws_col)
+        }
+        return Int(ProcessInfo.processInfo.environment["COLUMNS"] ?? "80") ?? 80
     }
 
     private func writeToStdout(_ string: String) {

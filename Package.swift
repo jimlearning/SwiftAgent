@@ -31,5 +31,10 @@ let package = Package(
             dependencies: ["SwiftAgentCore"],
             path: "Tests/SwiftAgentCoreTests"
         ),
+        .testTarget(
+            name: "SwiftAgentCLITests",
+            dependencies: ["SwiftAgentCLI"],
+            path: "Tests/SwiftAgentCLITests"
+        ),
     ]
 )

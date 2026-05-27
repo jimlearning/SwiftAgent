@@ -5,6 +5,7 @@
 - ANSI 转义序列渲染
 - 终端原始模式 (raw mode) 输入处理
 - 流式输出渲染器集成
+- 粘贴显示占位符但提交原文；中文/CJK 输入和表格按终端显示列宽对齐
 
 ## Technical Notes
 - 对应 Claude Code 的 `cli.tsx` + Ink 渲染框架
@@ -18,6 +19,7 @@
 | SwiftAgentCLI/ChatCommand.swift | 交互式对话命令 |
 | SwiftAgentCLI/TerminalRenderer.swift | ANSI 渲染工具 |
 | SwiftAgentCLI/TerminalCapability.swift | 终端能力检测 |
+| SwiftAgentCLI/TerminalDisplayWidth.swift | CJK/emoji 终端显示宽度 |
 | SwiftAgentCLI/StatusLine.swift | 底部状态栏 |
 | SwiftAgentCLI/ColorTheme.swift | 颜色主题定义 |
 

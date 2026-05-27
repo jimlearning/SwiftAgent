@@ -109,20 +109,20 @@ public struct MarkdownRenderer: Sendable {
         guard !lines.isEmpty else { return }
 
         // Calculate inner width from the longest line (capped by terminal width)
-        let maxContentLen = lines.map(\.count).max() ?? 0
+        let maxContentLen = lines.map(TerminalDisplayWidth.width).max() ?? 0
         let innerWidth = min(max(maxContentLen, 8), max(0, capability.columns - 6))
         let langLabel = language.map { " \($0) " } ?? ""
         // Box border adds 4 columns ("│ " + " │"), so top/bottom need innerWidth + 2 dashes
         let dashCount = innerWidth + 2
 
         // Top border: ┌──────── lang ────────┐
-        let topDashCount = max(0, dashCount - langLabel.count)
+        let topDashCount = max(0, dashCount - TerminalDisplayWidth.width(langLabel))
         let topBorder = "┌" + repeatChar("─", topDashCount) + langLabel + "┐"
         result.append(border(dim(topBorder)))
 
         // Content lines: │ padded content │
         for line in lines {
-            let padded = line.padding(toLength: innerWidth, withPad: " ", startingAt: 0)
+            let padded = padToVisibleWidth(line, width: innerWidth)
             result.append(border(dim("│ " + padded + " │")))
         }
 
@@ -226,9 +226,9 @@ public struct MarkdownRenderer: Sendable {
         // Calculate max width per column
         var colWidths = Array(repeating: 3, count: colCount) // minimum width
         for i in 0..<colCount {
-            colWidths[i] = max(colWidths[i], headerCols[i].count)
+            colWidths[i] = max(colWidths[i], TerminalDisplayWidth.width(headerCols[i]))
             for row in dataCols where i < row.count {
-                colWidths[i] = max(colWidths[i], row[i].count)
+                colWidths[i] = max(colWidths[i], TerminalDisplayWidth.width(row[i]))
             }
         }
 
@@ -284,18 +284,24 @@ public struct MarkdownRenderer: Sendable {
     }
 
     private func padCell(_ text: String, width: Int, alignment: TableAlignment) -> String {
+        let visibleWidth = TerminalDisplayWidth.width(text)
         switch alignment {
         case .left:
-            return text.padding(toLength: width, withPad: " ", startingAt: 0)
+            return padToVisibleWidth(text, width: width)
         case .right:
-            let pad = String(repeating: " ", count: max(0, width - text.count))
+            let pad = String(repeating: " ", count: max(0, width - visibleWidth))
             return pad + text
         case .center:
-            let totalPad = max(0, width - text.count)
+            let totalPad = max(0, width - visibleWidth)
             let leftPad = totalPad / 2
             let rightPad = totalPad - leftPad
             return String(repeating: " ", count: leftPad) + text + String(repeating: " ", count: rightPad)
         }
+    }
+
+    private func padToVisibleWidth(_ text: String, width: Int) -> String {
+        let pad = max(0, width - TerminalDisplayWidth.width(text))
+        return text + String(repeating: " ", count: pad)
     }
 
     // MARK: - Inline rendering

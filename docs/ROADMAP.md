@@ -32,12 +32,12 @@ None.
 
 ## Recently Completed
 
-All 12 phases complete (164 tests, 43 suites, build: 0 errors + 0 warnings). Full SwiftAgent core: types, LLM adapter, agent loop, tools, CLI/TUI, safety, config, slash commands, session/memory, MCP, sub-agents, hooks, plugins, and feature flags.
+All 12 phases complete (171 tests, 47 suites, build: 0 errors + 0 warnings). Full SwiftAgent core: types, LLM adapter, agent loop, tools, CLI/TUI, safety, config, slash commands, session/memory, MCP, sub-agents, hooks, plugins, and feature flags.
 
 ### Recent CLI Enhancements
-- **Paste detection**: Multi-line pastes show `[Pasted text #N +M lines]` summary instead of auto-submitting
+- **Paste detection**: Multi-line pastes show `[Pasted text #N +M lines]` while submitting the original pasted text
 - **Multi-line input**: Option+Enter and Shift+Enter support with cursor alignment under first character
 - **ESC to cancel**: Immediately stops agent processing and restores user input
-- **Markdown rendering**: Headings, bold/italic, fenced code blocks (boxed), tables, blockquotes, links — toggle with `--no-markdown`
+- **Markdown rendering**: Headings, bold/italic, fenced code blocks (boxed), display-width-aligned tables, blockquotes, links — toggle with `--no-markdown`
 - **emitBlock spacing**: Uniform single-blank-line spacing between all content blocks
 - **Zero build warnings**: All ~50 compiler warnings eliminated across 14 files

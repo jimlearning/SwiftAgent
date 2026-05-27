@@ -8,7 +8,7 @@
 - **CC 源码参考**: `/Users/jim/SwiftAgent/claude-code/`
 - **当前对齐度**: ~99.0%
 - **构建系统**: Swift Package Manager (0 warnings)
-- **测试**: 164 个测试 / 43 个测试套件，全部通过
+- **测试**: 171 个测试 / 47 个测试套件，全部通过
 
 ---
 
@@ -151,14 +151,16 @@ Sources/
 │   ├── ChatCommand.swift         # 主命令 + 全部 43 工具注册 + 内联代理循环
 │   ├── TerminalRenderer.swift    # 终端渲染 (banner, spinner, left-border)
 │   ├── TerminalCapability.swift  # 终端能力检测
-│   ├── LineEditor.swift          # Raw-mode 行编辑器 (历史、粘贴检测、多行输入、ESC 取消)
+│   ├── LineEditor.swift          # Raw-mode 行编辑器 (历史、bracketed paste、多行输入、ESC 取消)
 │   ├── MarkdownRenderer.swift    # Markdown → ANSI 渲染 (标题、代码块、表格、引用)
+│   ├── TerminalDisplayWidth.swift # CJK/emoji 终端显示宽度计算
 │   ├── DebugLogger.swift         # JSONL 调试日志 (API 请求/响应)
 │   ├── ColorTheme.swift          # 色彩主题
 │   └── StreamRenderer.swift      # SSE 流事件渲染
 │
 └── Tests/
-    └── SwiftAgentCoreTests/      # 12 个测试文件，43 套件，164 测试
+    ├── SwiftAgentCoreTests/
+    └── SwiftAgentCLITests/       # 终端渲染和输入回归测试；总计 47 套件，171 测试
         ├── Phase1TypesTests.swift
         ├── Phase2LLMTests.swift
         ├── Phase3AgentTests.swift
@@ -206,7 +208,7 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 | **isConcurrencySafe** | ✅ 全部 9 个不匹配已修正 |
 | **aliases** | ✅ BriefTool 有 `["Brief"]` 别名 |
 | **REPL 模式** | ✅ 现在是配置概念（非可调用工具），匹配 CC |
-| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史 |
+| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史、CJK 宽度对齐 |
 | **类型系统** | ✅ 22 个类型文件涵盖全部 CC 领域类型 |
 | **QueryEngine** | ✅ streaming, batch, hooks, compaction, content block accumulation |
 | **MessageNormalizer** | ✅ 9 passes 匹配 CC（stripSignature, user-merge, assistant merge 等） |
@@ -232,7 +234,7 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 | **isEnabled() 覆盖** | 19 个工具需要功能开关检查（isTodoV2Enabled, isAgentSwarmsEnabled 等） | 中（需要基础设施） |
 | **CLI 标志** | CC 有 ~70 个 CLI 标志，SA 有 ~7 个（--model, --permission, --api-key, --no-color, --no-markdown, --debug/-d, --help） | 中 |
 | **TUI 功能** | 完整终端 UI（tmux, iTerm2 集成）未实现 | 高 |
-| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史 | 已完成 |
+| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史、CJK 宽度对齐 | 已完成 |
 | **CC 内部工具** | TungstenTool, SuggestBackgroundPRTool 等 ant-only 工具未复制 | 不需要 |
 
 ---

@@ -193,8 +193,8 @@ struct ChatCommand: AsyncParsableCommand {
                         case .thinkingDelta(let text):
                             if !currentTool.isThinking {
                                 // First thinking delta: clear spinner and start dim mode
-                                print("\r\u{001B}[K  \u{001B}[2m\(text)", terminator: "")
                                 currentTool.isThinking = true
+                                print("\r\u{001B}[K  \u{001B}[2m\(text)", terminator: "")
                             } else {
                                 print(text, terminator: "")
                             }
