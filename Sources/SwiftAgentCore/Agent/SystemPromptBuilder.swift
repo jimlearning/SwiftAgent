@@ -50,6 +50,10 @@ public struct SystemPromptBuilder: Sendable {
         // Static sections (safety, behavior, coding instructions)
         parts.append(contentsOf: staticSections)
 
+        if let conversationPrompt = conversation.systemPrompt, !conversationPrompt.isEmpty {
+            parts.append(conversationPrompt)
+        }
+
         // Tool guidance (dynamic — tool names injected per CC's pattern)
         let guidance = toolGuidanceSection(toolNames: toolNames)
         if !guidance.isEmpty {
@@ -300,4 +304,3 @@ public struct SystemPromptBuilder: Sendable {
 /// The boundary marker separating static (cacheable) from dynamic (session-specific)
 /// system prompt content. Matches CC's SYSTEM_PROMPT_DYNAMIC_BOUNDARY.
 public let SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
-

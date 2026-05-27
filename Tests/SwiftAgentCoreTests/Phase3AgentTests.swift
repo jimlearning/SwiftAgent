@@ -54,6 +54,65 @@ struct ContextManagerTests {
     }
 }
 
+struct MessageNormalizerTests {
+    @Test
+    func normalizeReturnsWhenLastAssistantEndsWithToolUse() {
+        let messages = [
+            Message(type: .user, content: [.text("Find highlighting references")]),
+            Message(type: .assistant, content: [
+                .text("I'll search."),
+                .toolUse(
+                    id: "toolu_1",
+                    name: "Glob",
+                    input: .object([
+                        "pattern": .string("**/*[Hh]ighlight*"),
+                        "path": .string("/tmp"),
+                    ])
+                ),
+            ]),
+            Message(type: .user, content: [
+                .toolResult(toolUseID: "toolu_1", content: .string("No files matched"), isError: false),
+            ]),
+        ]
+
+        let normalized = normalizeMessagesForAPI(messages, tools: ["Glob"])
+
+        #expect(normalized.count == 3)
+        #expect(normalized.last?.type == .user)
+    }
+
+    @Test
+    func normalizeStripsOnlyTrailingThinkingFromAssistant() {
+        let messages = [
+            Message(type: .user, content: [.text("Search")]),
+            Message(type: .assistant, content: [
+                .toolUse(
+                    id: "toolu_1",
+                    name: "Glob",
+                    input: .object(["pattern": .string("**/*.swift")])
+                ),
+                .thinking("internal scratch", signature: nil),
+                .redactedThinking("redacted"),
+            ]),
+            Message(type: .user, content: [
+                .toolResult(toolUseID: "toolu_1", content: .string("Sources/main.swift"), isError: false),
+            ]),
+        ]
+
+        let normalized = normalizeMessagesForAPI(messages, tools: ["Glob"])
+        let assistant = normalized.first { $0.type == .assistant }
+
+        #expect(assistant?.content.count == 1)
+        if let block = assistant?.content.first,
+           case .toolUse(let id, let name, _) = block {
+            #expect(id == "toolu_1")
+            #expect(name == "Glob")
+        } else {
+            Issue.record("Expected trailing thinking to be stripped while preserving tool_use")
+        }
+    }
+}
+
 struct SystemPromptBuilderTests {
     @Test
     func buildsPrompt() {
@@ -64,6 +123,14 @@ struct SystemPromptBuilderTests {
         #expect(prompt.contains("/test"))
         #expect(prompt.contains("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"))
         #expect(prompt.contains("Safety"))
+    }
+
+    @Test
+    func includesConversationSystemPrompt() {
+        let builder = SystemPromptBuilder()
+        let conversation = Conversation(systemPrompt: "You are the Explore sub-agent.")
+        let prompt = builder.build(for: conversation)
+        #expect(prompt.contains("You are the Explore sub-agent."))
     }
 
     @Test

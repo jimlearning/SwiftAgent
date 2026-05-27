@@ -292,9 +292,14 @@ public indirect enum JSONValue: Codable, Sendable, Equatable {
     public static func fromAny(_ value: Any) -> JSONValue? {
         switch value {
         case let s as String: return .string(s)
+        case let n as NSNumber:
+            if CFGetTypeID(n) == CFBooleanGetTypeID() {
+                return .bool(n.boolValue)
+            }
+            return .number(n.doubleValue)
+        case let b as Bool: return .bool(b)
         case let n as Double: return .number(n)
         case let n as Int: return .number(Double(n))
-        case let b as Bool: return .bool(b)
         case is NSNull: return .null
         case let arr as [Any]: return .array(arr.compactMap { fromAny($0) })
         case let dict as [String: Any]: return .object(dict.compactMapValues { fromAny($0) })

@@ -46,6 +46,17 @@ struct ConversationTests {
             Issue.record("Expected object")
         }
     }
+
+    @Test
+    func jsonValueFromAnyPreservesJSONBooleans() throws {
+        let data = #"{"runInBackground":true,"-i":false,"count":1}"#.data(using: .utf8)!
+        let parsed = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let converted = parsed.compactMapValues { JSONValue.fromAny($0) }
+
+        #expect(converted["runInBackground"] == .bool(true))
+        #expect(converted["-i"] == .bool(false))
+        #expect(converted["count"] == .number(1))
+    }
 }
 
 struct ToolTests {

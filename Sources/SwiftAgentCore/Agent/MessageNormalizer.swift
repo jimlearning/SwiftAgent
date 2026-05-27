@@ -170,12 +170,12 @@ public func normalizeMessagesForAPI(_ messages: [Message], tools: [String] = [])
         let lastAssistant = result[lastIdx]
         // Filter trailing thinking/redactedThinking blocks
         var filteredContent = lastAssistant.content
-        while let lastBlock = filteredContent.last {
+        stripTrailingThinking: while let lastBlock = filteredContent.last {
             switch lastBlock {
             case .thinking, .redactedThinking:
                 filteredContent.removeLast()
             default:
-                break
+                break stripTrailingThinking
             }
         }
         // If content is now empty, replace with NO_CONTENT_MESSAGE
