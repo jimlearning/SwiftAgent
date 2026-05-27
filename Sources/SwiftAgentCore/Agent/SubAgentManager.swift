@@ -271,7 +271,7 @@ public struct SubAgentManager: Sendable {
         else {
             return agentName
         }
-        return "\(agentName) [\(compact(taskDescription, maxLength: 48))]"
+        return "\(agentName) [\(singleLine(taskDescription))]"
     }
 
     private static func toolActivity(toolName: String, inputSummary: String?) -> String {
@@ -292,14 +292,13 @@ public struct SubAgentManager: Sendable {
         guard let inputSummary, !inputSummary.isEmpty else {
             return verb
         }
-        return "\(verb): \(compact(inputSummary, maxLength: 96))"
+        return "\(verb): \(singleLine(inputSummary))"
     }
 
-    private static func compact(_ value: String, maxLength: Int) -> String {
-        let singleLine = value
+    private static func singleLine(_ value: String) -> String {
+        value
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return singleLine.count > maxLength ? String(singleLine.prefix(maxLength - 3)) + "..." : singleLine
     }
 }

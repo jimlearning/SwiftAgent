@@ -157,6 +157,7 @@ struct ChatToolExecutionSchedulerTests {
 struct TaskOutputStatusFormattingTests {
     @Test
     func formatsTaskOutputProgressAsCompactStatus() {
+        let path = "/Users/jim/SwiftAgent/Package.swift"
         let summary = TaskProgressSummary(
             taskId: "task-1",
             taskName: "Explore",
@@ -164,14 +165,15 @@ struct TaskOutputStatusFormattingTests {
             status: .running,
             phase: .usingTool,
             currentTool: "Read",
-            lastMessage: "Explore [Inspect refs] reading: file_path=Sources/Foo.swift",
+            lastMessage: "Explore [Inspect refs] reading: file_path=\(path)",
             turnCount: 0,
             completedToolCount: 0,
             updatedAt: Date()
         )
         let progress = TaskOutputProgressData(summary: summary, recentEvents: [])
 
-        #expect(ChatCommand.formatTaskOutputProgress(progress) == "Explore: [Inspect refs] reading: file_path=Sources/Foo.swift")
+        #expect(ChatCommand.formatTaskOutputProgress(progress) == "Explore: [Inspect refs] reading: file_path=\(path)")
+        #expect(ChatCommand.formatTaskOutputProgress(progress).contains("...") == false)
     }
 
     @Test
@@ -191,6 +193,59 @@ struct TaskOutputStatusFormattingTests {
         let progress = TaskOutputProgressData(summary: summary, recentEvents: [])
 
         #expect(ChatCommand.formatTaskOutputProgress(progress) == "Codex: done")
+    }
+}
+
+struct ChatToolInputAccumulatorTests {
+    @Test
+    func parsesCompleteToolInputJSON() {
+        var accumulator = ChatToolInputAccumulator()
+
+        accumulator.startTool(name: "Write", id: "toolu_1")
+        accumulator.appendInputJSONDelta(#"{"file_path":"Sources/Foo.swift","content":"print(1)"}"#)
+        accumulator.stopCurrentBlock()
+
+        #expect(accumulator.finish(stopReason: "tool_use") == nil)
+        #expect(accumulator.parsedCalls == [
+            ChatToolCall(
+                name: "Write",
+                id: "toolu_1",
+                input: [
+                    "file_path": .string("Sources/Foo.swift"),
+                    "content": .string("print(1)"),
+                ]
+            )
+        ])
+    }
+
+    @Test
+    func reportsInvalidToolInputJSONInsteadOfDroppingToolCall() {
+        var accumulator = ChatToolInputAccumulator()
+
+        accumulator.startTool(name: "Write", id: "toolu_1")
+        accumulator.appendInputJSONDelta(#"{"file_path":"Sources/Foo.swift","content":"unterminated"#)
+        accumulator.stopCurrentBlock()
+
+        let error = accumulator.finish(stopReason: nil)
+
+        #expect(error?.kind == .invalidJSON)
+        #expect(error?.toolName == "Write")
+        #expect(accumulator.parsedCalls.isEmpty)
+    }
+
+    @Test
+    func reportsMaxTokenTruncationForToolUseMessages() {
+        var accumulator = ChatToolInputAccumulator()
+
+        accumulator.startTool(name: "Write", id: "toolu_1")
+        accumulator.appendInputJSONDelta(#"{"file_path":"Sources/Foo.swift","content":"print(1)"}"#)
+        accumulator.stopCurrentBlock()
+
+        let error = accumulator.finish(stopReason: "max_tokens")
+
+        #expect(error?.kind == .truncatedByMaxTokens)
+        #expect(error?.toolName == "Write")
+        #expect(accumulator.parsedCalls.count == 1)
     }
 }
 

@@ -14,13 +14,13 @@ public enum ToolInputSummaryFormatter {
             return "\(key)=\(format(value, key: key))"
         }
         if !parts.isEmpty {
-            return compact(parts.joined(separator: " "))
+            return singleLine(parts.joined(separator: " "))
         }
 
         if let tool = registry?.tool(named: toolName),
            let summary = tool.getActivityDescription(input) ?? tool.getToolUseSummary(input),
            !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return compact(summary)
+            return singleLine(summary)
         }
 
         return nil
@@ -48,7 +48,7 @@ public enum ToolInputSummaryFormatter {
 
         switch value {
         case .string(let string):
-            return quoteIfNeeded(compact(string, maxLength: 72))
+            return quoteIfNeeded(singleLine(string))
         case .number(let number):
             if number.rounded() == number {
                 return String(Int(number))
@@ -72,11 +72,10 @@ public enum ToolInputSummaryFormatter {
         return value
     }
 
-    private static func compact(_ value: String, maxLength: Int = 120) -> String {
-        let singleLine = value
+    private static func singleLine(_ value: String) -> String {
+        value
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return singleLine.count > maxLength ? String(singleLine.prefix(maxLength - 3)) + "..." : singleLine
     }
 }

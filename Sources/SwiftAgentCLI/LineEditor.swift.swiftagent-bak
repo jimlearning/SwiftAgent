@@ -139,6 +139,7 @@ public final class LineEditor: @unchecked Sendable {
 
             switch byte {
             case 3:  // Ctrl+C
+                writeToStdout("^C\r\n")
                 return nil
 
             case 4:  // Ctrl+D

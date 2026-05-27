@@ -146,6 +146,18 @@ struct TaskManagerTests {
     }
 
     @Test
+    func toolInputSummaryPreservesLongPaths() {
+        let path = "/Users/jim/SwiftAgent/Package.swift"
+        let summary = ToolInputSummaryFormatter.summarize(
+            toolName: "Read",
+            input: ["file_path": .string(path)],
+            registry: nil
+        )
+
+        #expect(summary == "file_path=\(path)")
+    }
+
+    @Test
     func toolInputSummaryRedactsSensitiveKeys() {
         let summary = ToolInputSummaryFormatter.summarize(
             toolName: "WebFetch",
@@ -303,6 +315,19 @@ struct TaskOutputToolTests {
         #expect(turn.phase == .turnComplete)
         #expect(turn.turnNumber == 2)
         #expect(turn.toolCallCount == 3)
+    }
+
+    @Test
+    func subAgentBackgroundProgressPreservesFullToolParameters() {
+        let path = "/Users/jim/SwiftAgent/Package.swift"
+        let progress = SubAgentManager.backgroundProgress(
+            .toolStarted(toolUseID: "1", toolName: "Read", inputSummary: "file_path=\(path)"),
+            agentName: "Explore",
+            taskDescription: "Inspect SwiftAgent renderer"
+        )
+
+        #expect(progress.message == "Explore [Inspect SwiftAgent renderer] reading: file_path=\(path)")
+        #expect(progress.message.contains("...") == false)
     }
 }
 

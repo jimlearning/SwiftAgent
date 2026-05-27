@@ -335,8 +335,7 @@ struct ChatCommand: AsyncParsableCommand {
         }
 
         editor.save()
-        // Move cursor up to overwrite the "You: " prompt line, then print goodbye
-        print("\u{001B}[1A\u{001B}[2K🐬 See you!")
+        print("🐬 See you!")
     }
 
     // MARK: - Block output
@@ -479,7 +478,7 @@ struct ChatCommand: AsyncParsableCommand {
     private static func shortTaskMessage(_ message: String, taskName: String) -> String {
         let prefix = taskName + " "
         let trimmed = message.hasPrefix(prefix) ? String(message.dropFirst(prefix.count)) : message
-        return trimmed
+        return trimmed.count > 64 ? String(trimmed.prefix(61)) + "..." : trimmed
     }
 
 /// Thread-safe session state shared between the REPL loop and tool execution.
@@ -648,7 +647,7 @@ private final class CurrentToolTracker: @unchecked Sendable {
 
             let fragments = active.prefix(3).map { entry in
                 if let status = entry.status {
-                    return Self.singleLine(status)
+                    return Self.compact(status)
                 }
                 return "\(entry.name) running"
             }
@@ -712,9 +711,8 @@ private final class CurrentToolTracker: @unchecked Sendable {
         set { lock.withLock { _isThinking = newValue } }
     }
 
-    private static func singleLine(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
+    private static func compact(_ text: String) -> String {
+        let singleLine = text.replacingOccurrences(of: "\n", with: " ")
+        return singleLine.count > 54 ? String(singleLine.prefix(51)) + "..." : singleLine
     }
 }
