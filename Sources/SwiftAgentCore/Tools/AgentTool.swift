@@ -99,81 +99,189 @@ public struct AgentTool: Tool {
             return ToolResult(content: "Unknown agent type \"\(subagentType)\". Available types: \(available)", isError: true)
         }
 
-        // Build tool list display
-        let toolList: String
-        if definition.tools == ["*"] || definition.tools == nil {
-            if let disallowed = definition.disallowedTools, !disallowed.isEmpty {
-                toolList = "All tools except: \(disallowed.joined(separator: ", "))"
-            } else {
-                toolList = "All tools"
-            }
-        } else if let tools = definition.tools {
-            toolList = tools.joined(separator: ", ")
-        } else {
-            toolList = "All tools"
+        guard let manager = subAgentManager else {
+            return ToolResult(
+                content: "Error: sub-agent execution is not configured. The Agent tool must be registered with a SubAgentManager before it can run \(definition.name).",
+                isError: true
+            )
         }
-        let modelNote: String
-        if let m = input["model"], case .string(let modelName) = m {
-            modelNote = " (model override: \(modelName))"
-        } else { modelNote = "" }
+
+        let agentContext = AgentContext(
+            parentSessionId: context.sessionID,
+            workingDirectory: context.workingDirectory,
+            permissionMode: definition.permissionMode ?? context.mode,
+            settings: subAgentSettings(definition: definition, input: input, context: context)
+        )
+
+        let state = AppState(settings: agentContext.settings, permissionMode: agentContext.permissionMode)
+        let toolDefinitions = await buildToolDefinitions(from: context, allowedAgentTypes: nil)
+        let progressID = context.toolUseID ?? "Agent"
 
         if runInBackground {
-            return ToolResult(content: """
-                Launched agent \"\(definition.name)\" in background\(modelNote).
-                Agent ID: \(definition.id)
-                Description: \(taskDesc)
-                Prompt: \(prompt)
-                Tools: \(toolList)
-
-                The agent will work autonomously on this task.
-                """)
-        }
-
-        // If we have a sub-agent manager, run the agent
-        if let manager = subAgentManager {
-            let agentContext = AgentContext(
-                parentSessionId: context.sessionID,
-                workingDirectory: context.workingDirectory,
-                permissionMode: context.mode
+            let handle = await manager.startBackground(
+                definition: definition,
+                input: prompt,
+                taskDescription: taskDesc,
+                context: agentContext,
+                state: state,
+                tools: toolDefinitions
             )
-
-            // Build AppState from context
-            let state = AppState(settings: Settings())
-
-            do {
-                let result = try await manager.run(
-                    definition: definition,
-                    input: prompt,
-                    context: agentContext,
-                    state: state,
-                    tools: nil
-                )
-                return ToolResult(content: """
-                    Agent \"\(definition.name)\" completed (ID: \(result.agentId))
-                    Tool calls: \(result.toolCalls)
-                    Duration: \(String(format: "%.1f", result.duration))s
-
-                    Result:
-                    \(result.output)
-                    """)
-            } catch {
-                return ToolResult(content: "Agent error: \(error.localizedDescription)", isError: true)
-            }
-        } else {
-            // No sub-agent manager — format the agent dispatch as structured output
-            return ToolResult(content: """
-                ## Agent Dispatch: \(definition.name)\(modelNote)
-
-                **Task**: \(taskDesc)
-                **Prompt**: \(prompt)
-                **Type**: \(subagentType)
-                **Tools**: \(toolList)
-
-                ### System Prompt
-                \(definition.systemPrompt)
-
-                The agent should now execute the task using the tools available. When complete, respond with a concise report covering what was done and any key findings.
-                """)
+            emitProgress(
+                onProgress,
+                toolUseID: progressID,
+                message: "Started \(definition.name) sub-agent in background: \(taskDesc)"
+            )
+            return ToolResult(
+                content: backgroundLaunchJSON(handle)
+            )
         }
+
+        emitProgress(
+            onProgress,
+            toolUseID: progressID,
+            message: "Starting \(definition.name) sub-agent: \(taskDesc)"
+        )
+
+        do {
+            let result = try await manager.run(
+                definition: definition,
+                input: prompt,
+                context: agentContext,
+                state: state,
+                tools: toolDefinitions,
+                onEvent: { event in
+                    forwardSubAgentEvent(event, agentName: definition.name, toolUseID: progressID, onProgress: onProgress)
+                }
+            )
+            emitProgress(
+                onProgress,
+                toolUseID: progressID,
+                message: "\(definition.name) sub-agent completed in \(String(format: "%.1f", result.duration))s"
+            )
+            return ToolResult(content: """
+                Agent \"\(definition.name)\" completed (ID: \(result.agentId), task: \(result.taskId))
+                Tool calls: \(result.toolCalls)
+                Duration: \(String(format: "%.1f", result.duration))s
+
+                Result:
+                \(result.output)
+                """)
+        } catch {
+            emitProgress(
+                onProgress,
+                toolUseID: progressID,
+                message: "\(definition.name) sub-agent failed: \(error.localizedDescription)"
+            )
+            return ToolResult(content: "Agent error: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    private func subAgentSettings(
+        definition: AgentDefinition,
+        input: [String: JSONValue],
+        context: ToolUseContext
+    ) -> Settings {
+        let mainModel = context.mainLoopModel ?? ModelRegistry.shared.defaultModel
+        var modelID = definition.model?.modelID ?? mainModel
+        if let modelValue = input["model"], case .string(let requestedModel) = modelValue {
+            modelID = ModelRegistry.shared.resolveModel(requestedModel)
+        }
+
+        return Settings(
+            model: ModelConfig(modelID: modelID),
+            permissionMode: definition.permissionMode ?? context.mode,
+            maxTokens: 8192,
+            thinking: context.thinkingConfig
+        )
+    }
+
+    private func buildToolDefinitions(
+        from context: ToolUseContext,
+        allowedAgentTypes: [String]?
+    ) async -> [ToolDefinition]? {
+        guard let tools = context.tools else { return nil }
+
+        let permissionContext = ToolPermissionContext()
+        let agents = context.agentDefinitions ?? BuiltInAgents.all.values.map { $0 }
+        var definitions: [ToolDefinition] = []
+        definitions.reserveCapacity(tools.count)
+
+        for tool in tools {
+            let description = await tool.prompt(
+                getToolPermissionContext: { permissionContext },
+                tools: tools,
+                agents: agents,
+                allowedAgentTypes: allowedAgentTypes
+            )
+            definitions.append(ToolDefinition(name: tool.name, description: description, inputSchema: tool.inputSchema))
+        }
+
+        return definitions
+    }
+
+    private func forwardSubAgentEvent(
+        _ event: StreamingQueryEvent,
+        agentName: String,
+        toolUseID: String,
+        onProgress: ToolCallProgress?
+    ) {
+        switch event {
+        case .modelStreaming:
+            emitProgress(onProgress, toolUseID: toolUseID, message: "\(agentName) is thinking")
+        case .assistantTextStreaming:
+            emitProgress(onProgress, toolUseID: toolUseID, message: "\(agentName) is writing results")
+        case .toolStarted:
+            let detail = SubAgentManager.backgroundProgress(
+                event,
+                agentName: agentName
+            ).detail ?? "using tool"
+            emitProgress(onProgress, toolUseID: toolUseID, message: "\(agentName) \(detail)")
+        case .toolCompleted(_, let toolName, _, let isError):
+            let status = isError ? "failed" : "completed"
+            emitProgress(onProgress, toolUseID: toolUseID, message: "\(agentName) \(status) \(toolName)")
+        case .toolProgress(_, let message):
+            emitProgress(onProgress, toolUseID: toolUseID, message: "\(agentName): \(message)")
+        case .turnComplete(let turnNumber, let toolCallCount):
+            emitProgress(
+                onProgress,
+                toolUseID: toolUseID,
+                message: "\(agentName) turn \(turnNumber) complete (\(toolCallCount) tool call\(toolCallCount == 1 ? "" : "s"))"
+            )
+        }
+    }
+
+    private func emitProgress(
+        _ onProgress: ToolCallProgress?,
+        toolUseID: String,
+        message: String
+    ) {
+        onProgress?(ToolProgress(toolUseID: toolUseID, data: AgentToolProgressData(message: message)))
+    }
+
+    private func backgroundLaunchJSON(_ handle: SubAgentTaskHandle) -> String {
+        let payload: [String: Any] = [
+            "status": "async_launched",
+            "taskId": handle.taskId,
+            "agentId": handle.agentId,
+            "agentType": handle.agentName,
+            "description": handle.description,
+            "next": "Use TaskOutput with this taskId to read progress and the final result.",
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return "Started background sub-agent task \(handle.taskId). Use TaskOutput with this taskId to read progress and the final result."
+        }
+        return string
+    }
+}
+
+public struct AgentToolProgressData: ToolProgressData {
+    public let type = "agent"
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
     }
 }

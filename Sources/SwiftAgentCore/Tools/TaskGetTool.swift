@@ -30,12 +30,14 @@ public struct TaskGetTool: Tool {
         guard let task = await taskManager.get(taskId) else {
             return ToolResult(content: "No task found with ID \(taskId)")
         }
+        let summary = task.progressSummary()
 
         return ToolResult(content: """
             Task #\(task.id)
             Name: \(task.name)
             Description: \(task.description)
             Status: \(task.status.rawValue)
+            Progress: \(TaskProgressFormatter.compact(summary))
             Created: \(task.createdAt)
             \(task.result.map { "Result: \($0)" } ?? "")
             """)

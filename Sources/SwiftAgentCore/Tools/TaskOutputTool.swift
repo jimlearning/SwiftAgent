@@ -56,47 +56,202 @@ public struct TaskOutputTool: Tool {
             return ToolResult(content: "No task found with ID \(taskId)", isError: true)
         }
 
-        // If blocking, wait for completion
-        let finalTask: AgentTask
+        // If blocking, wait for completion while surfacing live background progress.
+        let finalSnapshot: TaskProgressSnapshot?
         if shouldBlock && task.status == .running {
-            if let waited = await taskManager.waitForCompletion(taskId, timeout: timeout) {
-                finalTask = waited
-            } else {
-                let current = await taskManager.get(taskId)
-                let output = current?.output ?? ""
-                return ToolResult(content: """
-                    {"retrieval_status": "timeout", "task": {"task_id": "\(taskId)", "task_type": "local_bash", "status": "\(current?.status.rawValue ?? "unknown")", "description": "\(current?.description ?? "")", "output": "\(output.replacingOccurrences(of: "\"", with: "\\\""))"}}
-                    """)
+            finalSnapshot = await waitForCompletionWithProgress(
+                taskId: taskId,
+                timeout: timeout,
+                toolUseID: context.toolUseID ?? "TaskOutput",
+                onProgress: onProgress
+            )
+            if finalSnapshot == nil {
+                let current = await taskManager.progressSnapshot(taskId)
+                return ToolResult(content: responseJSON(
+                    retrievalStatus: "timeout",
+                    snapshot: current,
+                    fallbackTaskId: taskId
+                ))
             }
         } else {
-            finalTask = task
+            finalSnapshot = await taskManager.progressSnapshot(taskId)
         }
 
-        let status = finalTask.status == .completed ? "success" : "not_ready"
-        let output = finalTask.output ?? finalTask.result ?? ""
+        let finalTask = finalSnapshot?.task ?? task
 
-        var parts: [String] = []
-        parts.append("\"retrieval_status\": \"\(status)\"")
-        parts.append("\"task\": {")
-        parts.append("\"task_id\": \"\(finalTask.id)\"")
-        parts.append(", \"task_type\": \"local_bash\"")
-        parts.append(", \"status\": \"\(finalTask.status.rawValue)\"")
-        parts.append(", \"description\": \"\(finalTask.description.replacingOccurrences(of: "\"", with: "\\\""))\"")
-        parts.append(", \"output\": \"\(output.replacingOccurrences(of: "\"", with: "\\\""))\"")
-        if let exitCode = finalTask.exitCode {
-            parts.append(", \"exitCode\": \(exitCode)")
+        let status: String
+        if shouldBlock && task.status == .running && finalTask.status == .running {
+            status = "timeout"
+        } else {
+            status = finalTask.status == .completed ? "success" : "not_ready"
         }
-        if let prompt = finalTask.prompt {
-            parts.append(", \"prompt\": \"\(prompt.replacingOccurrences(of: "\"", with: "\\\""))\"")
-        }
-        if let result = finalTask.result {
-            parts.append(", \"result\": \"\(result.replacingOccurrences(of: "\"", with: "\\\""))\"")
-        }
-        if let error = finalTask.error {
-            parts.append(", \"error\": \"\(error.replacingOccurrences(of: "\"", with: "\\\""))\"")
-        }
-        parts.append("}")
 
-        return ToolResult(content: "{\(parts.joined())}")
+        return ToolResult(content: responseJSON(retrievalStatus: status, snapshot: finalSnapshot))
+    }
+
+    private func waitForCompletionWithProgress(
+        taskId: String,
+        timeout: TimeInterval,
+        toolUseID: String,
+        onProgress: ToolCallProgress?
+    ) async -> TaskProgressSnapshot? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastProgressEmit = Date.distantPast
+
+        while Date() < deadline {
+            guard let snapshot = await taskManager.progressSnapshot(taskId) else {
+                return nil
+            }
+
+            let now = Date()
+            if now.timeIntervalSince(lastProgressEmit) >= 0.5 {
+                emitProgress(snapshot: snapshot, toolUseID: toolUseID, onProgress: onProgress)
+                lastProgressEmit = now
+            }
+
+            switch snapshot.task.status {
+            case .completed, .failed, .killed:
+                emitProgress(snapshot: snapshot, toolUseID: toolUseID, onProgress: onProgress)
+                return snapshot
+            case .pending, .running:
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+
+        if let snapshot = await taskManager.progressSnapshot(taskId) {
+            emitProgress(snapshot: snapshot, toolUseID: toolUseID, onProgress: onProgress)
+        }
+        return nil
+    }
+
+    private func emitProgress(
+        snapshot: TaskProgressSnapshot,
+        toolUseID: String,
+        onProgress: ToolCallProgress?
+    ) {
+        onProgress?(ToolProgress(
+            toolUseID: toolUseID,
+            data: TaskOutputProgressData(summary: snapshot.summary, recentEvents: snapshot.recentEvents)
+        ))
+    }
+
+    private func responseJSON(
+        retrievalStatus: String,
+        snapshot: TaskProgressSnapshot?,
+        fallbackTaskId: String? = nil
+    ) -> String {
+        let task = snapshot?.task
+        var taskObject: [String: Any] = [
+            "task_id": task?.id ?? fallbackTaskId ?? "",
+            "task_type": task?.type.rawValue ?? TaskType.localWorkflow.rawValue,
+            "status": task?.status.rawValue ?? "unknown",
+            "description": task?.description ?? "",
+            "output": task?.output ?? "",
+        ]
+
+        if let exitCode = task?.exitCode {
+            taskObject["exitCode"] = exitCode
+        }
+        if let prompt = task?.prompt {
+            taskObject["prompt"] = prompt
+        }
+        if let result = task?.result {
+            taskObject["result"] = result
+        }
+        if let error = task?.error {
+            taskObject["error"] = error
+        }
+
+        let payload: [String: Any] = [
+            "retrieval_status": retrievalStatus,
+            "progress_summary": snapshot.map(Self.summaryJSON) ?? [:],
+            "recent_events": snapshot?.recentEvents.map(Self.eventJSON) ?? [],
+            "task": taskObject,
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return #"{"retrieval_status":"not_ready","task":{"task_id":"","task_type":"local_workflow","status":"unknown","description":"","output":""}}"#
+        }
+        return string
+    }
+
+    private static func summaryJSON(_ snapshot: TaskProgressSnapshot) -> [String: Any] {
+        let summary = snapshot.summary
+        var object: [String: Any] = [
+            "task_id": summary.taskId,
+            "task_name": summary.taskName,
+            "description": summary.description,
+            "status": summary.status.rawValue,
+            "phase": summary.phase.rawValue,
+            "last_message": summary.lastMessage,
+            "turn_count": summary.turnCount,
+            "completed_tool_count": summary.completedToolCount,
+            "updated_at": summary.updatedAt.timeIntervalSince1970,
+        ]
+        if let currentTool = summary.currentTool {
+            object["current_tool"] = currentTool
+        }
+        return object
+    }
+
+    private static func eventJSON(_ event: TaskProgressEvent) -> [String: Any] {
+        var object: [String: Any] = [
+            "id": event.id,
+            "task_id": event.taskId,
+            "task_name": event.taskName,
+            "phase": event.phase.rawValue,
+            "message": event.message,
+            "timestamp": event.timestamp.timeIntervalSince1970,
+        ]
+        if let toolName = event.toolName {
+            object["tool_name"] = toolName
+        }
+        if let turnNumber = event.turnNumber {
+            object["turn_number"] = turnNumber
+        }
+        if let toolCallCount = event.toolCallCount {
+            object["tool_call_count"] = toolCallCount
+        }
+        return object
+    }
+}
+
+public struct TaskOutputProgressData: ToolProgressData {
+    public let type = "task_output"
+    public let summary: TaskProgressSummary
+    public let recentEvents: [TaskProgressEvent]
+
+    public init(summary: TaskProgressSummary, recentEvents: [TaskProgressEvent]) {
+        self.summary = summary
+        self.recentEvents = recentEvents
+    }
+
+    public var displayMessage: String {
+        "\(summary.taskName) \(TaskOutputProgressData.phaseLabel(summary))"
+    }
+
+    private static func phaseLabel(_ summary: TaskProgressSummary) -> String {
+        switch summary.phase {
+        case .pending:
+            return "pending"
+        case .running:
+            return summary.lastMessage
+        case .thinking:
+            return "thinking"
+        case .usingTool:
+            return "using \(summary.currentTool ?? "tool")"
+        case .writingResults:
+            return "writing results"
+        case .turnComplete:
+            return "turn \(summary.turnCount) complete"
+        case .completed:
+            return "done"
+        case .failed:
+            return "failed"
+        case .killed:
+            return "stopped"
+        }
     }
 }

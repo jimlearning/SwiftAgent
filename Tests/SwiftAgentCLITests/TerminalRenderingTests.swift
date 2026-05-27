@@ -1,5 +1,7 @@
 import Testing
 import Darwin
+import Foundation
+import SwiftAgentCore
 @testable import SwiftAgentCLI
 
 struct TerminalDisplayWidthTests {
@@ -93,5 +95,113 @@ struct PastePlaceholderTests {
         """
 
         #expect(LineEditor.makePastePlaceholder(pasteIndex: 1, content: pasted) == "[Pasted text #1 +2 lines]")
+    }
+}
+
+struct ChatToolExecutionSchedulerTests {
+    @Test
+    func runsConsecutiveConcurrencySafeCallsInParallelAndPreservesOrder() async {
+        let calls = [
+            ChatToolCall(name: "Agent", id: "one", input: [:]),
+            ChatToolCall(name: "Agent", id: "two", input: [:]),
+            ChatToolCall(name: "Agent", id: "three", input: [:]),
+        ]
+
+        let start = Date()
+        let results = await ChatToolExecutionScheduler.execute(
+            calls: calls,
+            isConcurrencySafe: { _ in true },
+            execute: { call in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                return call.id
+            }
+        )
+        let elapsed = Date().timeIntervalSince(start)
+
+        #expect(results.map(\.output) == ["one", "two", "three"])
+        #expect(elapsed < 0.45)
+    }
+
+    @Test
+    func serialCallSplitsParallelBatches() async {
+        let calls = [
+            ChatToolCall(name: "Agent", id: "safe-1", input: [:]),
+            ChatToolCall(name: "Edit", id: "serial", input: [:]),
+            ChatToolCall(name: "Agent", id: "safe-2", input: [:]),
+        ]
+        let recorder = OrderedRecorder()
+
+        let results = await ChatToolExecutionScheduler.execute(
+            calls: calls,
+            isConcurrencySafe: { $0.name == "Agent" },
+            execute: { call in
+                await recorder.append("start:\(call.id)")
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                await recorder.append("end:\(call.id)")
+                return call.id
+            }
+        )
+
+        #expect(results.map(\.output) == ["safe-1", "serial", "safe-2"])
+        #expect(await recorder.events == [
+            "start:safe-1",
+            "end:safe-1",
+            "start:serial",
+            "end:serial",
+            "start:safe-2",
+            "end:safe-2",
+        ])
+    }
+}
+
+struct TaskOutputStatusFormattingTests {
+    @Test
+    func formatsTaskOutputProgressAsCompactStatus() {
+        let summary = TaskProgressSummary(
+            taskId: "task-1",
+            taskName: "Explore",
+            description: "Inspect refs",
+            status: .running,
+            phase: .usingTool,
+            currentTool: "Read",
+            lastMessage: "Explore [Inspect refs] reading: file_path=Sources/Foo.swift",
+            turnCount: 0,
+            completedToolCount: 0,
+            updatedAt: Date()
+        )
+        let progress = TaskOutputProgressData(summary: summary, recentEvents: [])
+
+        #expect(ChatCommand.formatTaskOutputProgress(progress) == "Explore: [Inspect refs] reading: file_path=Sources/Foo.swift")
+    }
+
+    @Test
+    func formatsCompletedTaskOutputProgress() {
+        let summary = TaskProgressSummary(
+            taskId: "task-1",
+            taskName: "Codex",
+            description: "Inspect refs",
+            status: .completed,
+            phase: .completed,
+            currentTool: nil,
+            lastMessage: "Codex completed",
+            turnCount: 1,
+            completedToolCount: 4,
+            updatedAt: Date()
+        )
+        let progress = TaskOutputProgressData(summary: summary, recentEvents: [])
+
+        #expect(ChatCommand.formatTaskOutputProgress(progress) == "Codex: done")
+    }
+}
+
+private actor OrderedRecorder {
+    private var values: [String] = []
+
+    func append(_ value: String) {
+        values.append(value)
+    }
+
+    var events: [String] {
+        values
     }
 }

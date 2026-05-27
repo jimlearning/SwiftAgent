@@ -145,6 +145,7 @@ public struct QueryEngine: Sendable {
             var turnText = ""
             var toolCalls: [(id: String, name: String, input: [String: JSONValue])] = []
             var stopReason: String? = nil
+            var didEmitAssistantTextStreaming = false
 
             do {
                 let thinking = await state.settings.thinking
@@ -246,6 +247,11 @@ public struct QueryEngine: Sendable {
                     switch event {
                     case .textDelta(let text):
                         turnText += text
+                        if !didEmitAssistantTextStreaming,
+                           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            onEvent?(.assistantTextStreaming)
+                            didEmitAssistantTextStreaming = true
+                        }
                         await state.appendStreamingOutput(text)
 
                     case .contentBlockStart(_, let block):
@@ -294,7 +300,15 @@ public struct QueryEngine: Sendable {
                             pendingExecutions.append(PendingToolExecution(
                                 index: index, id: toolId, name: toolName, task: task
                             ))
-                            onEvent?(.toolStarted(toolUseID: toolId, toolName: toolName))
+                            onEvent?(.toolStarted(
+                                toolUseID: toolId,
+                                toolName: toolName,
+                                inputSummary: ToolInputSummaryFormatter.summarize(
+                                    toolName: toolName,
+                                    input: inputDict,
+                                    registry: toolExecutor.registry
+                                )
+                            ))
                         }
 
                     case .messageDelta(let reason, let usage):
@@ -512,13 +526,15 @@ public struct QueryEngine: Sendable {
 /// are yielded to the caller as they complete for real-time UI updates.
 public enum StreamingQueryEvent: Sendable {
     /// A tool started executing.
-    case toolStarted(toolUseID: String, toolName: String)
+    case toolStarted(toolUseID: String, toolName: String, inputSummary: String? = nil)
     /// A tool completed with its result.
     case toolCompleted(toolUseID: String, toolName: String, content: String, isError: Bool)
     /// Progress message from a running tool.
     case toolProgress(toolUseID: String, message: String)
     /// The model started streaming its response.
     case modelStreaming
+    /// The assistant started streaming visible text for the current turn.
+    case assistantTextStreaming
     /// The query completed a turn (will continue with more tool calls or stop).
     case turnComplete(turnNumber: Int, toolCallCount: Int)
 }

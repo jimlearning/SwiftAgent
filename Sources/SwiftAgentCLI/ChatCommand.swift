@@ -63,7 +63,16 @@ struct ChatCommand: AsyncParsableCommand {
         // Set up client and tools
         let client = LLMClient(apiKey: key, baseURL: baseURL, model: model, debugLogger: debugLog)
         let registry = ToolRegistry()
-        registerBuiltinTools(into: registry)
+        let taskManager = TaskManager()
+        let toolExecutor = ToolExecutor(registry: registry)
+        let subAgentEngine = QueryEngine(
+            client: client,
+            toolExecutor: toolExecutor,
+            contextManager: ContextManager(),
+            promptBuilder: SystemPromptBuilder()
+        )
+        let subAgentManager = SubAgentManager(engine: subAgentEngine, taskManager: taskManager)
+        registerBuiltinTools(into: registry, taskManager: taskManager, subAgentManager: subAgentManager)
         let toolDefs = await registry.toolDefinitions()
 
         let editor = LineEditor()
@@ -136,8 +145,8 @@ struct ChatCommand: AsyncParsableCommand {
                         continue
                     }
                     let line: String
-                    if let toolName = currentTool.name {
-                        line = "\r\u{001B}[K  \(renderer.spinnerFrame(index: frame)) Running \(toolName)..."
+                    if let display = currentTool.displayLine {
+                        line = "\r\u{001B}[K  \(renderer.spinnerFrame(index: frame)) \(display)"
                     } else {
                         line = renderer.renderThinkingLine(frame: frame)
                     }
@@ -165,7 +174,7 @@ struct ChatCommand: AsyncParsableCommand {
                     iteration += 1
                     var turnText = ""
                     var thinkingText = ""
-                    var toolBlocks: [(name: String, id: String, input: [String: JSONValue])] = []
+                    var toolBlocks: [ChatToolCall] = []
                     var currentToolName: String = ""
                     var currentToolID: String = ""
                     var currentToolInputJSON: String = ""
@@ -229,7 +238,7 @@ struct ChatCommand: AsyncParsableCommand {
                                     for (k, v) in json {
                                         if let jv = JSONValue.fromAny(v) { input[k] = jv }
                                     }
-                                    toolBlocks.append((name: currentToolName, id: currentToolID, input: input))
+                                    toolBlocks.append(ChatToolCall(name: currentToolName, id: currentToolID, input: input))
                                 }
                                 currentToolInputJSON = ""
                                 currentToolID = ""
@@ -268,15 +277,34 @@ struct ChatCommand: AsyncParsableCommand {
                     }
                     conversationHistory.append(Message(type: .assistant, content: assistantBlocks))
 
-                    // Execute tools and collect results
-                    var resultBlocks: [ContentBlock] = []
-                    for tb in toolBlocks {
-                        let summary = await executeTool(name: tb.name, input: tb.input, registry: registry, sessionState: sessionState)
-                        resultBlocks.append(.toolResult(
-                            toolUseID: tb.id,
-                            content: .string(summary),
-                            isError: summary.hasPrefix("Error:")
-                        ))
+                    // Execute tools and collect results. Consecutive concurrency-safe
+                    // tools run in parallel, but non-safe tools preserve serial order.
+                    let results = await ChatToolExecutionScheduler.execute(
+                        calls: toolBlocks,
+                        isConcurrencySafe: { call in
+                            registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false
+                        },
+                        execute: { call in
+                            currentTool.start(id: call.id, name: call.name)
+                            let summary = await executeTool(
+                                name: call.name,
+                                input: call.input,
+                                toolUseID: call.id,
+                                registry: registry,
+                                sessionState: sessionState,
+                                currentTool: currentTool
+                            )
+                            currentTool.finish(id: call.id)
+                            return summary
+                        }
+                    )
+
+                    let resultBlocks = results.map { result in
+                        ContentBlock.toolResult(
+                            toolUseID: result.call.id,
+                            content: .string(result.output),
+                            isError: result.output.hasPrefix("Error:")
+                        )
                     }
 
                     // Send tool results as a user message with tool_result blocks
@@ -341,18 +369,24 @@ struct ChatCommand: AsyncParsableCommand {
     private func executeTool(
         name: String,
         input: [String: JSONValue],
+        toolUseID: String,
         registry: ToolRegistry,
-        sessionState: SessionState
+        sessionState: SessionState,
+        currentTool: CurrentToolTracker? = nil
     ) async -> String {
         let bylassAvailable = permission == "bypass"
 
         var context = ToolUseContext(
             workingDirectory: FileManager.default.currentDirectoryPath,
             sessionID: "repl",
+            toolUseID: toolUseID,
             mode: sessionState.isPlanModeActive ? .plan : parsePermissionMode(permission),
             isBypassPermissionsModeAvailable: bylassAvailable,
             isAutoModeAvailable: bylassAvailable,
             prePlanMode: sessionState.isPlanModeActive ? .plan : nil,
+            tools: registry.allTools,
+            mainLoopModel: model,
+            querySource: .repl,
             permissionPromptHandler: { _, _, _ in
                 bylassAvailable ? .allow : .deny(reason: "Permission prompts not available in REPL mode")
             }
@@ -370,8 +404,18 @@ struct ChatCommand: AsyncParsableCommand {
         context.commands = buildBundledSkillCommands()
 
         let executor = ToolExecutor(registry: registry)
+        let onProgress: ToolCallProgress = { progress in
+            if let agentProgress = progress.data as? AgentToolProgressData {
+                currentTool?.update(id: progress.toolUseID, status: agentProgress.message)
+            } else if let taskProgress = progress.data as? TaskOutputProgressData {
+                currentTool?.update(id: progress.toolUseID, status: Self.formatTaskOutputProgress(taskProgress))
+            } else {
+                currentTool?.update(id: progress.toolUseID, status: "\(name): \(progress.data.type)")
+            }
+        }
+
         do {
-            let result = try await executor.execute(name: name, input: input, context: context)
+            let result = try await executor.execute(name: name, input: input, context: context, onProgress: onProgress)
             return result.content
         } catch {
             return "Error: \(error.localizedDescription)"
@@ -409,6 +453,38 @@ struct ChatCommand: AsyncParsableCommand {
                 ))
             )
         }
+    }
+
+    static func formatTaskOutputProgress(_ progress: TaskOutputProgressData) -> String {
+        let summary = progress.summary
+        let label: String
+        switch summary.phase {
+        case .pending:
+            label = "pending"
+        case .running:
+            label = shortTaskMessage(summary.lastMessage, taskName: summary.taskName)
+        case .thinking:
+            label = "thinking"
+        case .usingTool:
+            label = shortTaskMessage(summary.lastMessage, taskName: summary.taskName)
+        case .writingResults:
+            label = "writing results"
+        case .turnComplete:
+            label = "turn \(summary.turnCount) complete"
+        case .completed:
+            label = "done"
+        case .failed:
+            label = "failed"
+        case .killed:
+            label = "stopped"
+        }
+        return "\(summary.taskName): \(label)"
+    }
+
+    private static func shortTaskMessage(_ message: String, taskName: String) -> String {
+        let prefix = taskName + " "
+        let trimmed = message.hasPrefix(prefix) ? String(message.dropFirst(prefix.count)) : message
+        return trimmed.count > 64 ? String(trimmed.prefix(61)) + "..." : trimmed
     }
 
 /// Thread-safe session state shared between the REPL loop and tool execution.
@@ -491,9 +567,11 @@ private final class SessionState: @unchecked Sendable {
         }
     }
 
-    private func registerBuiltinTools(into registry: ToolRegistry) {
-        let taskManager = TaskManager()
-
+    private func registerBuiltinTools(
+        into registry: ToolRegistry,
+        taskManager: TaskManager,
+        subAgentManager: SubAgentManager
+    ) {
         registry.register(FileReadTool())
         registry.register(FileWriteTool())
         registry.register(FileEditTool())
@@ -518,7 +596,7 @@ private final class SessionState: @unchecked Sendable {
         registry.register(TaskOutputTool(taskManager: taskManager))
         registry.register(TaskUpdateTool(taskManager: taskManager))
         registry.register(TaskStopTool(taskManager: taskManager))
-        registry.register(AgentTool())
+        registry.register(AgentTool(subAgentManager: subAgentManager))
         registry.register(SkillTool(knownSkills: BundledSkills.all.map { $0.name }))
         registry.register(SendMessageTool())
         registry.register(AskUserQuestionTool())
@@ -550,20 +628,97 @@ private final class AtomicBool: @unchecked Sendable {
     }
 }
 
-/// Thread-safe tracker for the currently executing tool name.
+/// Thread-safe tracker for currently executing tools.
 /// Written by the agent loop and read by the spinner Task.
 private final class CurrentToolTracker: @unchecked Sendable {
+    private struct Entry {
+        let name: String
+        var status: String?
+    }
+
+    private static let pendingToolID = "__pending_tool__"
     private let lock = NSLock()
-    private var _name: String?
+    private var entries: [String: Entry] = [:]
+    private var order: [String] = []
     private var _isThinking: Bool = false
 
+    var displayLine: String? {
+        lock.withLock {
+            let active = order.compactMap { id -> Entry? in entries[id] }
+            guard !active.isEmpty else { return nil }
+            if active.count == 1 {
+                let entry = active[0]
+                return entry.status ?? "Running \(entry.name)..."
+            }
+
+            let fragments = active.prefix(3).map { entry in
+                if let status = entry.status {
+                    return Self.compact(status)
+                }
+                return "\(entry.name) running"
+            }
+            let suffix = active.count > 3 ? "; +\(active.count - 3) more" : ""
+            let label = active.allSatisfy { $0.name == "TaskOutput" } ? "background tasks" : "tools"
+            return "\(active.count) \(label) running | " + fragments.joined(separator: "; ") + suffix
+        }
+    }
+
     var name: String? {
-        get { lock.withLock { _name } }
-        set { lock.withLock { _name = newValue } }
+        get {
+            lock.withLock {
+                entries[Self.pendingToolID]?.name
+            }
+        }
+        set {
+            lock.withLock {
+                if let value = newValue {
+                    entries[Self.pendingToolID] = Entry(name: value, status: nil)
+                    if !order.contains(Self.pendingToolID) {
+                        order.append(Self.pendingToolID)
+                    }
+                } else {
+                    entries[Self.pendingToolID] = nil
+                    order.removeAll { $0 == Self.pendingToolID }
+                }
+            }
+        }
+    }
+
+    func start(id: String, name: String) {
+        lock.withLock {
+            entries[id] = Entry(name: name, status: nil)
+            if !order.contains(id) {
+                order.append(id)
+            }
+        }
+    }
+
+    func update(id: String, status: String) {
+        lock.withLock {
+            if var entry = entries[id] {
+                entry.status = status
+                entries[id] = entry
+            } else {
+                entries[id] = Entry(name: id, status: status)
+                order.append(id)
+            }
+        }
+    }
+
+    func finish(id: String) {
+        lock.withLock {
+            entries[id] = nil
+            order.removeAll { $0 == id }
+        }
     }
 
     var isThinking: Bool {
         get { lock.withLock { _isThinking } }
         set { lock.withLock { _isThinking = newValue } }
+    }
+
+    private static func compact(_ text: String) -> String {
+        let singleLine = text.replacingOccurrences(of: "\n", with: " ")
+        return singleLine.count > 54 ? String(singleLine.prefix(51)) + "..." : singleLine
     }
 }

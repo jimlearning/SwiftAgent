@@ -34,7 +34,8 @@ public struct TaskListTool: Tool {
                 case .killed: return "[-]"
                 }
             }()
-            output += "\(icon) #\(task.id) \(task.name) (\(task.status.rawValue))\n"
+            let summary = task.progressSummary()
+            output += "\(icon) #\(task.id) \(task.name) (\(task.status.rawValue)) — \(TaskProgressFormatter.compact(summary))\n"
         }
         return ToolResult(content: output)
     }
