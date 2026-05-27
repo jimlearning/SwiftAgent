@@ -170,4 +170,28 @@ struct GrepToolTests {
         let result = try await tool.call(input: ["pattern": .string("[invalid"), "path": .string("/tmp")], context: testCtx)
         #expect(result.isError)
     }
+
+    @Test
+    func largeRipgrepOutputDoesNotDeadlockBeforeHeadLimit() async throws {
+        let tool = GrepTool()
+        let dir = "/tmp/swiftagent_test_grep_large_\(UUID().uuidString.prefix(8))"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let repeated = String(repeating: "highlight value value value value value value value value value\n", count: 20_000)
+        try repeated.write(toFile: "\(dir)/large.txt", atomically: true, encoding: .utf8)
+
+        let started = Date()
+        let result = try await tool.call(input: [
+            "pattern": .string("highlight"),
+            "path": .string(dir),
+            "output_mode": .string("content"),
+            "-C": .number(1),
+            "head_limit": .number(5),
+        ], context: testCtx)
+
+        #expect(!result.isError)
+        #expect(result.content.contains("[Showing results with pagination = limit: 5]"))
+        #expect(Date().timeIntervalSince(started) < 5)
+    }
 }

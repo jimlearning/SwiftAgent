@@ -267,10 +267,27 @@ public struct GrepTool: Tool {
             return ToolResult(content: "Error executing rg: \(error.localizedDescription)", isError: true)
         }
 
-        process.waitUntilExit()
+        let outputBuffer = LockedProcessBuffer()
+        let errorBuffer = LockedProcessBuffer()
+        let readGroup = DispatchGroup()
 
-        let outputData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        readGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            outputBuffer.append(outPipe.fileHandleForReading.readDataToEndOfFile())
+            readGroup.leave()
+        }
+
+        readGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errorBuffer.append(errPipe.fileHandleForReading.readDataToEndOfFile())
+            readGroup.leave()
+        }
+
+        process.waitUntilExit()
+        readGroup.wait()
+
+        let outputData = outputBuffer.data()
+        let errData = errorBuffer.data()
         let outputStr = String(data: outputData, encoding: .utf8) ?? ""
         let errStr = String(data: errData, encoding: .utf8) ?? ""
 
@@ -656,5 +673,20 @@ extension Dictionary where Key == String, Value == JSONValue {
     func boolValue(_ key: String) -> Bool? {
         guard case .bool(let b) = self[key] else { return nil }
         return b
+    }
+}
+
+private final class LockedProcessBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = Data()
+
+    func append(_ data: Data) {
+        lock.withLock {
+            storage.append(data)
+        }
+    }
+
+    func data() -> Data {
+        lock.withLock { storage }
     }
 }
