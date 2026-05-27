@@ -48,7 +48,14 @@ struct ChatCommand: AsyncParsableCommand {
         let capability = TerminalCapability()
         let theme: ColorTheme = noColor ? .monochrome : .default
         let renderer = TerminalRenderer(capability: capability, theme: theme)
-        let markdown = MarkdownRenderer(capability: capability, theme: theme)
+        let syntaxHighlighter = TreeSitterSyntaxHighlighter()
+        let codeTheme: CodeTheme = .monokai
+        let markdown = MarkdownRenderer(
+            capability: capability,
+            theme: theme,
+            syntaxHighlighter: syntaxHighlighter,
+            codeTheme: codeTheme
+        )
 
         emitBlock(renderer.renderBanner(version: "0.1.0"))
         emitBlock("Type [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftAgentCore
 
 /// Converts markdown text to ANSI-formatted terminal output.
 /// Post-processes accumulated response text before display.
@@ -6,10 +7,19 @@ import Foundation
 public struct MarkdownRenderer: Sendable {
     private let capability: TerminalCapability
     private let theme: ColorTheme
+    private let syntaxHighlighter: (any SyntaxHighlightingEngine)?
+    private let codeTheme: CodeTheme
 
-    public init(capability: TerminalCapability, theme: ColorTheme) {
+    public init(
+        capability: TerminalCapability,
+        theme: ColorTheme,
+        syntaxHighlighter: (any SyntaxHighlightingEngine)? = nil,
+        codeTheme: CodeTheme = .monokai
+    ) {
         self.capability = capability
         self.theme = theme
+        self.syntaxHighlighter = syntaxHighlighter
+        self.codeTheme = codeTheme
     }
 
     // MARK: - Public
@@ -120,10 +130,33 @@ public struct MarkdownRenderer: Sendable {
         let topBorder = "┌" + repeatChar("─", topDashCount) + langLabel + "┐"
         result.append(border(dim(topBorder)))
 
-        // Content lines: │ padded content │
-        for line in lines {
-            let padded = padToVisibleWidth(line, width: innerWidth)
-            result.append(border(dim("│ " + padded + " │")))
+        // Try syntax highlighting
+        let highlightedLines: [String]?
+        if let syntaxHighlighter, let lang = language {
+            let source = lines.joined(separator: "\n")
+            if let tokens = syntaxHighlighter.highlight(source, language: lang) {
+                let renderer = TokenANSIRenderer(theme: codeTheme, capability: capability)
+                highlightedLines = renderer.render(source, tokens: tokens).components(separatedBy: "\n")
+            } else {
+                highlightedLines = nil
+            }
+        } else {
+            highlightedLines = nil
+        }
+
+        // Content lines
+        if let hlLines = highlightedLines {
+            let leftBorder = capability.color("│ ", color: theme.secondary, style: .dim)
+            let rightBorder = capability.color(" │", color: theme.secondary, style: .dim)
+            for line in hlLines {
+                let padded = padToVisibleWidth(line, width: innerWidth)
+                result.append(leftBorder + padded + rightBorder)
+            }
+        } else {
+            for line in lines {
+                let padded = padToVisibleWidth(line, width: innerWidth)
+                result.append(border(dim("│ " + padded + " │")))
+            }
         }
 
         // Bottom border: └──────────────────┘
