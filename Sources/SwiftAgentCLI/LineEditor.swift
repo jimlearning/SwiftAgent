@@ -314,6 +314,14 @@ public final class LineEditor: @unchecked Sendable {
                         cursorPos += 1
                         redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                     }
+                case .wordLeft:
+                    // Alt+Left: move cursor to start of current/previous word
+                    cursorPos = wordBoundaryBefore(cursorPos, in: buffer)
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                case .wordRight:
+                    // Alt+Right: move cursor to end of current/next word
+                    cursorPos = wordBoundaryAfter(cursorPos, in: buffer)
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 case .home:
                     cursorPos = 0
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
@@ -595,7 +603,7 @@ public final class LineEditor: @unchecked Sendable {
     }
 
     private enum EscapeSequence {
-        case up, down, left, right, home, end, deleteWord, newline, paste(String), none
+        case up, down, left, right, home, end, deleteWord, wordLeft, wordRight, newline, paste(String), none
     }
 
     private func readEscapeSequence() -> EscapeSequence {
@@ -612,6 +620,12 @@ public final class LineEditor: @unchecked Sendable {
 
         // Option+Enter / Alt+Enter: ESC followed by \r or \n → insert newline
         if second == 10 || second == 13 { return .newline }
+
+        // Alt/Option+Left / +Right: readline-style word navigation
+        //   \033b = ESC + b → word left  (backward-word)
+        //   \033f = ESC + f → word right (forward-word)
+        if second == 98 { return .wordLeft }   // 'b'
+        if second == 102 { return .wordRight } // 'f'
 
         // CSI sequences: ESC [ ...
         if second == 91 {
@@ -691,6 +705,19 @@ public final class LineEditor: @unchecked Sendable {
                 if parts.count >= 3, parts[2] == "13" {
                     return .newline
                 }
+            }
+
+            // xterm modified cursor keys: CSI <key>;<mods> <letter>
+            //   Alt+Left:  CSI 1;3 D, Alt+Right: CSI 1;3 C
+            if byte == 68 /* 'D' */ {
+                let parts = paramStr.split(separator: ";")
+                if parts.contains("3") { return .wordLeft }
+                return .left
+            }
+            if byte == 67 /* 'C' */ {
+                let parts = paramStr.split(separator: ";")
+                if parts.contains("3") { return .wordRight }
+                return .right
             }
 
             return .none
@@ -843,6 +870,66 @@ public final class LineEditor: @unchecked Sendable {
     }
 
     // MARK: - Display helpers
+
+    /// Find the word boundary before `pos` (Alt+Left behavior).
+    /// Uses the same alphanumeric-based word detection as Alt+Backspace (deleteWord):
+    ///   Phase 1 – skip backward through non-word characters (punctuation, CJK, spaces)
+    ///   Phase 2 – skip backward through word characters (alphanumeric)
+    /// Lands at the start of the chunk that deleteWord would remove.
+    private func wordBoundaryBefore(_ pos: Int, in buffer: String) -> Int {
+        guard pos > 0 else { return 0 }
+        let idx = buffer.index(buffer.startIndex, offsetBy: pos)
+        let prefix = buffer[..<idx]
+
+        var iterIdx = prefix.endIndex
+        let wordChars = CharacterSet.alphanumerics
+
+        // Phase 1: skip backward through non-word characters
+        while iterIdx > prefix.startIndex {
+            let prevIdx = prefix.index(before: iterIdx)
+            let isWord = prefix[prevIdx].unicodeScalars.allSatisfy { wordChars.contains($0) }
+            if isWord { break }
+            iterIdx = prevIdx
+        }
+
+        // Phase 2: skip backward through word characters
+        while iterIdx > prefix.startIndex {
+            let prevIdx = prefix.index(before: iterIdx)
+            let isWord = prefix[prevIdx].unicodeScalars.allSatisfy { wordChars.contains($0) }
+            if !isWord { break }
+            iterIdx = prevIdx
+        }
+
+        return buffer.distance(from: buffer.startIndex, to: iterIdx)
+    }
+
+    /// Find the word boundary after `pos` (Alt+Right behavior).
+    /// Symmetric to wordBoundaryBefore: skips the current word-or-nonword chunk
+    /// then the complementary chunk, landing at the start of the next unit.
+    private func wordBoundaryAfter(_ pos: Int, in buffer: String) -> Int {
+        guard pos < buffer.count else { return buffer.count }
+        let idx = buffer.index(buffer.startIndex, offsetBy: pos)
+        let suffix = buffer[idx...]
+
+        var iterIdx = suffix.startIndex
+        let wordChars = CharacterSet.alphanumerics
+
+        // Phase 1: skip forward through non-word characters
+        while iterIdx < suffix.endIndex {
+            let isWord = suffix[iterIdx].unicodeScalars.allSatisfy { wordChars.contains($0) }
+            if isWord { break }
+            iterIdx = suffix.index(after: iterIdx)
+        }
+
+        // Phase 2: skip forward through word characters
+        while iterIdx < suffix.endIndex {
+            let isWord = suffix[iterIdx].unicodeScalars.allSatisfy { wordChars.contains($0) }
+            if !isWord { break }
+            iterIdx = suffix.index(after: iterIdx)
+        }
+
+        return buffer.distance(from: buffer.startIndex, to: iterIdx)
+    }
 
     private func redrawLine(prompt: String, buffer: String, cursorPos: Int) {
         let styledPrompt = "\u{001B}[1;34m\(prompt)\u{001B}[0m"
