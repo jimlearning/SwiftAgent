@@ -140,6 +140,10 @@ struct ChatCommand: AsyncParsableCommand {
         let collapseDetector = CollapseDetector()
         let summaryFormatter = CollapsedSummaryFormatter(capability: capability)
 
+        // Track which group was most recently expanded to avoid
+        // re-expanding the same group (e.g. double Ctrl+O).
+        var lastExpandedIndex: Int? = nil
+
         // Nanobot-style REPL
         while true {
             // Drain any keystrokes typed while the model was generating
@@ -161,7 +165,19 @@ struct ChatCommand: AsyncParsableCommand {
                 }
                 if cmd == "/expand" {
                     let arg = parts.count > 1 ? String(parts[1]) : "last"
-                    emitBlock(await expandCollapsedResult(arg: arg, cache: toolResultCache, capability: capability))
+                    // If expanding "last" and it matches the already-expanded
+                    // group, skip to avoid duplicated output.
+                    if arg == "last", let idx = await toolResultCache.lastIndex(),
+                       idx == lastExpandedIndex {
+                        continue
+                    }
+                    let expanded = await expandCollapsedResult(arg: arg, cache: toolResultCache, capability: capability)
+                    emitBlock(expanded)
+                    if arg == "last", let idx = await toolResultCache.lastIndex() {
+                        lastExpandedIndex = idx
+                    } else if let n = Int(arg) {
+                        lastExpandedIndex = n
+                    }
                     continue
                 }
                 let (shouldExit, cmdOutput) = await handleCommand(
@@ -334,6 +350,7 @@ struct ChatCommand: AsyncParsableCommand {
                                 formatter: summaryFormatter,
                                 cache: toolResultCache
                             )
+                            lastExpandedIndex = nil  // New results → allow expand
                             let resultBlocks = results.map { result in
                                 ContentBlock.toolResult(toolUseID: result.call.id, content: .string(result.output), isError: result.output.hasPrefix("Error:"))
                             }
@@ -409,6 +426,7 @@ struct ChatCommand: AsyncParsableCommand {
                         formatter: summaryFormatter,
                         cache: toolResultCache
                     )
+                    lastExpandedIndex = nil  // New results → allow expand
 
                     let resultBlocks = results.map { result in
                         ContentBlock.toolResult(

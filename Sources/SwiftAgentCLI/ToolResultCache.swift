@@ -39,6 +39,11 @@ public actor ToolResultCache {
         return storage[maxKey]
     }
 
+    /// The index of the most recently stored group, or nil if none exist.
+    public func lastIndex() -> Int? {
+        storage.keys.max()
+    }
+
     /// All stored groups sorted by index ascending.
     public func all() -> [StoredGroup] {
         storage.values.sorted { $0.index < $1.index }

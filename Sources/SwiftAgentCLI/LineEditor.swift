@@ -438,6 +438,9 @@ public final class LineEditor: @unchecked Sendable {
                 cursorPos = buffer.count
                 redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
 
+            case 15:  // Ctrl+O — expand last collapsed tool result
+                return "/expand last"
+
             default:
                 // Printable ASCII or multi-byte UTF-8
                 if let (char, _) = decodeUTF8Char(leadByte: byte!) {
