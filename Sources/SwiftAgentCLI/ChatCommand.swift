@@ -112,6 +112,7 @@ struct ChatCommand: AsyncParsableCommand {
             ("/permissions", "View or change permission settings"),
             ("/skills",      "List all available skills"),
             ("/session",     "Show session info"),
+            ("/expand",      "Expand a collapsed tool result (e.g. /expand last or /expand 3)"),
         ]
 
         // Add skills from disk
@@ -134,6 +135,11 @@ struct ChatCommand: AsyncParsableCommand {
         // Each turn appends user message → assistant message(s) → tool results.
         var conversationHistory: [Message] = []
 
+        // ── Collapsed tool result tracking ──
+        let toolResultCache = ToolResultCache()
+        let collapseDetector = CollapseDetector()
+        let summaryFormatter = CollapsedSummaryFormatter(capability: capability)
+
         // Nanobot-style REPL
         while true {
             // Drain any keystrokes typed while the model was generating
@@ -151,6 +157,11 @@ struct ChatCommand: AsyncParsableCommand {
                 if cmd == "/clear" {
                     print(renderer.clearScreen())
                     conversationHistory = []
+                    continue
+                }
+                if cmd == "/expand" {
+                    let arg = parts.count > 1 ? String(parts[1]) : "last"
+                    emitBlock(await expandCollapsedResult(arg: arg, cache: toolResultCache, capability: capability))
                     continue
                 }
                 let (shouldExit, cmdOutput) = await handleCommand(
@@ -313,10 +324,16 @@ struct ChatCommand: AsyncParsableCommand {
                             for result in results {
                                 if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
                                     emitBlock(msg)
-                                } else {
-                                    emitBlock(toolResultSummary(name: result.call.name, input: result.call.input, output: result.output, capability: capability))
                                 }
                             }
+                            // Collapse and emit tool results (excluding SendUserMessage)
+                            let nonMessageResults = results.filter { $0.call.name != "SendUserMessage" }
+                            await emitCollapsedResults(
+                                results: nonMessageResults,
+                                detector: collapseDetector,
+                                formatter: summaryFormatter,
+                                cache: toolResultCache
+                            )
                             let resultBlocks = results.map { result in
                                 ContentBlock.toolResult(toolUseID: result.call.id, content: .string(result.output), isError: result.output.hasPrefix("Error:"))
                             }
@@ -382,16 +399,16 @@ struct ChatCommand: AsyncParsableCommand {
                     for result in results {
                         if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
                             emitBlock(msg)
-                        } else {
-                            let line = toolResultSummary(
-                                name: result.call.name,
-                                input: result.call.input,
-                                output: result.output,
-                                capability: capability
-                            )
-                            emitBlock(line)
                         }
                     }
+                    // Collapse and emit tool results (excluding SendUserMessage)
+                    let nonMessageResults = results.filter { $0.call.name != "SendUserMessage" }
+                    await emitCollapsedResults(
+                        results: nonMessageResults,
+                        detector: collapseDetector,
+                        formatter: summaryFormatter,
+                        cache: toolResultCache
+                    )
 
                     let resultBlocks = results.map { result in
                         ContentBlock.toolResult(
@@ -545,6 +562,124 @@ struct ChatCommand: AsyncParsableCommand {
             return "\(key): \(valStr)"
         }
         return parts.isEmpty ? "" : parts.joined(separator: ", ")
+    }
+
+    // MARK: - Collapsed tool result display
+
+    /// Groups consecutive collapsible tool results, stores their full output in
+    /// the cache, and emits single-line summaries. Non-collapsible results
+    /// remain individual summary lines.
+    private func emitCollapsedResults(
+        results: [ChatToolExecutionResult],
+        detector: CollapseDetector,
+        formatter: CollapsedSummaryFormatter,
+        cache: ToolResultCache
+    ) async {
+        guard !results.isEmpty else { return }
+
+        // Convert to SingleToolResult for grouping
+        let singleResults: [SingleToolResult] = results.map { result in
+            SingleToolResult(
+                name: result.call.name,
+                input: result.call.input,
+                output: result.output,
+                isCollapsible: CollapseDetector.isCollapsible(
+                    name: result.call.name, input: result.call.input
+                )
+            )
+        }
+
+        // Group consecutive collapsible results together.
+        // Non-collapsible results get their own group.
+        var groups: [[SingleToolResult]] = []
+        var buffer: [SingleToolResult] = []
+
+        for r in singleResults {
+            if r.isCollapsible {
+                buffer.append(r)
+            } else {
+                if !buffer.isEmpty {
+                    groups.append(buffer)
+                    buffer = []
+                }
+                groups.append([r])
+            }
+        }
+        if !buffer.isEmpty {
+            groups.append(buffer)
+        }
+
+        // Store each group in the cache and emit its summary line
+        for groupResults in groups {
+            let storedIndex = await cache.store(results: groupResults)
+            let group = CollapsedGroup(
+                results: groupResults,
+                summaryLine: "",
+                refIndex: storedIndex
+            )
+            let summary = formatter.format(for: group)
+            emitBlock(summary)
+        }
+    }
+
+    /// Expand a previously collapsed tool result group identified by
+    /// an index number or the keyword "last".
+    private func expandCollapsedResult(
+        arg: String,
+        cache: ToolResultCache,
+        capability: TerminalCapability
+    ) async -> String {
+        let stored: StoredGroup?
+        if arg == "last" {
+            stored = await cache.last()
+        } else if let idx = Int(arg) {
+            stored = await cache.get(idx)
+        } else {
+            return "Usage: /expand <N> or /expand last"
+        }
+
+        guard let stored = stored else {
+            return "No collapsed result found for \"\(arg)\"."
+        }
+
+        var output = capability.color(
+            "── Expanded group [#\(stored.index)] (\(stored.results.count) tool\(stored.results.count == 1 ? "" : "s")) ──",
+            color: .brightBlack
+        ) + "\n"
+
+        for result in stored.results {
+            let nameColor = capability.color("  \(result.name)", color: .brightCyan)
+            let cmd = CollapseDetector.commandSummary(
+                name: result.name, input: result.input
+            )
+            output += nameColor + " → " + cmd + "\n"
+            output += capability.color(
+                "  " + String(repeating: "─", count: min(capability.columns - 4, 60)),
+                color: .brightBlack
+            ) + "\n"
+
+            let resultOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if resultOutput.isEmpty {
+                output += capability.color("  (empty)", color: .brightBlack) + "\n"
+            } else {
+                let lines = resultOutput.components(separatedBy: "\n")
+                // Show up to 50 lines to avoid overwhelming the terminal
+                let showAll = lines.count <= 50
+                for (_, line) in lines.prefix(50).enumerated() {
+                    let trimmed = line.count > 200 ? String(line.prefix(200)) + "…" : line
+                    output += capability.color("  \(trimmed)", color: .brightBlack) + "\n"
+                }
+                if !showAll {
+                    output += capability.color(
+                        "  … \(lines.count - 50) more lines",
+                        color: .brightBlack
+                    ) + "\n"
+                }
+            }
+            output += "\n"
+        }
+
+        return output
     }
 
     // MARK: - System prompt
