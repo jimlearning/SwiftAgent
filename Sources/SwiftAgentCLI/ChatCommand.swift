@@ -659,6 +659,12 @@ struct ChatCommand: AsyncParsableCommand {
             groups.append(buffer)
         }
 
+        // Clear the spinner line before rendering results. The spinner writes
+        // to whatever line the cursor is on via \r\e[K, but emitBlock moves
+        // the cursor down. Without this clear, the old "Running Tool → cmd"
+        // text stays visible above the tool result, duplicating the header.
+        writeToStdout("\r\u{001B}[K")
+
         // Store each group in the cache and emit its summary.
         // Single-result groups get a detailed display with content preview;
         // multi-result groups get the aggregated one-line summary.
