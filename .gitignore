@@ -6,5 +6,7 @@ claude-code-system-prompts/
 Claude-Code-Source-Study/
 TermKit
 
+*.swiftagent-bak
+
 .swiftpm/xcode/package.xcworkspace/xcuserdata
 .swiftpm/xcode/xcuserdata/jim.xcuserdatad

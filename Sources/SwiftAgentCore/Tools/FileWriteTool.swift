@@ -46,12 +46,6 @@ public struct FileWriteTool: Tool {
             let dir = (path as NSString).deletingLastPathComponent
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
 
-            // Backup existing file (matching CC's idempotent v1 backup)
-            if !isNewFile, let original = originalContent {
-                let backupPath = path + ".swiftagent-bak"
-                try? original.write(toFile: backupPath, atomically: true, encoding: .utf8)
-            }
-
             try normalized.write(toFile: path, atomically: true, encoding: .utf8)
 
             // Update read hash cache

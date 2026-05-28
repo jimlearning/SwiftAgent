@@ -88,10 +88,6 @@ public struct FileEditTool: Tool {
                 return ToolResult(content: "Error: \(count) occurrences of old_string found. Use more context to make the match unique, or use replace_all to replace all occurrences.", isError: true)
             }
 
-            // Backup before edit (matching CC idempotent v1 backup)
-            let backupPath = path + ".swiftagent-bak"
-            try? original.write(toFile: backupPath, atomically: true, encoding: .utf8)
-
             let modified: String
             if replaceAll {
                 modified = original.replacingOccurrences(of: found, with: new)
