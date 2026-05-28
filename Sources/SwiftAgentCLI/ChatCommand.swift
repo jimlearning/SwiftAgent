@@ -5,6 +5,13 @@ import SwiftAgentCore
 /// Interactive chat command — the primary interaction mode.
 /// Uses a Nanobot-style REPL: colored prompt, spinner while thinking,
 /// write-once response panel, readline history.
+/// Mutable state for Ctrl+O expand/collapse toggle, shared between
+/// the REPL loop and helper methods via reference semantics.
+final class ExpandState: Decodable, @unchecked Sendable {
+    var expandedGroupIndex: Int? = nil
+    var expandedLineCount: Int = 0
+}
+
 struct ChatCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "chat",
@@ -28,6 +35,9 @@ struct ChatCommand: AsyncParsableCommand {
 
     @Flag(name: .shortAndLong, help: "Enable debug logging of all API requests and responses")
     var debug: Bool = false
+
+    /// Tracks Ctrl+O expand/collapse toggle state across the session.
+    var expandState = ExpandState()
 
     func run() async throws {
         // Resolve API key
@@ -144,9 +154,6 @@ struct ChatCommand: AsyncParsableCommand {
         let collapseDetector = CollapseDetector()
         let summaryFormatter = CollapsedSummaryFormatter(capability: capability)
 
-        // Track which group was most recently expanded to avoid
-        // re-expanding the same group (e.g. double Ctrl+O).
-        var lastExpandedIndex: Int? = nil
 
         // Nanobot-style REPL
         while true {
@@ -155,16 +162,10 @@ struct ChatCommand: AsyncParsableCommand {
 
             guard let line = editor.readLine(prompt: "You: ") else { break }
 
-            // Ctrl+O triggers expand of last collapsed group
+            // Ctrl+O toggles expand/collapse of last group
             if editor.ctrlOTriggered {
                 editor.ctrlOTriggered = false
-                // Handle like /expand last (with duplicate check)
-                if let idx = await toolResultCache.lastIndex(),
-                   idx != lastExpandedIndex {
-                    let expanded = await expandCollapsedResult(arg: "last", cache: toolResultCache, capability: capability)
-                    emitBlock(expanded)
-                    lastExpandedIndex = idx
-                }
+                await handleCtrlO(cache: toolResultCache, capability: capability)
                 continue
             }
 
@@ -183,18 +184,21 @@ struct ChatCommand: AsyncParsableCommand {
                 }
                 if cmd == "/expand" {
                     let arg = parts.count > 1 ? String(parts[1]) : "last"
-                    // If expanding "last" and it matches the already-expanded
-                    // group, skip to avoid duplicated output.
                     if arg == "last", let idx = await toolResultCache.lastIndex(),
-                       idx == lastExpandedIndex {
+                       idx == expandState.expandedGroupIndex {
+                        // Same group — collapse via ANSI cleanup
+                        collapseExpandedOutput()
                         continue
                     }
+                    // Collapse previous expansion if any, then show new one
+                    collapseExpandedOutput()
                     let expanded = await expandCollapsedResult(arg: arg, cache: toolResultCache, capability: capability)
+                    expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1
                     emitBlock(expanded)
                     if arg == "last", let idx = await toolResultCache.lastIndex() {
-                        lastExpandedIndex = idx
+                        expandState.expandedGroupIndex = idx
                     } else if let n = Int(arg) {
-                        lastExpandedIndex = n
+                        expandState.expandedGroupIndex = n
                     }
                     continue
                 }
@@ -368,7 +372,7 @@ struct ChatCommand: AsyncParsableCommand {
                                 formatter: summaryFormatter,
                                 cache: toolResultCache
                             )
-                            lastExpandedIndex = nil  // New results → allow expand
+                            expandState.expandedGroupIndex = nil; expandState.expandedLineCount = 0  // New results → reset expand state
                             let resultBlocks = results.map { result in
                                 ContentBlock.toolResult(toolUseID: result.call.id, content: .string(result.output), isError: result.output.hasPrefix("Error:"))
                             }
@@ -444,7 +448,7 @@ struct ChatCommand: AsyncParsableCommand {
                         formatter: summaryFormatter,
                         cache: toolResultCache
                     )
-                    lastExpandedIndex = nil  // New results → allow expand
+                    expandState.expandedGroupIndex = nil; expandState.expandedLineCount = 0  // New results → reset expand state
 
                     let resultBlocks = results.map { result in
                         ContentBlock.toolResult(
@@ -662,6 +666,53 @@ struct ChatCommand: AsyncParsableCommand {
                 // Show aggregated summary for multiple similar tools
                 emitBlock(formatter.format(for: group))
             }
+        }
+    }
+
+    /// Handles Ctrl+O: toggles between expanded and collapsed view of
+    /// the most recently stored tool-result group.
+    private func handleCtrlO(
+        cache: ToolResultCache,
+        capability: TerminalCapability
+    ) async {
+        guard let idx = await cache.lastIndex() else { return }
+
+        if idx == expandState.expandedGroupIndex {
+            // Already expanded → collapse
+            collapseExpandedOutput()
+        } else {
+            // Collapse previous if any, then expand new one
+            collapseExpandedOutput()
+            let expanded = await expandCollapsedResult(arg: "last", cache: cache, capability: capability)
+            expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1  // +1 for emitBlock blank line
+            emitBlock(expanded)
+            expandState.expandedGroupIndex = idx
+        }
+    }
+
+    /// Removes the expanded output block from the terminal using ANSI
+    /// escape codes. The cursor must be on the line immediately after
+    /// the expanded block (which is the case after Ctrl+O returns).
+    private func collapseExpandedOutput() {
+        guard expandState.expandedLineCount > 0 else { return }
+        let n = expandState.expandedLineCount
+        // Move up to the start of the expanded block (n content lines
+        // + 1 for the "You: " prompt line that sits below it).
+        writeToStdout("\u{001B}[\(n + 1)A")
+        // Delete n lines — the expanded block scrolls off and the
+        // prompt that was below shifts up.
+        for _ in 0..<n {
+            writeToStdout("\u{001B}[M")
+        }
+        expandState.expandedGroupIndex = nil
+        expandState.expandedLineCount = 0
+    }
+
+    /// Write raw bytes directly to stdout (for ANSI escape codes).
+    private func writeToStdout(_ string: String) {
+        guard let data = string.data(using: .utf8) else { return }
+        _ = data.withUnsafeBytes { ptr in
+            Darwin.write(STDOUT_FILENO, ptr.baseAddress!, ptr.count)
         }
     }
 
