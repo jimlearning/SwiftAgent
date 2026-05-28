@@ -304,7 +304,7 @@ struct ChatCommand: AsyncParsableCommand {
                                 calls: toolBlocks,
                                 isConcurrencySafe: { call in registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false },
                                 execute: { call in
-                                    if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name) }
+                                    if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
                                     let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool)
                                     if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                                     return summary
@@ -364,7 +364,7 @@ struct ChatCommand: AsyncParsableCommand {
                             registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false
                         },
                         execute: { call in
-                            if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name) }
+                            if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
                             let summary = await executeTool(
                                 name: call.name,
                                 input: call.input,
@@ -871,6 +871,7 @@ private final class CurrentToolTracker: @unchecked Sendable {
     private struct Entry {
         let name: String
         var status: String?
+        var displayCmd: String?
     }
 
     private static let pendingToolID = "__pending_tool__"
@@ -885,12 +886,18 @@ private final class CurrentToolTracker: @unchecked Sendable {
             guard !active.isEmpty else { return nil }
             if active.count == 1 {
                 let entry = active[0]
+                if let cmd = entry.displayCmd {
+                    return entry.status ?? "Running \(entry.name) → \(cmd)"
+                }
                 return entry.status ?? "Running \(entry.name)..."
             }
 
             let fragments = active.prefix(3).map { entry in
                 if let status = entry.status {
                     return Self.singleLine(status)
+                }
+                if let cmd = entry.displayCmd {
+                    return "\(entry.name) → \(cmd)"
                 }
                 return "\(entry.name) running"
             }
@@ -921,9 +928,9 @@ private final class CurrentToolTracker: @unchecked Sendable {
         }
     }
 
-    func start(id: String, name: String) {
+    func start(id: String, name: String, displayCmd: String? = nil) {
         lock.withLock {
-            entries[id] = Entry(name: name, status: nil)
+            entries[id] = Entry(name: name, status: nil, displayCmd: displayCmd)
             if !order.contains(id) {
                 order.append(id)
             }
