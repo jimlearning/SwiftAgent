@@ -10,10 +10,17 @@ public final class LineEditor: @unchecked Sendable {
     private let historyFile: URL
     private var entries: [String] = []
     private var historyIndex: Int = 0
+    /// Stashed buffer content when navigating history with a non-empty input line.
+    /// Allows the user to return to their typed content by pressing ↓ past the
+    /// newest history entry (bash/zsh readline behaviour).
+    private var stashedBuffer: String?
     private var savedTermios: termios?
     private let isTTY: Bool
     private var pasteCount: Int = 0
     private var drawnLines: Int = 1  // terminal lines currently occupied by prompt+buffer
+    /// Which row (0-indexed) the cursor was left at after the last redraw.
+    /// Used to correctly reposition before clearing on the next redraw.
+    private var lastCursorRow: Int = 0
     private var bracketedPasteEnabled = false
 
     // MARK: - Init
@@ -131,6 +138,8 @@ public final class LineEditor: @unchecked Sendable {
         var buffer = ""
         var cursorPos = 0  // cursor position within buffer (0...buffer.count)
         var pasteExpansions: [String: String] = [:]
+        stashedBuffer = nil
+        lastCursorRow = 0
         drawnLines = 1
 
         while true {
@@ -174,6 +183,7 @@ public final class LineEditor: @unchecked Sendable {
                 }
 
             case 127:  // Backspace (DEL)
+                stashedBuffer = nil
                 if cursorPos > 0 {
                     buffer.remove(at: buffer.index(buffer.startIndex, offsetBy: cursorPos - 1))
                     cursorPos -= 1
@@ -204,6 +214,7 @@ public final class LineEditor: @unchecked Sendable {
                     cursorPos = buffer.count
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 case .deleteWord:
+                    stashedBuffer = nil
                     // Alt+Backspace: delete word before cursor using alphanumeric boundaries
                     // Matches bash/zsh backward-kill-word behavior:
                     //   - If cursor is on or after a word boundary, delete preceding whitespace/punctuation
@@ -252,11 +263,13 @@ public final class LineEditor: @unchecked Sendable {
                     }
                 case .newline:
                     // Option+Enter / Alt+Enter — insert literal newline
+                    stashedBuffer = nil
                     let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                     buffer.insert(contentsOf: "\n", at: idx)
                     cursorPos += 1
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 case .paste(let content):
+                    stashedBuffer = nil
                     handlePaste(
                         content,
                         prompt: prompt,
@@ -269,11 +282,13 @@ public final class LineEditor: @unchecked Sendable {
                 }
 
             case 21:  // Ctrl+U — clear line
+                stashedBuffer = nil
                 buffer = ""
                 cursorPos = 0
                 redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
 
             case 23:  // Ctrl+W — delete word before cursor
+                stashedBuffer = nil
                 if cursorPos > 0 {
                     let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                     // Skip trailing whitespace
@@ -309,6 +324,7 @@ public final class LineEditor: @unchecked Sendable {
             default:
                 // Printable ASCII or multi-byte UTF-8
                 if let (char, _) = decodeUTF8Char(leadByte: byte!) {
+                    stashedBuffer = nil
                     // Put back any extra bytes we already consumed from the continuation
                     // (decodeUTF8Char reads them, so we insert all at once)
                     let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
@@ -475,30 +491,47 @@ public final class LineEditor: @unchecked Sendable {
         // Option+Enter / Alt+Enter: ESC followed by \r or \n → insert newline
         if second == 10 || second == 13 { return .newline }
 
-        guard second == 91 else { return .none }  // '['
+        // CSI sequences: ESC [ ...
+        if second == 91 {
+            guard let third = readByteWithTimeout() else { return .none }
 
-        guard let third = readByteWithTimeout() else { return .none }
+            // Parameterized CSI sequences start with digits.
+            // Kitty keyboard protocol: \033[<key>;<mods>u
+            if third >= 48, third <= 57 {
+                return readComplexCSI(firstParamByte: third)
+            }
 
-        // Parameterized CSI sequences start with digits.
-        // Kitty keyboard protocol: \033[<key>;<mods>u
-        // xterm modified keys:     \033[<key>;<mods>;<char>~
-        if third >= 48, third <= 57 {
-            return readComplexCSI(firstParamByte: third)
+            switch third {
+            case 65: return .up      // A
+            case 66: return .down    // B
+            case 67: return .right   // C
+            case 68: return .left    // D
+            case 72: return .home    // H
+            case 70: return .end     // F
+            case 51:                 // '3' → Delete key: \033[3~
+                _ = readByteWithTimeout()  // consume '~'
+                return .none
+            default:
+                return .none
+            }
         }
 
-        switch third {
-        case 65: return .up      // A
-        case 66: return .down    // B
-        case 67: return .right   // C
-        case 68: return .left    // D
-        case 72: return .home    // H
-        case 70: return .end     // F
-        case 51:                 // '3' → Delete key: \033[3~
-            _ = readByteWithTimeout()  // consume '~'
-            return .none
-        default:
-            return .none
+        // SS3 sequences: ESC O ... (application cursor keys, tmux, etc.)
+        if second == 79 {
+            guard let third = readByteWithTimeout() else { return .none }
+            switch third {
+            case 65: return .up      // A
+            case 66: return .down    // B
+            case 67: return .right   // C
+            case 68: return .left    // D
+            case 72: return .home    // H
+            case 70: return .end     // F
+            default:
+                return .none
+            }
         }
+
+        return .none
     }
 
     /// Parse parameterized CSI sequences (kitty keyboard protocol and xterm modified keys).
@@ -594,9 +627,89 @@ public final class LineEditor: @unchecked Sendable {
 
     // MARK: - History navigation
 
+    /// Multi-line aware navigation:
+    /// - **Multi-line buffer (contains \n)**: ↑↓ move cursor between lines.
+    ///   Pressing ↑ at first line or ↓ at last line navigates history.
+    /// - **Single-line buffer**: normal history navigation.
+    /// - **Buffer has content, first history move**: stash buffer for later restoration.
     private func navigateHistory(direction: Int, prompt: String, buffer: inout String, cursorPos: inout Int) {
+        // Multi-line: try vertical cursor movement first
+        if buffer.contains("\n") {
+            let prefix = buffer.prefix(cursorPos)
+            let lines = buffer.components(separatedBy: "\n")
+            let currentLine = prefix.components(separatedBy: "\n").count - 1  // 0-based
+            // Column position within current line
+            let colInLine: Int
+            if let lastNewline = prefix.lastIndex(of: "\n") {
+                colInLine = prefix.distance(from: prefix.index(after: lastNewline), to: prefix.endIndex)
+            } else {
+                colInLine = cursorPos
+            }
+
+            if direction == -1 {  // ↑
+                if currentLine > 0 {
+                    // Move cursor to same column on previous line
+                    var offset = 0
+                    for i in 0..<(currentLine - 1) {
+                        offset += lines[i].count + 1  // +1 for \n
+                    }
+                    let prevLineLen = lines[currentLine - 1].count
+                    cursorPos = offset + min(colInLine, prevLineLen)
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    return
+                }
+                // At first line: navigate history
+            } else {  // ↓
+                if currentLine < lines.count - 1 {
+                    // Move cursor to same column on next line
+                    var offset = 0
+                    for i in 0..<currentLine {
+                        offset += lines[i].count + 1  // +1 for \n
+                    }
+                    let nextLineStart = offset + lines[currentLine].count + 1  // +1 for \n
+                    let nextLineLen = lines[currentLine + 1].count
+                    cursorPos = nextLineStart + min(colInLine, nextLineLen)
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    return
+                }
+                // At last line: navigate history
+            }
+        }
+
+        // History navigation (single-line or at boundary of multi-line)
         guard !entries.isEmpty else { return }
 
+        // If there's content in the buffer and we haven't stashed it yet,
+        // save it now and jump to the appropriate end of history.
+        if !buffer.isEmpty && stashedBuffer == nil {
+            stashedBuffer = buffer
+            historyIndex = entries.count
+        }
+
+        if !buffer.isEmpty {
+            let newIndex = historyIndex + direction
+
+            // Pressing ↓ past the newest entry restores the stashed buffer.
+            if direction > 0, newIndex >= entries.count {
+                buffer = stashedBuffer ?? ""
+                cursorPos = buffer.count
+                stashedBuffer = nil
+                historyIndex = entries.count
+                redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                return
+            }
+
+            guard newIndex >= 0, newIndex < entries.count else { return }
+
+            historyIndex = newIndex
+            buffer = entries[historyIndex]
+            cursorPos = buffer.count
+            redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+            return
+        }
+
+        // Buffer is empty: normal sequential history navigation.
+        stashedBuffer = nil
         let newIndex = historyIndex + direction
         guard newIndex >= 0, newIndex < entries.count else { return }
 
@@ -614,9 +727,11 @@ public final class LineEditor: @unchecked Sendable {
         let lines = buffer.components(separatedBy: "\n")
         let totalRows = renderedRows(promptWidth: promptLen, lines: lines)
 
-        // Move up to clear previous output, then clear to end of display
-        if drawnLines > 1 {
-            writeToStdout("\u{001B}[\(drawnLines - 1)A")
+        // Move cursor to row 0 of the previously drawn area, then clear.
+        // lastCursorRow tracks which row the cursor was left at after the last redraw,
+        // so we only move up by that amount (not the full drawnLines-1).
+        if lastCursorRow > 0 {
+            writeToStdout("\u{001B}[\(lastCursorRow)A")
         }
         writeToStdout("\r\u{001B}[J")
 
@@ -644,6 +759,7 @@ public final class LineEditor: @unchecked Sendable {
         }
 
         drawnLines = totalRows
+        lastCursorRow = target.row
     }
 
     private func renderedRows(promptWidth: Int, lines: [String]) -> Int {
