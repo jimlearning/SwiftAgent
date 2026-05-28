@@ -191,10 +191,14 @@ struct ChatCommand: AsyncParsableCommand {
                     let arg = parts.count > 1 ? String(parts[1]) : "last"
                     if arg == "last", let idx = await toolResultCache.lastIndex(),
                        idx == expandState.expandedGroupIndex {
-                        // Already expanded — skip
+                        // Already expanded — clear the command line
+                        writeToStdout("\u{001B}[2A\u{001B}[0J")
                         continue
                     }
-                    let expanded = await expandCollapsedResult(arg: arg, cache: toolResultCache, capability: capability)
+                    let expanded = await expandCollapsedResult(
+                        arg: arg, cache: toolResultCache, capability: capability,
+                        clearLinesAbove: 2
+                    )
                     emitBlock(expanded)
                     if arg == "last", let idx = await toolResultCache.lastIndex() {
                         expandState.expandedGroupIndex = idx
@@ -686,7 +690,10 @@ struct ChatCommand: AsyncParsableCommand {
         }
         // Nothing expanded → expand the last stored group
         guard let idx = await cache.lastIndex() else { return false }
-        let expanded = await expandCollapsedResult(arg: "last", cache: cache, capability: capability)
+        let expanded = await expandCollapsedResult(
+            arg: "last", cache: cache, capability: capability,
+            clearLinesAbove: 1
+        )
         expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1
         emitBlock(expanded)
         expandState.expandedGroupIndex = idx
@@ -721,19 +728,21 @@ struct ChatCommand: AsyncParsableCommand {
     private func expandCollapsedResult(
         arg: String,
         cache: ToolResultCache,
-        capability: TerminalCapability
+        capability: TerminalCapability,
+        clearLinesAbove: Int = 0
     ) async -> String {
+        let prefix = clearLinesAbove > 0 ? "\u{001B}[\(clearLinesAbove)A\u{001B}[0J" : ""
         let stored: StoredGroup?
         if arg == "last" {
             stored = await cache.last()
         } else if let idx = Int(arg) {
             stored = await cache.get(idx)
         } else {
-            return "Usage: /expand <N> or /expand last"
+            return prefix + "Usage: /expand <N> or /expand last"
         }
 
         guard let stored = stored else {
-            return "No collapsed result found for \"\(arg)\"."
+            return prefix + "No collapsed result found for \"\(arg)\"."
         }
 
         var output = capability.color(
@@ -773,7 +782,7 @@ struct ChatCommand: AsyncParsableCommand {
             output += "\n"
         }
 
-        return output
+        return prefix + output
     }
 
     // MARK: - System prompt

@@ -51,7 +51,7 @@ public final class LLMClient: Sendable {
         tools: [ToolDefinition]? = nil,
         thinking: ThinkingConfig? = nil,
         betas: [String]? = nil,
-        enablePromptCaching: Bool = false,
+        enablePromptCaching: Bool = true,
         toolChoice: String? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -89,7 +89,7 @@ public final class LLMClient: Sendable {
         tools: [ToolDefinition]? = nil,
         thinking: ThinkingConfig? = nil,
         betas: [String]? = nil,
-        enablePromptCaching: Bool = false,
+        enablePromptCaching: Bool = true,
         options: RetryOptions? = nil,
         toolChoice: String? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
