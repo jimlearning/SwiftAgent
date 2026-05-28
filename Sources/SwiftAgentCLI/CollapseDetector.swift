@@ -127,7 +127,8 @@ public struct CollapseDetector: Sendable {
     }
 
     /// Return a compact, human-readable command summary (like CC's
-    /// `commandAsHint` and `getDisplayPath`).
+    /// `commandAsHint` and `getDisplayPath`). Truncates long commands to
+    /// ~80 chars for use in one-line summaries.
     public static func commandSummary(name: String, input: [String: JSONValue]) -> String {
         switch name {
         case "Read":
@@ -158,6 +159,30 @@ public struct CollapseDetector: Sendable {
             return "(bash)"
         default:
             return name
+        }
+    }
+
+    /// Like `commandSummary` but never truncates the command — suitable
+    /// for the detailed multi-line display where the user expects to see
+    /// the full invocation.
+    public static func fullCommandSummary(name: String, input: [String: JSONValue]) -> String {
+        switch name {
+        case "Bash":
+            if case .string(let cmd) = input["command"] {
+                let cleaned = cmd
+                    .components(separatedBy: "\n")
+                    .map { $0.trimmingCharacters(in: CharacterSet.whitespaces) }
+                    .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+                    .first ?? cmd
+                return cleaned.replacingOccurrences(
+                    of: "\\s+", with: " ", options: .regularExpression
+                ).trimmingCharacters(in: CharacterSet.whitespaces)
+            }
+            return "(bash)"
+        default:
+            // For all other tools, the standard summary is already
+            // sufficiently descriptive
+            return commandSummary(name: name, input: input)
         }
     }
 }
@@ -192,7 +217,7 @@ public struct CollapsedSummaryFormatter: Sendable {
 
         let nameColor = capability.color("  \(result.name)", color: .brightCyan)
         let dim = capability.color(" → ", color: .brightBlack)
-        let cmd = CollapseDetector.commandSummary(name: result.name, input: result.input)
+        let cmd = CollapseDetector.fullCommandSummary(name: result.name, input: result.input)
         let idxTag = capability.color("  [#\(group.refIndex)]", color: .brightBlack)
 
         var lines: [String] = [nameColor + dim + cmd]

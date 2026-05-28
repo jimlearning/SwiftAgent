@@ -315,7 +315,7 @@ struct ChatCommand: AsyncParsableCommand {
                                 calls: toolBlocks,
                                 isConcurrencySafe: { call in registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false },
                                 execute: { call in
-                                    if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: shortToolHint(name: call.name, input: call.input)) }
+                                    if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
                                     let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool)
                                     if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                                     return summary
@@ -381,7 +381,7 @@ struct ChatCommand: AsyncParsableCommand {
                             registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false
                         },
                         execute: { call in
-                            if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: shortToolHint(name: call.name, input: call.input)) }
+                            if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
                             let summary = await executeTool(
                                 name: call.name,
                                 input: call.input,
@@ -544,40 +544,6 @@ struct ChatCommand: AsyncParsableCommand {
 
         // Generic: compact key=value representation
         return formatGenericInput(input)
-    }
-
-    /// Short hint for the spinner — just the filename or first word,
-    /// not the full command path. Avoids duplicating info with the
-    /// collapsed-result display that follows.
-    private func shortToolHint(name: String, input: [String: JSONValue]) -> String {
-        switch name {
-        case "Read", "Write", "Edit":
-            if case .string(let path) = input["file_path"] {
-                return URL(fileURLWithPath: path).lastPathComponent
-            }
-        case "Bash":
-            if case .string(let cmd) = input["command"] {
-                let trimmed = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
-                let firstLine = trimmed.components(separatedBy: "\n").first ?? ""
-                let words = firstLine.trimmingCharacters(in: .whitespaces).components(separatedBy: .whitespaces)
-                if let first = words.first { return first }
-                return cmd.count <= 30 ? cmd : String(cmd.prefix(27)) + "…"
-            }
-        case "Grep":
-            if case .string(let pattern) = input["pattern"] {
-                return "\"\(pattern)\""
-            }
-        case "Glob":
-            if case .string(let pattern) = input["pattern"] {
-                return pattern.count <= 30 ? pattern : String(pattern.prefix(27)) + "…"
-            }
-        case "WebFetch", "WebSearch":
-            // These are inherently "read-like" — omit long URLs from spinner
-            return name
-        default:
-            break
-        }
-        return name
     }
 
     /// Compact formatting for tools without a dedicated command formatter.
