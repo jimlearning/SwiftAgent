@@ -12,6 +12,20 @@ struct LanguageGrammar: Sendable {
     let stringDelimiters: Set<Character>
     /// Regex pattern for number literals.
     let numberPattern: String?
+
+    // MARK: - Context-sensitive keyword categories
+
+    /// Keywords that signal a function/method declaration follows (e.g. "func", "def", "fn").
+    /// Must be a subset of `keywords`.
+    let declarationKeywords: Set<String>
+    /// Keywords that signal a variable/constant declaration follows (e.g. "let", "var", "const").
+    /// Must be a subset of `keywords`.
+    let variableKeywords: Set<String>
+    /// Keywords that signal a type name follows (e.g. "class", "struct", "enum").
+    /// Must be a subset of `keywords`.
+    let typeDeclarationKeywords: Set<String>
+    /// Whether the language uses PascalCase/camelCase naming where capitalization distinguishes types from variables.
+    let usesCapitalizedTypes: Bool
 }
 
 /// Maps user-facing language names to grammar definitions.
@@ -51,7 +65,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "//",
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "\""],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#,
+            declarationKeywords: ["func"],
+            variableKeywords: ["let", "var"],
+            typeDeclarationKeywords: ["class", "struct", "enum", "protocol", "extension"],
+            usesCapitalizedTypes: true
         ),
         "python": LanguageGrammar(
             name: "python",
@@ -63,7 +81,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "#",
             blockComment: nil,
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#,
+            declarationKeywords: ["def"],
+            variableKeywords: [],
+            typeDeclarationKeywords: ["class"],
+            usesCapitalizedTypes: true
         ),
         "javascript": LanguageGrammar(
             name: "javascript",
@@ -75,7 +97,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "//",
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "'", "`"],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#,
+            declarationKeywords: ["function"],
+            variableKeywords: ["const", "let", "var"],
+            typeDeclarationKeywords: ["class", "extends"],
+            usesCapitalizedTypes: true
         ),
         "typescript": LanguageGrammar(
             name: "typescript",
@@ -90,7 +116,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "//",
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "'", "`"],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#,
+            declarationKeywords: ["function"],
+            variableKeywords: ["const", "let", "var"],
+            typeDeclarationKeywords: ["class", "extends", "implements", "interface", "type", "enum", "namespace"],
+            usesCapitalizedTypes: true
         ),
         "bash": LanguageGrammar(
             name: "bash",
@@ -102,7 +132,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "#",
             blockComment: nil,
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b\d+\b"#
+            numberPattern: #"\b\d+\b"#,
+            declarationKeywords: ["function"],
+            variableKeywords: ["local", "export", "readonly", "declare"],
+            typeDeclarationKeywords: [],
+            usesCapitalizedTypes: false
         ),
         "json": LanguageGrammar(
             name: "json",
@@ -110,7 +144,11 @@ struct LanguageRegistry: Sendable {
             lineComment: nil,
             blockComment: nil,
             stringDelimiters: ["\""],
-            numberPattern: #"-?\d+\.?\d*(?:[eE][+-]?\d+)?"#
+            numberPattern: #"-?\d+\.?\d*(?:[eE][+-]?\d+)?"#,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: [],
+            usesCapitalizedTypes: false
         ),
         "go": LanguageGrammar(
             name: "go",
@@ -121,7 +159,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "//",
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "'", "`"],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#,
+            declarationKeywords: ["func"],
+            variableKeywords: ["var", "const"],
+            typeDeclarationKeywords: ["type", "struct", "interface"],
+            usesCapitalizedTypes: true
         ),
         "rust": LanguageGrammar(
             name: "rust",
@@ -133,7 +175,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "//",
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[ui](?:8|16|32|64|size|128))?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[ui](?:8|16|32|64|size|128))?\b"#,
+            declarationKeywords: ["fn"],
+            variableKeywords: ["let", "const"],
+            typeDeclarationKeywords: ["struct", "enum", "trait", "impl", "type"],
+            usesCapitalizedTypes: true
         ),
         "c": LanguageGrammar(
             name: "c",
@@ -145,7 +191,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "//",
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b0x[0-9a-fA-F]+\b|\b\d+\.?\d*(?:[eE][+-]?\d+)?[fFlL]?\b"#
+            numberPattern: #"\b0x[0-9a-fA-F]+\b|\b\d+\.?\d*(?:[eE][+-]?\d+)?[fFlL]?\b"#,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: ["struct", "enum", "union", "typedef"],
+            usesCapitalizedTypes: false
         ),
         "cpp": LanguageGrammar(
             name: "cpp",
@@ -161,7 +211,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "//",
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b0x[0-9a-fA-F]+\b|\b\d+\.?\d*(?:[eE][+-]?\d+)?[fFlL]?\b"#
+            numberPattern: #"\b0x[0-9a-fA-F]+\b|\b\d+\.?\d*(?:[eE][+-]?\d+)?[fFlL]?\b"#,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: ["class", "struct", "enum", "namespace", "template", "typename"],
+            usesCapitalizedTypes: true
         ),
         "ruby": LanguageGrammar(
             name: "ruby",
@@ -172,7 +226,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "#",
             blockComment: nil,
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#,
+            declarationKeywords: ["def"],
+            variableKeywords: [],
+            typeDeclarationKeywords: ["class", "module"],
+            usesCapitalizedTypes: true
         ),
         "sql": LanguageGrammar(
             name: "sql",
@@ -194,7 +252,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "--",
             blockComment: nil,
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b\d+\.?\d*\b"#
+            numberPattern: #"\b\d+\.?\d*\b"#,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: [],
+            usesCapitalizedTypes: false
         ),
         "yaml": LanguageGrammar(
             name: "yaml",
@@ -202,7 +264,11 @@ struct LanguageRegistry: Sendable {
             lineComment: "#",
             blockComment: nil,
             stringDelimiters: ["\"", "'"],
-            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#
+            numberPattern: #"\b\d+\.?\d*(?:[eE][+-]?\d+)?\b"#,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: [],
+            usesCapitalizedTypes: false
         ),
         "markdown": LanguageGrammar(
             name: "markdown",
@@ -210,7 +276,11 @@ struct LanguageRegistry: Sendable {
             lineComment: nil,
             blockComment: nil,
             stringDelimiters: [],
-            numberPattern: nil
+            numberPattern: nil,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: [],
+            usesCapitalizedTypes: false
         ),
     ]
 

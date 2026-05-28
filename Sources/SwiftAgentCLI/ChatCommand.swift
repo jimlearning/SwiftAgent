@@ -300,6 +300,12 @@ struct ChatCommand: AsyncParsableCommand {
                         }
                     )
 
+                    // Render tool results visible to the user
+                    for result in results {
+                        let line = toolResultSummary(name: result.call.name, output: result.output, capability: capability)
+                        emitBlock(line)
+                    }
+
                     let resultBlocks = results.map { result in
                         ContentBlock.toolResult(
                             toolUseID: result.call.id,
@@ -354,6 +360,23 @@ struct ChatCommand: AsyncParsableCommand {
     private func emitBlock(_ text: String) {
         let normalized = text.hasSuffix("\n") ? text : text + "\n"
         print(normalized)
+    }
+
+    /// Format a tool result as a compact user-visible summary line.
+    private func toolResultSummary(name: String, output: String, capability: TerminalCapability) -> String {
+        let maxLen = 120
+        let trimmed: String
+        if output.count > maxLen {
+            trimmed = String(output.prefix(maxLen)).replacingOccurrences(of: "\n", with: " ")
+                + "... (\(output.count) total chars)"
+        } else {
+            trimmed = output.replacingOccurrences(of: "\n", with: " ")
+        }
+
+        let nameColor = capability.color("  \(name)", color: .brightCyan)
+        let dim = capability.color(" → ", color: .brightBlack)
+        let resultColor = capability.color(trimmed, color: .brightBlack)
+        return nameColor + dim + resultColor
     }
 
     // MARK: - System prompt

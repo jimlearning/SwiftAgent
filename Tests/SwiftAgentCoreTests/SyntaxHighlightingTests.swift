@@ -54,7 +54,6 @@ struct SyntaxHighlightingTests {
 
     @Test("resolve handles CommonMark fence info strings")
     func testResolveCommonMarkFenceInfo() {
-        // Split on comma, space, tab
         let tests: [(String, String?)] = [
             ("swift", "swift"),
             ("rust,no_run", "rust"),
@@ -67,7 +66,7 @@ struct SyntaxHighlightingTests {
         }
     }
 
-    // MARK: - RegexSyntaxHighlighter
+    // MARK: - Basic token types
 
     @Test("highlight swift keywords")
     func testHighlightSwiftKeywords() {
@@ -78,7 +77,6 @@ struct SyntaxHighlightingTests {
 
         let keywordTokens = tokens?.filter { $0.captureName == "keyword" } ?? []
         #expect(keywordTokens.count >= 1, "Should have at least one keyword token")
-        #expect(keywordTokens.contains { $0.captureName == "keyword" })
     }
 
     @Test("highlight python keywords")
@@ -148,6 +146,154 @@ struct SyntaxHighlightingTests {
         let strings = tokens?.filter { $0.captureName == "string" } ?? []
         #expect(!strings.isEmpty, "Should have string tokens")
     }
+
+    // MARK: - Context-aware token types
+
+    @Test("highlight function declaration name in Swift")
+    func testFunctionDeclarationSwift() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "func greet() { }"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let decls = tokens!.filter { $0.captureName == "function.declaration" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(decls.contains("greet"), "Expected 'greet' to be function.declaration, got \(decls)")
+    }
+
+    @Test("highlight function declaration name in Python")
+    func testFunctionDeclarationPython() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "def hello():\n    pass"
+        let tokens = highlighter.highlight(source, language: "python")
+        #expect(tokens != nil)
+
+        let decls = tokens!.filter { $0.captureName == "function.declaration" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(decls.contains("hello"))
+    }
+
+    @Test("highlight function declaration name in Rust")
+    func testFunctionDeclarationRust() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "fn main() { }"
+        let tokens = highlighter.highlight(source, language: "rust")
+        #expect(tokens != nil)
+
+        let decls = tokens!.filter { $0.captureName == "function.declaration" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(decls.contains("main"))
+    }
+
+    @Test("highlight function call")
+    func testFunctionCall() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "greet(world)"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let calls = tokens!.filter { $0.captureName == "function.call" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(calls.contains("greet"), "Expected 'greet' to be function.call, got \(calls)")
+    }
+
+    @Test("highlight type initializer call")
+    func testTypeInitializerCall() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "let u = User(name: \"jim\")"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let types = tokens!.filter { $0.captureName == "type" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(types.contains("User"), "Expected 'User' to be type (constructor call), got \(types)")
+    }
+
+    @Test("highlight variable declaration")
+    func testVariableDeclaration() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "let name = 42"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let variables = tokens!.filter { $0.captureName == "variable" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(variables.contains("name"), "Expected 'name' to be variable, got \(variables)")
+    }
+
+    @Test("highlight property access")
+    func testPropertyAccess() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "user.name"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let props = tokens!.filter { $0.captureName == "property" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(props.contains("name"), "Expected 'name' to be property, got \(props)")
+    }
+
+    @Test("highlight type annotation after colon")
+    func testTypeAnnotationColon() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "var age: Int"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let types = tokens!.filter { $0.captureName == "type" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(types.contains("Int"), "Expected 'Int' to be type annotation, got \(types)")
+    }
+
+    @Test("highlight class declaration name")
+    func testClassDeclaration() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "class Person { }"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let types = tokens!.filter { $0.captureName == "type" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(types.contains("Person"), "Expected 'Person' to be type, got \(types)")
+    }
+
+    @Test("highlight 'as' type cast context")
+    func testAsTypeCast() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "x as String"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let types = tokens!.filter { $0.captureName == "type" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(types.contains("String"), "Expected 'String' after 'as' to be type, got \(types)")
+    }
+
+    @Test("highlight chained property access")
+    func testChainedPropertyAccess() {
+        let highlighter = RegexSyntaxHighlighter()
+        let source = "foo.bar.baz"
+        let tokens = highlighter.highlight(source, language: "swift")
+        #expect(tokens != nil)
+
+        let props = tokens!.filter { $0.captureName == "property" }.map {
+            (source as NSString).substring(with: $0.range)
+        }
+        #expect(props.contains("bar"))
+        #expect(props.contains("baz"))
+    }
+
+    // MARK: - Edge cases
 
     @Test("empty source returns nil")
     func testEmptySource() {

@@ -186,6 +186,9 @@ public struct SystemPromptBuilder: Sendable {
         // Parallel tool calling guidance
         items.append("You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially. For instance, if one operation must complete before another starts, run these operations sequentially instead.")
 
+        // Tool output visibility — critical for avoiding "as shown above" antipattern
+        items.append("CRITICAL: Tool results (Read, Glob, Grep, Bash output) are sent back to you but are NOT shown to the user. The user can only see your text responses. Never reply with \"as shown above\" or \"I've displayed it\" — always reproduce the relevant content in your own text output.")
+
         return "# Using your tools\n\n" + items.map { "- \($0)" }.joined(separator: "\n")
     }
 
@@ -297,6 +300,8 @@ public struct SystemPromptBuilder: Sendable {
             "Be concise. Prefer editing existing files over creating new ones.",
             "When unsure, ask for clarification rather than guessing.",
             "Break complex tasks into smaller, verifiable steps.",
+            "Tool results (Read, Glob, Grep, Bash output, etc.) are NOT visible to the user. If the user asks for content or information, you MUST reproduce it in your text response — do NOT just say \"as shown above\" or \"I've read it.\" The user cannot see what you read; they can only see your text output.",
+            "Use SendUserMessage to reply to the user. Text outside tool calls goes to a detail view the user may never see.",
         ]
     }
 }
