@@ -174,6 +174,54 @@ public struct CollapsedSummaryFormatter: Sendable {
         self.capability = capability
     }
 
+    /// Format a single-result group with content preview — shows the
+    /// tool command plus up to 5 lines of actual output so the user can
+    /// see what happened without needing /expand.
+    ///
+    /// Example:
+    /// ```
+    ///   Read → /path/to/file.swift
+    ///     import Foundation
+    ///     import ArgumentParser
+    ///     ... 69 more lines (3.0KB)  [#4]
+    /// ```
+    public func formatDetailed(for group: CollapsedGroup) -> String {
+        guard let result = group.results.first else {
+            return "  (empty)  [#\(group.refIndex)]"
+        }
+
+        let nameColor = capability.color("  \(result.name)", color: .brightCyan)
+        let dim = capability.color(" → ", color: .brightBlack)
+        let cmd = CollapseDetector.commandSummary(name: result.name, input: result.input)
+        let idxTag = capability.color("  [#\(group.refIndex)]", color: .brightBlack)
+
+        var lines: [String] = [nameColor + dim + cmd]
+
+        let outputLines = result.output.components(separatedBy: "\n")
+        let maxPreview = 5
+        let previewCount = min(outputLines.count, maxPreview)
+
+        for i in 0..<previewCount {
+            var line = outputLines[i]
+            // Trim to 200 chars to keep display tidy
+            if line.count > 200 {
+                line = String(line.prefix(200)) + "…"
+            }
+            lines.append(capability.color("    \(line)", color: .brightBlack))
+        }
+
+        let remaining = outputLines.count - previewCount
+        if remaining > 0 {
+            let statsLine = "  … \(remaining) more line\(remaining == 1 ? "" : "s") (\(Self.formattedSize(result.charCount)))" + idxTag
+            lines.append(capability.color(statsLine, color: .brightBlack))
+        } else {
+            let statsLine = "  \(result.lineCount) line\(result.lineCount == 1 ? "" : "s") · \(Self.formattedSize(result.charCount))" + idxTag
+            lines.append(capability.color(statsLine, color: .brightBlack))
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
     /// Generate a one-line summary like:
     ///   "  Read 3 files, searched 2 patterns  [#1]"
     /// or for a single non-collapsible tool:
@@ -269,7 +317,7 @@ public struct CollapsedSummaryFormatter: Sendable {
         let action = parts.joined(separator: ", ")
         let dim = capability.color("  " + action, color: .brightBlack)
         let stats = capability.color(
-            "  \(totalLines) lines · \(formattedSize(totalChars))",
+            "  \(totalLines) lines · \(Self.formattedSize(totalChars))",
             color: .brightBlack
         )
         return dim + stats + idxTag
@@ -277,13 +325,13 @@ public struct CollapsedSummaryFormatter: Sendable {
 
     private func statPart(_ result: SingleToolResult) -> String {
         let dim = capability.color(
-            "  \(result.lineCount) lines · \(formattedSize(result.charCount))",
+            "  \(result.lineCount) lines · \(Self.formattedSize(result.charCount))",
             color: .brightBlack
         )
         return dim
     }
 
-    private func formattedSize(_ bytes: Int) -> String {
+    public static func formattedSize(_ bytes: Int) -> String {
         if bytes < 1024 { return "\(bytes)B" }
         if bytes < 1_048_576 { return String(format: "%.1fKB", Double(bytes) / 1024) }
         return String(format: "%.1fMB", Double(bytes) / 1_048_576)
