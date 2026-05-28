@@ -304,14 +304,18 @@ struct ChatCommand: AsyncParsableCommand {
                                 calls: toolBlocks,
                                 isConcurrencySafe: { call in registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false },
                                 execute: { call in
-                                    currentTool.start(id: call.id, name: call.name)
+                                    if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name) }
                                     let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool)
-                                    currentTool.finish(id: call.id)
+                                    if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                                     return summary
                                 }
                             )
                             for result in results {
-                                emitBlock(toolResultSummary(name: result.call.name, input: result.call.input, output: result.output, capability: capability))
+                                if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
+                                    emitBlock(msg)
+                                } else {
+                                    emitBlock(toolResultSummary(name: result.call.name, input: result.call.input, output: result.output, capability: capability))
+                                }
                             }
                             let resultBlocks = results.map { result in
                                 ContentBlock.toolResult(toolUseID: result.call.id, content: .string(result.output), isError: result.output.hasPrefix("Error:"))
@@ -360,7 +364,7 @@ struct ChatCommand: AsyncParsableCommand {
                             registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false
                         },
                         execute: { call in
-                            currentTool.start(id: call.id, name: call.name)
+                            if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name) }
                             let summary = await executeTool(
                                 name: call.name,
                                 input: call.input,
@@ -369,20 +373,24 @@ struct ChatCommand: AsyncParsableCommand {
                                 sessionState: sessionState,
                                 currentTool: currentTool
                             )
-                            currentTool.finish(id: call.id)
+                            if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                             return summary
                         }
                     )
 
                     // Render tool results visible to the user
                     for result in results {
-                        let line = toolResultSummary(
-                            name: result.call.name,
-                            input: result.call.input,
-                            output: result.output,
-                            capability: capability
-                        )
-                        emitBlock(line)
+                        if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
+                            emitBlock(msg)
+                        } else {
+                            let line = toolResultSummary(
+                                name: result.call.name,
+                                input: result.call.input,
+                                output: result.output,
+                                capability: capability
+                            )
+                            emitBlock(line)
+                        }
                     }
 
                     let resultBlocks = results.map { result in
