@@ -34,7 +34,7 @@ None.
 2. **Implement `isEnabled()` feature gates** — Add feature flag infrastructure for conditional tool enablement (19 tools need this)
 3. **Expand CLI flags** — CC has ~70 flags; SA has ~7. Add the most impactful ones (--continue, --resume, --verbose, --print, --output-format)
 4. **Flesh out stub tools** — MCPTool, McpAuthTool, RemoteTriggerTool, TeamCreateTool, TeamDeleteTool are stubs
-5. **TUI enhancements** — Full terminal UI (tmux integration, iTerm2 features) not yet implemented
+5. **TUI enhancements** — Full terminal UI
 
 ## Recently Completed
 

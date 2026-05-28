@@ -249,7 +249,7 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 | **prompt() 方法内容** | SA 在 description() 中有文档内容，prompt() 有协议但未被调用 | 中 |
 | **isEnabled() 覆盖** | 19 个工具需要功能开关检查（isTodoV2Enabled, isAgentSwarmsEnabled 等） | 中（需要基础设施） |
 | **CLI 标志** | CC 有 ~70 个 CLI 标志，SA 有 ~7 个（--model, --permission, --api-key, --no-color, --no-markdown, --debug/-d, --help） | 中 |
-| **TUI 功能** | 完整终端 UI（tmux, iTerm2 集成）未实现 | 高 |
+| **TUI 功能** | 完整终端 UI | 高 |
 | **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史、CJK 宽度对齐 | 已完成 |
 | **CC 内部工具** | TungstenTool, SuggestBackgroundPRTool 等 ant-only 工具未复制 | 不需要 |
 
