@@ -67,6 +67,9 @@ struct ChatCommand: AsyncParsableCommand {
             codeTheme: codeTheme
         )
 
+        // Build system prompt once — rebuilding on every API call breaks prompt caching.
+        let cachedSystemPrompt = buildSystemPrompt()
+
         emitBlock(renderer.renderBanner(version: "0.1.0"))
         emitBlock("Type [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
 
@@ -281,7 +284,7 @@ struct ChatCommand: AsyncParsableCommand {
                     var toolInputAccumulator = ChatToolInputAccumulator()
                     var stopReason: String?
 
-                    let sysPrompt = systemPrompt()
+                    let sysPrompt = cachedSystemPrompt
                     let stream = client.send(
                         messages: conversationHistory,
                         model: model,
@@ -787,7 +790,8 @@ struct ChatCommand: AsyncParsableCommand {
 
     // MARK: - System prompt
 
-    private func systemPrompt() -> String {
+    /// Built once per session. Rebuilding on every API call would break prompt caching.
+    private func buildSystemPrompt() -> String {
         let builder = SystemPromptBuilder()
         return builder.build(for: Conversation())
     }
