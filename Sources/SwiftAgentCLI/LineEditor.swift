@@ -204,19 +204,50 @@ public final class LineEditor: @unchecked Sendable {
                     cursorPos = buffer.count
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 case .deleteWord:
-                    // Alt+Backspace / Ctrl+W: delete word before cursor
+                    // Alt+Backspace: delete word before cursor using alphanumeric boundaries
+                    // Matches bash/zsh backward-kill-word behavior:
+                    //   - If cursor is on or after a word boundary, delete preceding whitespace/punctuation
+                    //   - Otherwise delete the alphanumeric/word segment before the cursor
                     if cursorPos > 0 {
                         let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                         let prefix = buffer[..<idx]
-                        if let lastSpace = prefix.lastIndex(of: " ") {
-                            let removeCount = cursorPos - (prefix.distance(from: prefix.startIndex, to: lastSpace) + 1)
-                            let startIdx = buffer.index(buffer.startIndex, offsetBy: cursorPos - removeCount)
-                            buffer.removeSubrange(startIdx..<idx)
-                            cursorPos -= removeCount
-                        } else {
-                            buffer.removeSubrange(..<idx)
-                            cursorPos = 0
+                        let wordChars = CharacterSet.alphanumerics
+
+                        // Find the boundary: scan backwards from cursor
+                        var boundaryIdx = prefix.endIndex
+                        var foundWordChar = false
+
+                        // Walk backwards through the prefix
+                        var iterIdx = prefix.endIndex
+                        while iterIdx > prefix.startIndex {
+                            let prevIdx = prefix.index(before: iterIdx)
+                            let char = prefix[prevIdx]
+
+                            // Determine if this character is a "word character" (alphanumeric)
+                            let isWordChar = char.unicodeScalars.allSatisfy { wordChars.contains($0) }
+
+                            if foundWordChar {
+                                // We've seen word chars; stop at the first non-word char
+                                if !isWordChar {
+                                    boundaryIdx = iterIdx  // delete starts after this non-word char
+                                    break
+                                }
+                            } else {
+                                // Haven't seen word chars yet
+                                if isWordChar {
+                                    foundWordChar = true
+                                }
+                            }
+                            iterIdx = prevIdx
                         }
+
+                        if iterIdx == prefix.startIndex {
+                            boundaryIdx = prefix.startIndex
+                        }
+
+                        let removeCount = buffer.distance(from: boundaryIdx, to: idx)
+                        buffer.removeSubrange(boundaryIdx..<idx)
+                        cursorPos -= removeCount
                         redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                     }
                 case .newline:
@@ -434,7 +465,10 @@ public final class LineEditor: @unchecked Sendable {
         // hanging when Escape is pressed alone (no following bytes).
         guard let second = readByteWithTimeout() else { return .none }
 
-        if second == 127 {  // \033\177 = Alt+Backspace on macOS
+        // Alt/Option+Backspace: terminal-dependent sequences
+        //   \033\177 = ESC + DEL (macOS Terminal with "Use Option as Meta key")
+        //   \033\010 = ESC + BS  (some Linux terminals, xterm, etc.)
+        if second == 127 || second == 8 {
             return .deleteWord
         }
 
@@ -486,8 +520,10 @@ public final class LineEditor: @unchecked Sendable {
 
             // Kitty keyboard protocol: CSI <key>;<mods> u
             // 13 = Return key, 2 = Shift modifier → Shift+Enter
-            if byte == 117 /* 'u' */, paramStr == "13;2" {
-                return .newline
+            // 127 = Backspace, 5 = Alt modifier → Alt+Backspace
+            if byte == 117 /* 'u' */ {
+                if paramStr == "13;2" { return .newline }
+                if paramStr == "127;5" { return .deleteWord }
             }
 
             // xterm modified keys: CSI <key>;<mods>;<char> ~
