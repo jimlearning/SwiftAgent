@@ -423,7 +423,7 @@ struct ChatCommand: AsyncParsableCommand {
         context.agentDefinitions = BuiltInAgents.all.values.map { $0 }
 
         // Register bundled skills as commands for SkillTool
-        context.commands = buildBundledSkillCommands()
+        context.commands = buildAllSkillCommands(workingDirectory: context.workingDirectory)
 
         let executor = ToolExecutor(registry: registry)
         let onProgress: ToolCallProgress = { progress in
@@ -444,37 +444,80 @@ struct ChatCommand: AsyncParsableCommand {
         }
     }
 
-    /// Build FullCommand wrappers for all bundled skills.
+    /// Build FullCommand wrappers for all skills: project-level, user-level, and bundled.
     /// These are passed to SkillTool via context.commands so the LLM can invoke skills.
-    private func buildBundledSkillCommands() -> [any Sendable] {
-        BundledSkills.all.map { skill -> FullCommand in
+    ///
+    /// Priority (first-found wins): project > user > bundled.
+    /// Project skills from `.claude/skills/`, user skills from `~/.claude/skills/`.
+    private func buildAllSkillCommands(workingDirectory: String) -> [any Sendable] {
+        // 1. Load merged manifests (project > user > bundled, deduplicated by name)
+        let manifests = SkillFileLoader.loadAllManifests(workingDirectory: workingDirectory)
+
+        var commands: [any Sendable] = []
+
+        for manifest in manifests {
+            let isFileBased = !manifest.sourcePath.hasPrefix("bundled://")
+            let bundledSkill = !isFileBased ? BundledSkills.all.first(where: { $0.name == manifest.name }) : nil
+
             let base = CommandBase(
-                description: skill.description,
-                name: skill.name,
-                aliases: skill.aliases,
-                argumentHint: skill.argumentHint,
-                whenToUse: skill.whenToUse,
-                disableModelInvocation: skill.disableModelInvocation,
-                userInvocable: skill.userInvocable,
-                loadedFrom: .bundled
+                description: manifest.description,
+                name: manifest.name,
+                aliases: manifest.aliases,
+                argumentHint: manifest.argumentHint,
+                whenToUse: manifest.whenToUse,
+                disableModelInvocation: manifest.disableModelInvocation,
+                userInvocable: manifest.userInvocable,
+                loadedFrom: isFileBased ? .skills : .bundled
             )
-            return FullCommand(
-                base: base,
-                type: .prompt(PromptCommand(
-                    progressMessage: skill.progressMessage,
-                    contentLength: skill.contentLength,
-                    argNames: skill.argNames,
-                    allowedTools: skill.allowedTools,
-                    model: skill.model,
+
+            let promptCmd: PromptCommand
+
+            if isFileBased {
+                // File-based skill: use markdown body as the prompt
+                let body = manifest.markdownBody
+                promptCmd = PromptCommand(
+                    progressMessage: "Launching skill: \(manifest.name)...",
+                    contentLength: body.count,
+                    argNames: nil,
+                    allowedTools: manifest.allowedTools,
+                    model: manifest.model,
+                    source: .userSettings,
+                    skillRoot: URL(fileURLWithPath: manifest.sourcePath).deletingLastPathComponent().path,
+                    context: manifest.context,
+                    agent: manifest.agent,
+                    effort: manifest.effort,
+                    paths: manifest.paths,
+                    getPromptForCommand: { _, _ in [.text(body)] }
+                )
+            } else if let b = bundledSkill {
+                // Bundled skill: use original dynamic getPromptForCommand
+                promptCmd = PromptCommand(
+                    progressMessage: b.progressMessage,
+                    contentLength: b.contentLength,
+                    argNames: b.argNames,
+                    allowedTools: b.allowedTools,
+                    model: b.model,
                     source: .bundled,
-                    context: skill.context != nil ? (skill.context == .fork ? .fork : .inline) : nil,
-                    agent: skill.agent,
-                    effort: skill.effort,
-                    paths: skill.paths,
-                    getPromptForCommand: skill.getPromptForCommand
-                ))
-            )
+                    context: b.context != nil ? (b.context == .fork ? .fork : .inline) : nil,
+                    agent: b.agent,
+                    effort: b.effort,
+                    paths: b.paths,
+                    getPromptForCommand: b.getPromptForCommand
+                )
+            } else {
+                // Fallback for bundled manifest without a matching BundledSkill entry
+                promptCmd = PromptCommand(
+                    progressMessage: "Launching skill: \(manifest.name)...",
+                    contentLength: 0,
+                    source: .bundled,
+                    getPromptForCommand: { _, _ in [.text(manifest.markdownBody)] }
+                )
+            }
+
+            commands.append(FullCommand(base: base, type: .prompt(promptCmd)))
         }
+
+        return commands
     }
 
     static func formatTaskOutputProgress(_ progress: TaskOutputProgressData) -> String {
@@ -619,7 +662,8 @@ private final class SessionState: @unchecked Sendable {
         registry.register(TaskUpdateTool(taskManager: taskManager))
         registry.register(TaskStopTool(taskManager: taskManager))
         registry.register(AgentTool(subAgentManager: subAgentManager))
-        registry.register(SkillTool(knownSkills: BundledSkills.all.map { $0.name }))
+        registry.register(SkillTool(knownSkills: SkillFileLoader.allSkillNames(workingDirectory: FileManager.default.currentDirectoryPath)))
+        registry.register(ListSkillsTool())
         registry.register(SendMessageTool())
         registry.register(AskUserQuestionTool())
         registry.register(LSPTool())

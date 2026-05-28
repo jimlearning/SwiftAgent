@@ -669,6 +669,44 @@ public final class CommandRegistry: @unchecked Sendable {
             return .text("Current permission mode: \(current)\nUse /permissions <mode> to change.\nModes: default, acceptEdits, bypass, plan, dontAsk, auto")
         }
 
+        // /skills — list all available skills (project, user, and bundled).
+        register(Command(name: "skills", description: "List all available skills and their descriptions", type: .local,
+            arguments: [CommandArgument(name: "filter", description: "Optional filter: 'project', 'user', 'bundled', or 'all'")])) { [weak self] input in
+            guard let self = self else { return .text("") }
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let filter = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : "all"
+            let cwd = self.stateProvider?()?.workingDirectory ?? FileManager.default.currentDirectoryPath
+            let manifests = SkillFileLoader.loadAllManifests(workingDirectory: cwd)
+
+            guard !manifests.isEmpty else {
+                return .text("No skills available.")
+            }
+
+            var lines = ["Available Skills (\(manifests.count)):", String(repeating: "-", count: 50)]
+
+            for manifest in manifests {
+                let source: String
+                if manifest.sourcePath.hasPrefix("bundled://") { source = "bundled" }
+                else if manifest.sourcePath.hasPrefix("\(FileManager.default.homeDirectoryForCurrentUser.path)/.claude/skills/") { source = "user" }
+                else { source = "project" }
+
+                let lowerFilter = filter.lowercased()
+                if lowerFilter != "all" && source != lowerFilter { continue }
+
+                let aliasStr = manifest.aliases.map { a in a.isEmpty ? "" : " (alias: \(a.joined(separator: ", ")))" } ?? ""
+                lines.append("  /\(manifest.name)\(aliasStr)")
+                lines.append("    \(manifest.description)")
+                lines.append("    [\(source)] \(manifest.sourcePath)")
+                lines.append("")
+            }
+
+            if lines.count <= 3 {
+                lines.append("  (no skills match filter: \(filter))")
+            }
+
+            return .text(lines.joined(separator: "\n"))
+        }
+
         // /session — show session info. CC parity.
         register(Command(name: "session", description: "Show session info: cost, duration, tokens", type: .local)) { [weak self] _ in
             guard let self = self, let state = self.stateProvider?(), let info = state.sessionInfo else {
