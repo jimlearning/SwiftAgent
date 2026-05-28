@@ -165,7 +165,12 @@ struct ChatCommand: AsyncParsableCommand {
             // Ctrl+O toggles expand/collapse of last group
             if editor.ctrlOTriggered {
                 editor.ctrlOTriggered = false
-                await handleCtrlO(cache: toolResultCache, capability: capability)
+                let didSomething = await handleCtrlO(cache: toolResultCache, capability: capability)
+                if !didSomething {
+                    // Nothing to show — clean up the extra line from defer's \r\n
+                    writeToStdout("\u{001B}[1A")   // move up
+                    writeToStdout("\u{001B}[0J")   // clear to end
+                }
                 continue
             }
 
@@ -669,15 +674,17 @@ struct ChatCommand: AsyncParsableCommand {
 
     /// Handles Ctrl+O: toggles between expanded and collapsed view of
     /// the most recently stored tool-result group.
+    /// - Returns: true if something was expanded or collapsed; false if no-op.
     private func handleCtrlO(
         cache: ToolResultCache,
         capability: TerminalCapability
-    ) async {
-        guard let idx = await cache.lastIndex() else { return }
+    ) async -> Bool {
+        guard let idx = await cache.lastIndex() else { return false }
 
         if idx == expandState.expandedGroupIndex {
             // Already expanded → collapse
             collapseExpandedOutput()
+            return true
         } else {
             // Collapse previous if any, then expand new one
             collapseExpandedOutput()
@@ -685,6 +692,7 @@ struct ChatCommand: AsyncParsableCommand {
             expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1  // +1 for emitBlock blank line
             emitBlock(expanded)
             expandState.expandedGroupIndex = idx
+            return true
         }
     }
 
@@ -695,9 +703,9 @@ struct ChatCommand: AsyncParsableCommand {
     private func collapseExpandedOutput() {
         guard expandState.expandedLineCount > 0 else { return }
         let n = expandState.expandedLineCount
-        // n content lines + 1 blank (emitBlock) + 1 prompt line = n+2 up
-        writeToStdout("\u{001B}[\(n + 2)A")
-        // Clear from cursor to end of display
+        // Cursor is n+1 lines below the expanded block start:
+        //   n lines of emitBlock output + 1 line from defer's \r\n
+        writeToStdout("\u{001B}[\(n + 1)A")
         writeToStdout("\u{001B}[0J")
         expandState.expandedGroupIndex = nil
         expandState.expandedLineCount = 0
