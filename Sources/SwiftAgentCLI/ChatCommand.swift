@@ -672,28 +672,25 @@ struct ChatCommand: AsyncParsableCommand {
         }
     }
 
-    /// Handles Ctrl+O: toggles between expanded and collapsed view of
-    /// the most recently stored tool-result group.
+    /// Handles Ctrl+O: pure toggle — collapse if something is expanded,
+    /// expand the last stored group if nothing is.
     /// - Returns: true if something was expanded or collapsed; false if no-op.
     private func handleCtrlO(
         cache: ToolResultCache,
         capability: TerminalCapability
     ) async -> Bool {
-        guard let idx = await cache.lastIndex() else { return false }
-
-        if idx == expandState.expandedGroupIndex {
-            // Already expanded → collapse
+        // If something is currently expanded → just collapse it
+        if expandState.expandedGroupIndex != nil {
             collapseExpandedOutput()
-            return true
-        } else {
-            // Collapse previous if any, then expand new one
-            collapseExpandedOutput()
-            let expanded = await expandCollapsedResult(arg: "last", cache: cache, capability: capability)
-            expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1  // +1 for emitBlock blank line
-            emitBlock(expanded)
-            expandState.expandedGroupIndex = idx
             return true
         }
+        // Nothing expanded → expand the last stored group
+        guard let idx = await cache.lastIndex() else { return false }
+        let expanded = await expandCollapsedResult(arg: "last", cache: cache, capability: capability)
+        expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1
+        emitBlock(expanded)
+        expandState.expandedGroupIndex = idx
+        return true
     }
 
     /// Removes the expanded output block from the terminal using ANSI
