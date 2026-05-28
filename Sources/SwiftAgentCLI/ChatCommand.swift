@@ -170,15 +170,15 @@ struct ChatCommand: AsyncParsableCommand {
             var wasCancelled = false
 
             do {
-                // --- Inline agent loop (ported from TUIApp's submitInput) ---
-                let maxIterations = 25
-                var iteration = 0
+                // --- Inline agent loop ---
+                // No artificial iteration limit — the model decides when to stop
+                // by returning text without tool calls (stop_reason: "end_turn").
+                // The user can always ESC to cancel.
 
-                while iteration < maxIterations {
+                while true {
                     // Check for ESC cancellation before each LLM round
                     if isCancelled.value { wasCancelled = true; break }
 
-                    iteration += 1
                     var turnText = ""
                     var thinkingText = ""
                     var toolInputAccumulator = ChatToolInputAccumulator()
@@ -318,9 +318,6 @@ struct ChatCommand: AsyncParsableCommand {
                     conversationHistory.append(Message(type: .user, content: resultBlocks))
                 }
 
-                if iteration >= maxIterations {
-                    responseText = "(Reached max iterations — task may be incomplete)"
-                }
             } catch {
                 debugLog?.logError(error)
                 responseText = "Error: \(error.localizedDescription)"
