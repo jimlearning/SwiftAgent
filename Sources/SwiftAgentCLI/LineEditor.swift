@@ -1,6 +1,29 @@
 import Foundation
 import Darwin
 
+// MARK: - Editor Mode
+
+/// Distinguishes normal line editing from the inline popup overlay.
+enum EditorMode {
+    case normal
+    case popup(PopupState)
+
+    var isPopup: Bool {
+        if case .popup = self { return true }
+        return false
+    }
+}
+
+/// Mutable state for the inline popup while it is active.
+struct PopupState {
+    /// The trigger character that opened the popup (`@` or `/`).
+    let trigger: Character
+    /// Position of the trigger character in the input buffer.
+    let triggerPos: Int
+    /// The popup interaction engine.
+    var popup: InlinePopup
+}
+
 /// Line editor with raw terminal mode, supporting arrow-key history navigation,
 /// left/right cursor movement, and persistent history file.
 ///
@@ -22,6 +45,24 @@ public final class LineEditor: @unchecked Sendable {
     /// Used to correctly reposition before clearing on the next redraw.
     private var lastCursorRow: Int = 0
     private var bracketedPasteEnabled = false
+
+    // MARK: - Popup support
+
+    /// Data source for slash-command (`/`) completions.
+    private var slashDataSource: PopupDataSource?
+    /// Data source for file (`@`) completions.
+    private var atDataSource: PopupDataSource?
+    /// Current editing mode — normal line editing or popup overlay.
+    private var editorMode: EditorMode = .normal
+
+    /// Configure popup data sources called when `@` or `/` is typed at a word boundary.
+    /// - Parameters:
+    ///   - slash: Provides completions for `/` (commands and skills).
+    ///   - at: Provides completions for `@` (files and directories).
+    public func setPopupDataSources(slash: PopupDataSource?, at: PopupDataSource?) {
+        self.slashDataSource = slash
+        self.atDataSource = at
+    }
 
     // MARK: - Init
 
@@ -149,7 +190,13 @@ public final class LineEditor: @unchecked Sendable {
 
             switch byte {
             case 3:  // Ctrl+C
-                return nil
+                if case .popup = editorMode {
+                    // Cancel popup — remove trigger + query from buffer
+                    cancelPopup(prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                } else {
+                    return nil
+                }
 
             case 4:  // Ctrl+D
                 if buffer.isEmpty {
@@ -158,42 +205,101 @@ public final class LineEditor: @unchecked Sendable {
                 // Otherwise ignore (like bash)
 
             case 10, 13:  // Enter (\n or \r)
-                // Fallback for terminals without bracketed paste: if more bytes
-                // are already queued, this newline belongs to the same paste.
-                var fds = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
-                if poll(&fds, 1, 0) > 0 {
-                    let pasted = readPasteBytes()
-                    let fullContent = buffer + "\n" + pasted
-                    replaceBufferWithPasteSummary(
-                        fullContent,
-                        prompt: prompt,
-                        buffer: &buffer,
-                        cursorPos: &cursorPos,
-                        pasteExpansions: &pasteExpansions
-                    )
-                } else {
-                    writeToStdout("\r\n")
-                    let line = Self.expandPastePlaceholders(
-                        in: buffer,
-                        expansions: pasteExpansions
-                    ).trimmingCharacters(in: .newlines)
-                    if !line.isEmpty {
-                        addEntry(line)
+                if case .popup(let state) = editorMode {
+                    // Commit selection: replace trigger..cursor with selected text + space
+                    if let item = selectedPopupItem(state) {
+                        commitPopupSelection(item: item, state: state,
+                                             prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                     }
-                    return line
+                } else {
+                    // Fallback for terminals without bracketed paste: if more bytes
+                    // are already queued, this newline belongs to the same paste.
+                    var fds = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+                    if poll(&fds, 1, 0) > 0 {
+                        let pasted = readPasteBytes()
+                        let fullContent = buffer + "\n" + pasted
+                        replaceBufferWithPasteSummary(
+                            fullContent,
+                            prompt: prompt,
+                            buffer: &buffer,
+                            cursorPos: &cursorPos,
+                            pasteExpansions: &pasteExpansions
+                        )
+                    } else {
+                        writeToStdout("\r\n")
+                        let line = Self.expandPastePlaceholders(
+                            in: buffer,
+                            expansions: pasteExpansions
+                        ).trimmingCharacters(in: .newlines)
+                        if !line.isEmpty {
+                            addEntry(line)
+                        }
+                        return line
+                    }
                 }
 
             case 127:  // Backspace (DEL)
-                stashedBuffer = nil
-                if cursorPos > 0 {
-                    buffer.remove(at: buffer.index(buffer.startIndex, offsetBy: cursorPos - 1))
-                    cursorPos -= 1
+                if case .popup(var state) = editorMode {
+                    // Remove last char from buffer (sync with popup query)
+                    if cursorPos > state.triggerPos {
+                        buffer.remove(at: buffer.index(buffer.startIndex, offsetBy: cursorPos - 1))
+                        cursorPos -= 1
+                    }
+                    // Delete last query char; if query becomes empty, exit popup
+                    let queryExhausted = state.popup.deleteQueryChar()
+                    if queryExhausted || cursorPos <= state.triggerPos {
+                        // Trigger only — exit popup and remove trigger char
+                        cancelPopup(prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                    } else {
+                        editorMode = .popup(state)  // write back mutated state
+                    }
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                } else {
+                    stashedBuffer = nil
+                    if cursorPos > 0 {
+                        buffer.remove(at: buffer.index(buffer.startIndex, offsetBy: cursorPos - 1))
+                        cursorPos -= 1
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    }
+                }
+
+            case 9:  // Tab — equivalent to Enter in popup mode
+                if case .popup(let state) = editorMode {
+                    if let item = selectedPopupItem(state) {
+                        commitPopupSelection(item: item, state: state,
+                                             prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    }
+                } else {
+                    // Normal mode: Tab inserts spaces (standard terminal behavior)
+                    let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                    buffer.insert(contentsOf: "    ", at: idx)
+                    cursorPos += 4
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 }
 
             case 27:  // Escape sequence (arrow keys, etc.)
                 let seq = readEscapeSequence()
-                switch seq {
+                if case .popup(var state) = editorMode {
+                    switch seq {
+                    case .up:
+                        state.popup.moveUp()
+                        editorMode = .popup(state)
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    case .down:
+                        state.popup.moveDown()
+                        editorMode = .popup(state)
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    case .none:
+                        // Bare ESC — cancel popup
+                        cancelPopup(prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    default:
+                        break  // Ignore other escape sequences in popup mode
+                    }
+                } else {
+                    switch seq {
                 case .up:
                     navigateHistory(direction: -1, prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
                 case .down:
@@ -281,9 +387,11 @@ public final class LineEditor: @unchecked Sendable {
                 case .none:
                     break  // Unknown escape sequence, ignore
                 }
+                }  // end else (normal mode escape handling)
 
             case 21:  // Ctrl+U — clear line
                 stashedBuffer = nil
+                editorMode = .normal
                 buffer = ""
                 cursorPos = 0
                 redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
@@ -325,13 +433,26 @@ public final class LineEditor: @unchecked Sendable {
             default:
                 // Printable ASCII or multi-byte UTF-8
                 if let (char, _) = decodeUTF8Char(leadByte: byte!) {
-                    stashedBuffer = nil
-                    // Put back any extra bytes we already consumed from the continuation
-                    // (decodeUTF8Char reads them, so we insert all at once)
-                    let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
-                    buffer.insert(char, at: idx)
-                    cursorPos += 1
-                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    if editorMode.isPopup {
+                        // In popup mode: append char to search query
+                        handlePopupChar(char: char, prompt: prompt,
+                                         buffer: &buffer, cursorPos: &cursorPos)
+                    } else if shouldTriggerPopup(char: char, buffer: buffer, cursorPos: cursorPos) {
+                        // Normal mode, word-boundary trigger: insert char and open popup
+                        stashedBuffer = nil
+                        let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                        buffer.insert(char, at: idx)
+                        cursorPos += 1
+                        openPopup(trigger: char, triggerPos: cursorPos - 1,
+                                   prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                    } else {
+                        // Normal mode: insert character
+                        stashedBuffer = nil
+                        let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                        buffer.insert(char, at: idx)
+                        cursorPos += 1
+                        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    }
                 }
             }
         }
@@ -760,7 +881,35 @@ public final class LineEditor: @unchecked Sendable {
             writeToStdout("\u{001B}[\(target.column)C")
         }
 
-        drawnLines = totalRows
+        // ── Popup rendering (if active) ──
+        var popupHeight = 0
+        if case .popup(let state) = editorMode {
+            // Move to area below input: from current (target.row) to input end (totalRows - 1)
+            let downToEnd = (totalRows - 1) - target.row
+            let popupStartRow: Int
+            if downToEnd >= 0 {
+                if downToEnd > 0 { writeToStdout("\u{001B}[\(downToEnd)B") }
+                writeToStdout("\r\n")
+                popupStartRow = totalRows  // 0-based: right after the input area
+            } else {
+                writeToStdout("\r\n")
+                popupStartRow = totalRows
+            }
+            state.popup.render(to: writeToStdout, terminalWidth: terminalColumns)
+            popupHeight = state.popup.height
+
+            // Explicitly restore cursor to input position (avoid \033[s/\033[u
+            // which can behave inconsistently across terminals).
+            // After popup render, cursor is at (popupStartRow + popupHeight, col 0).
+            // Need to go to (target.row, target.column).
+            let rowsAfterPopup = popupStartRow + popupHeight
+            let rowsUp = rowsAfterPopup - target.row
+            if rowsUp > 0 { writeToStdout("\u{001B}[\(rowsUp)A") }
+            writeToStdout("\r")
+            if target.column > 0 { writeToStdout("\u{001B}[\(target.column)C") }
+        }
+
+        drawnLines = totalRows + popupHeight
         lastCursorRow = target.row
     }
 
@@ -792,6 +941,80 @@ public final class LineEditor: @unchecked Sendable {
             return Int(size.ws_col)
         }
         return Int(ProcessInfo.processInfo.environment["COLUMNS"] ?? "80") ?? 80
+    }
+
+    // MARK: - Popup helpers
+
+    /// Returns whether typing `char` at the current position should trigger the popup.
+    private func shouldTriggerPopup(char: Character, buffer: String, cursorPos: Int) -> Bool {
+        guard char == "@" || char == "/" else { return false }
+        guard slashDataSource != nil || atDataSource != nil else { return false }
+        // Word boundary: start of line, or preceded by space / newline
+        if cursorPos == 0 { return true }
+        let prevIdx = buffer.index(buffer.startIndex, offsetBy: cursorPos - 1)
+        let prev = buffer[prevIdx]
+        return prev == " " || prev == "\n"
+    }
+
+    /// Open the popup for the given trigger character.
+    private func openPopup(trigger: Character, triggerPos: Int,
+                            prompt: String, buffer: inout String, cursorPos: inout Int) {
+        let ds: PopupDataSource?
+        switch trigger {
+        case "/": ds = slashDataSource
+        case "@": ds = atDataSource
+        default:  ds = nil
+        }
+        guard let dataSource = ds else { return }
+
+        var popup = InlinePopup(dataSource: dataSource)
+        // The query starts empty — user will type to filter
+        popup.refresh()
+        editorMode = .popup(PopupState(trigger: trigger, triggerPos: triggerPos, popup: popup))
+        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+    }
+
+    /// Handle a character typed while the popup is active.
+    private func handlePopupChar(char: Character,
+                                  prompt: String, buffer: inout String, cursorPos: inout Int) {
+        guard case .popup(var state) = editorMode else { return }
+        // Insert the character into the buffer (which IS the search query)
+        let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+        buffer.insert(char, at: idx)
+        cursorPos += 1
+        // Also append to the popup query
+        state.popup.appendQuery(char)
+        editorMode = .popup(state)
+        redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+    }
+
+    /// The currently selected item in the popup, or nil if there are no items.
+    private func selectedPopupItem(_ state: PopupState) -> PopupItem? {
+        guard state.popup.selectedIndex < state.popup.items.count else { return nil }
+        return state.popup.items[state.popup.selectedIndex]
+    }
+
+    /// Replace the trigger + query portion of the buffer with the selected item's text + space.
+    private func commitPopupSelection(item: PopupItem,
+                                       state: PopupState,
+                                       prompt: String, buffer: inout String, cursorPos: inout Int) {
+        let triggerIdx = buffer.index(buffer.startIndex, offsetBy: state.triggerPos)
+        let cursorIdx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+
+        let replacement = item.insertText + " "
+        buffer.replaceSubrange(triggerIdx..<cursorIdx, with: replacement)
+        cursorPos = state.triggerPos + replacement.count
+        editorMode = .normal
+    }
+
+    /// Cancel the popup: remove the trigger character and any search query from the buffer.
+    private func cancelPopup(prompt: String, buffer: inout String, cursorPos: inout Int) {
+        guard case .popup(let state) = editorMode else { return }
+        let triggerIdx = buffer.index(buffer.startIndex, offsetBy: state.triggerPos)
+        let cursorIdx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+        buffer.removeSubrange(triggerIdx..<cursorIdx)
+        cursorPos = state.triggerPos
+        editorMode = .normal
     }
 
     private func writeToStdout(_ string: String) {

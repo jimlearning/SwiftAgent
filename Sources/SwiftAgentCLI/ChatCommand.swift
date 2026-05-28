@@ -84,6 +84,47 @@ struct ChatCommand: AsyncParsableCommand {
 
         let editor = LineEditor()
 
+        // ── Set up inline popup data sources (@ and / completions) ──
+        let cwd = FileManager.default.currentDirectoryPath
+
+        // Command completions: built-in slash commands + skills
+        var commandEntries: [(name: String, help: String?)] = [
+            ("/help",        "Show available commands and their usage"),
+            ("/exit",        "Exit the current session"),
+            ("/quit",        "Alias for /exit"),
+            ("/clear",       "Clear the screen"),
+            ("/model",       "Show or change the current model"),
+            ("/config",      "Open config panel"),
+            ("/memory",      "Edit session memory files"),
+            ("/doctor",      "Diagnose and verify installation"),
+            ("/cost",        "Show total cost and duration"),
+            ("/status",      "Show current session status"),
+            ("/compact",     "Compact conversation history"),
+            ("/review",      "Review a pull request"),
+            ("/diff",        "Show the diff of the current branch"),
+            ("/stats",       "Show usage statistics"),
+            ("/plan",        "Enable/disable plan mode"),
+            ("/resume",      "Resume a previous conversation"),
+            ("/goal",        "Goal-oriented brainstorming"),
+            ("/mcp",         "Manage MCP server connections"),
+            ("/tasks",       "List and manage background tasks"),
+            ("/init",        "Initialize project settings"),
+            ("/permissions", "View or change permission settings"),
+            ("/skills",      "List all available skills"),
+            ("/session",     "Show session info"),
+        ]
+
+        // Add skills from disk
+        let skillManifests = SkillFileLoader.loadAllManifests(workingDirectory: cwd)
+        for m in skillManifests {
+            commandEntries.append(("/" + m.name, m.description))
+        }
+
+        editor.setPopupDataSources(
+            slash: CommandDataSource(commands: commandEntries),
+            at: FileDataSource(workingDirectory: cwd)
+        )
+
         // Session tracking for slash commands (/cost, /status, /stats, etc.)
         let sessionStartTime = Date()
         let sessionId = UUID().uuidString
@@ -189,7 +230,7 @@ struct ChatCommand: AsyncParsableCommand {
                         messages: conversationHistory,
                         model: model,
                         systemPrompt: sysPrompt,
-                        maxTokens: 8192,
+                        maxTokens: 16384,
                         tools: toolDefs
                     )
 
@@ -246,13 +287,46 @@ struct ChatCommand: AsyncParsableCommand {
                     // If stream was interrupted by ESC, break out of agent loop
                     if wasCancelled { break }
 
-                    if let toolInputError = toolInputAccumulator.finish(stopReason: stopReason) {
-                        responseText = toolInputError.message
-                        conversationHistory.append(Message(type: .assistant, content: [.text(responseText)]))
-                        break
-                    }
-
+                    let toolInputError = toolInputAccumulator.finish(stopReason: stopReason)
                     let toolBlocks = toolInputAccumulator.parsedCalls
+                    let wasTruncated = toolInputError != nil || stopReason == "max_tokens"
+
+                    // ── Truncation recovery ──
+                    if wasTruncated {
+                        if !toolBlocks.isEmpty {
+                            var ab: [ContentBlock] = []
+                            if !thinkingText.isEmpty { ab.append(.thinking(thinkingText)) }
+                            if !turnText.isEmpty { ab.append(.text(turnText)) }
+                            for tb in toolBlocks { ab.append(.toolUse(id: tb.id, name: tb.name, input: JSONValue.object(tb.input))) }
+                            conversationHistory.append(Message(type: .assistant, content: ab))
+
+                            let results = await ChatToolExecutionScheduler.execute(
+                                calls: toolBlocks,
+                                isConcurrencySafe: { call in registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false },
+                                execute: { call in
+                                    currentTool.start(id: call.id, name: call.name)
+                                    let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool)
+                                    currentTool.finish(id: call.id)
+                                    return summary
+                                }
+                            )
+                            for result in results {
+                                emitBlock(toolResultSummary(name: result.call.name, input: result.call.input, output: result.output, capability: capability))
+                            }
+                            let resultBlocks = results.map { result in
+                                ContentBlock.toolResult(toolUseID: result.call.id, content: .string(result.output), isError: result.output.hasPrefix("Error:"))
+                            }
+                            conversationHistory.append(Message(type: .user, content: resultBlocks))
+                        } else if !thinkingText.isEmpty || !turnText.isEmpty {
+                            var blocks: [ContentBlock] = []
+                            if !thinkingText.isEmpty { blocks.append(.thinking(thinkingText)) }
+                            if !turnText.isEmpty { blocks.append(.text(turnText)) }
+                            conversationHistory.append(Message(type: .assistant, content: blocks))
+                        }
+                        let hint = toolInputError?.message ?? "Output truncated by token limit. Please continue."
+                        conversationHistory.append(Message(type: .user, content: [.text("[system] \(hint) Continue from where you left off.")]))
+                        continue
+                    }
 
                     // No tool calls → model signaled completion
                     if toolBlocks.isEmpty {
