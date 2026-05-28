@@ -49,9 +49,10 @@ public final class LineEditor: @unchecked Sendable {
         return rawModeReadLine(prompt: prompt)
     }
 
-    /// Save history to disk.
+    /// Save history to disk. Uses \0 (null byte) as entry separator to support
+    /// multi-line history entries.
     public func save() {
-        let content = entries.joined(separator: "\n")
+        let content = entries.map { $0 + "\0" }.joined()
         try? content.write(to: historyFile, atomically: true, encoding: .utf8)
     }
 
@@ -709,7 +710,8 @@ public final class LineEditor: @unchecked Sendable {
         }
 
         // Buffer is empty: normal sequential history navigation.
-        stashedBuffer = nil
+        // Explicitly stash empty string so pressing ↓ can restore to empty.
+        if stashedBuffer == nil { stashedBuffer = "" }
         let newIndex = historyIndex + direction
         guard newIndex >= 0, newIndex < entries.count else { return }
 
@@ -814,7 +816,13 @@ public final class LineEditor: @unchecked Sendable {
     private func load() {
         guard let data = try? Data(contentsOf: historyFile),
               let content = String(data: data, encoding: .utf8) else { return }
-        entries = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+        if content.contains("\0") {
+            // New format: null-byte separated (supports multi-line entries)
+            entries = content.components(separatedBy: "\0").filter { !$0.isEmpty }
+        } else {
+            // Legacy format: newline separated (auto-migrate on next save)
+            entries = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+        }
         historyIndex = entries.count
     }
 }
