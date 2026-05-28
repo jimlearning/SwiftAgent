@@ -109,6 +109,11 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
 
 /// Provides file-system completions for @-mentions.
 ///
+/// Uses a shared `FileSearchIndex` for fast fuzzy search across all project
+/// files. On first use, the index is built in the background via `git ls-files`
+/// (or `FileManager.enumerator` as fallback). Once built, all searches are
+/// in-memory with no disk I/O.
+///
 /// Path resolution rules (to produce unambiguous paths for the AI):
 /// 1. All returned paths are **relative to `workingDirectory`**.
 /// 2. Directory entries have a trailing `/`.
@@ -119,28 +124,67 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
 public final class FileDataSource: PopupDataSource, @unchecked Sendable {
     private let workingDirectory: String
     private let maxResults: Int
+    private let index: FileSearchIndex
 
     /// - Parameters:
     ///   - workingDirectory: The project root / CWD. All paths are relative to this.
     ///   - maxResults: Maximum number of items to return (default 50).
-    public init(workingDirectory: String, maxResults: Int = 50) {
+    ///   - index: Shared file search index. If nil, a new isolated index is created.
+    public init(workingDirectory: String, maxResults: Int = 50, index: FileSearchIndex? = nil) {
         self.workingDirectory = workingDirectory.hasSuffix("/")
             ? String(workingDirectory.dropLast())
             : workingDirectory
         self.maxResults = maxResults
+        self.index = index ?? FileSearchIndex()
     }
 
     public func search(query: String) -> [PopupItem] {
-        // Parse query into directory and basename parts
         let (dirPart, basenamePart) = splitQuery(query)
 
-        // If query has no path separator, do recursive search
-        if dirPart.isEmpty && !basenamePart.isEmpty {
-            return searchRecursive(basename: basenamePart)
+        // Empty query — show top-level entries (readdir, not index)
+        if dirPart.isEmpty && basenamePart.isEmpty {
+            index.ensureBuilt(cwd: workingDirectory)
+            return getTopLevel()
         }
 
-        // Otherwise: directory-scoped search
+        // Pure filename/path search without directory prefix — use the index
+        if dirPart.isEmpty && !basenamePart.isEmpty {
+            index.ensureBuilt(cwd: workingDirectory)
+            return index.search(query: basenamePart, cwd: workingDirectory, maxResults: maxResults)
+        }
+
+        // Directory-scoped search (has a "/" in the query)
         return searchInDirectory(dirPart: dirPart, basename: basenamePart)
+    }
+
+    /// List top-level files and directories (used when popup first opens with "@").
+    private func getTopLevel() -> [PopupItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(atPath: workingDirectory) else {
+            return []
+        }
+        var items: [PopupItem] = []
+        for name in contents {
+            if name.hasPrefix(".") { continue }
+            if vcsDirs.contains(name) { continue }
+            let fullPath = (workingDirectory as NSString).appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { continue }
+            let displayName = isDir.boolValue ? name + "/" : name
+            items.append(PopupItem(
+                display: displayName,
+                help: nil,
+                insertText: "@" + displayName,
+                score: 1.0,
+                matchPositions: [],
+                isDirectory: isDir.boolValue
+            ))
+        }
+        items.sort { a, b in
+            if a.isDirectory != b.isDirectory { return a.isDirectory }
+            return a.display.localizedCaseInsensitiveCompare(b.display) == .orderedAscending
+        }
+        return Array(items.prefix(maxResults))
     }
 
     // MARK: - Directory-scoped search (existing behavior)
@@ -216,82 +260,6 @@ public final class FileDataSource: PopupDataSource, @unchecked Sendable {
         }
 
         // Sort: by score desc, then alphabetically
-        items.sort { a, b in
-            if a.score != b.score { return a.score > b.score }
-            if a.isDirectory != b.isDirectory { return a.isDirectory }
-            return a.display.localizedCaseInsensitiveCompare(b.display) == .orderedAscending
-        }
-
-        return Array(items.prefix(maxResults))
-    }
-
-    // MARK: - Recursive search
-
-    /// Recursively search all files and directories under `workingDirectory`,
-    /// matching the basename (or full relative path) against `basename`.
-    private func searchRecursive(basename: String) -> [PopupItem] {
-        let fm = FileManager.default
-        guard let enumerator = fm.enumerator(atPath: workingDirectory) else {
-            return []
-        }
-
-        let showHidden = basename.hasPrefix(".")
-
-        var items: [PopupItem] = []
-
-        while let relativePath = enumerator.nextObject() as? String {
-            // Skip VCS directories
-            let components = (relativePath as NSString).pathComponents
-            if components.contains(where: { vcsDirs.contains($0) }) { continue }
-
-            // Skip hidden unless query starts with "."
-            if !showHidden {
-                let hasHidden = components.contains(where: { $0.hasPrefix(".") })
-                if hasHidden { continue }
-            }
-
-            let fullPath = (workingDirectory as NSString).appendingPathComponent(relativePath)
-            var isDirFlag: ObjCBool = false
-            guard fm.fileExists(atPath: fullPath, isDirectory: &isDirFlag) else { continue }
-
-            let isDirectory = isDirFlag.boolValue
-            let name = (relativePath as NSString).lastPathComponent
-
-            // Fuzzy match against the basename (filename) first
-            let nameResult = FuzzyMatcher.match(query: basename, text: name)
-            // Also try matching against the relative path (for partial directory matches)
-            let pathResult = FuzzyMatcher.match(query: basename, text: relativePath)
-
-            let bestResult = nameResult.score >= pathResult.score ? nameResult : pathResult
-            guard bestResult.score > 0 else { continue }
-
-            var score = bestResult.score
-            if isDirectory { score = min(1.0, score + 0.01) }
-
-            let displayRelPath = isDirectory ? relativePath + "/" : relativePath
-
-            // Adjust match positions to be relative to the display path
-            let displayMatchPositions: [Int]
-            if bestResult.score == nameResult.score {
-                // Positions are relative to filename — shift by directory prefix length
-                let prefixLen = displayRelPath.count - name.count
-                displayMatchPositions = nameResult.positions.map { $0 + prefixLen }
-            } else {
-                // Positions are already relative to the full path
-                displayMatchPositions = pathResult.positions
-            }
-
-            items.append(PopupItem(
-                display: displayRelPath,
-                help: nil,
-                insertText: "@" + displayRelPath,
-                score: score,
-                matchPositions: displayMatchPositions,
-                isDirectory: isDirectory
-            ))
-        }
-
-        // Sort: by score desc, then directories first, then alphabetically
         items.sort { a, b in
             if a.score != b.score { return a.score > b.score }
             if a.isDirectory != b.isDirectory { return a.isDirectory }

@@ -64,6 +64,11 @@ public final class LineEditor: @unchecked Sendable {
         self.atDataSource = at
     }
 
+    /// After Ctrl+O is processed by rawModeReadLine, this is set to true.
+    /// The REPL loop should check this after readLine returns an empty
+    /// string and call /expand last.
+    public var ctrlOTriggered: Bool = false
+
     // MARK: - Init
 
     public init(historyDir: URL? = nil) {
@@ -439,7 +444,9 @@ public final class LineEditor: @unchecked Sendable {
                 redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
 
             case 15:  // Ctrl+O — expand last collapsed tool result
-                return "/expand last"
+                writeToStdout("\r\n")
+                ctrlOTriggered = true
+                return ""
 
             default:
                 // Printable ASCII or multi-byte UTF-8

@@ -87,6 +87,10 @@ struct ChatCommand: AsyncParsableCommand {
         // ── Set up inline popup data sources (@ and / completions) ──
         let cwd = FileManager.default.currentDirectoryPath
 
+        // Shared file search index: built once via git ls-files, reused across
+        // all @-mention searches so each keystroke is in-memory, not disk I/O.
+        let fileSearchIndex = FileSearchIndex()
+
         // Command completions: built-in slash commands + skills
         var commandEntries: [(name: String, help: String?)] = [
             ("/help",        "Show available commands and their usage"),
@@ -123,7 +127,7 @@ struct ChatCommand: AsyncParsableCommand {
 
         editor.setPopupDataSources(
             slash: CommandDataSource(commands: commandEntries),
-            at: FileDataSource(workingDirectory: cwd)
+            at: FileDataSource(workingDirectory: cwd, index: fileSearchIndex)
         )
 
         // Session tracking for slash commands (/cost, /status, /stats, etc.)
@@ -150,6 +154,20 @@ struct ChatCommand: AsyncParsableCommand {
             renderer.drainTTYInput()
 
             guard let line = editor.readLine(prompt: "You: ") else { break }
+
+            // Ctrl+O triggers expand of last collapsed group
+            if editor.ctrlOTriggered {
+                editor.ctrlOTriggered = false
+                // Handle like /expand last (with duplicate check)
+                if let idx = await toolResultCache.lastIndex(),
+                   idx != lastExpandedIndex {
+                    let expanded = await expandCollapsedResult(arg: "last", cache: toolResultCache, capability: capability)
+                    emitBlock(expanded)
+                    lastExpandedIndex = idx
+                }
+                continue
+            }
+
             let input = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if input.isEmpty { continue }
 
