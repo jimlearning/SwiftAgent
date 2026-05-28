@@ -667,9 +667,10 @@ public actor PluginManager {
 
         var skillPaths: [String] = []
         for url in contents {
-            let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            let resolvedURL = url.resolvingSymlinksInPath()
+            let resourceValues = try? resolvedURL.resourceValues(forKeys: [.isDirectoryKey])
             guard resourceValues?.isDirectory == true else { continue }
-            let skillMD = url.appendingPathComponent("SKILL.md")
+            let skillMD = resolvedURL.appendingPathComponent("SKILL.md")
             if FileManager.default.fileExists(atPath: skillMD.path) {
                 skillPaths.append(skillMD.path)
             }
