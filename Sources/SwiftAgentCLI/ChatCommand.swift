@@ -186,19 +186,17 @@ struct ChatCommand: AsyncParsableCommand {
                     let arg = parts.count > 1 ? String(parts[1]) : "last"
                     if arg == "last", let idx = await toolResultCache.lastIndex(),
                        idx == expandState.expandedGroupIndex {
-                        // Same group — collapse via ANSI cleanup
-                        collapseExpandedOutput()
+                        // Already expanded — skip
                         continue
                     }
-                    // Collapse previous expansion if any, then show new one
-                    collapseExpandedOutput()
                     let expanded = await expandCollapsedResult(arg: arg, cache: toolResultCache, capability: capability)
-                    expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1
                     emitBlock(expanded)
                     if arg == "last", let idx = await toolResultCache.lastIndex() {
                         expandState.expandedGroupIndex = idx
+                        expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1
                     } else if let n = Int(arg) {
                         expandState.expandedGroupIndex = n
+                        expandState.expandedLineCount = expanded.components(separatedBy: "\n").count + 1
                     }
                     continue
                 }
@@ -691,19 +689,16 @@ struct ChatCommand: AsyncParsableCommand {
     }
 
     /// Removes the expanded output block from the terminal using ANSI
-    /// escape codes. The cursor must be on the line immediately after
-    /// the expanded block (which is the case after Ctrl+O returns).
+    /// escape codes. After Ctrl+O returns, the cursor is 1 line below
+    /// the "You: " prompt (defer's \r\n). We move up to the start of
+    /// the expanded block and clear to end of display.
     private func collapseExpandedOutput() {
         guard expandState.expandedLineCount > 0 else { return }
         let n = expandState.expandedLineCount
-        // Move up to the start of the expanded block (n content lines
-        // + 1 for the "You: " prompt line that sits below it).
-        writeToStdout("\u{001B}[\(n + 1)A")
-        // Delete n lines — the expanded block scrolls off and the
-        // prompt that was below shifts up.
-        for _ in 0..<n {
-            writeToStdout("\u{001B}[M")
-        }
+        // n content lines + 1 blank (emitBlock) + 1 prompt line = n+2 up
+        writeToStdout("\u{001B}[\(n + 2)A")
+        // Clear from cursor to end of display
+        writeToStdout("\u{001B}[0J")
         expandState.expandedGroupIndex = nil
         expandState.expandedLineCount = 0
     }
