@@ -102,6 +102,28 @@ public final class DebugLogger: LLMDebugLogger, @unchecked Sendable {
         append(entry)
     }
 
+    /// Log token usage with cache metrics after a turn completes.
+    public func logUsage(inputTokens: Int, outputTokens: Int,
+                         cacheRead: Int, cacheCreation: Int,
+                         cache1h: Int = 0, cache5m: Int = 0) {
+        entryCount += 1
+        let cacheHitRate = inputTokens > 0
+            ? Double(cacheRead) / Double(inputTokens) * 100.0 : 0.0
+        let entry: [String: Any] = [
+            "seq": entryCount,
+            "type": "usage",
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "input_tokens": inputTokens,
+            "output_tokens": outputTokens,
+            "cache_read_input_tokens": cacheRead,
+            "cache_creation_input_tokens": cacheCreation,
+            "cache_hit_rate_pct": String(format: "%.1f", cacheHitRate),
+            "cache_creation_1h": cache1h,
+            "cache_creation_5m": cache5m
+        ]
+        append(entry)
+    }
+
     /// Path to the current log file, for display to the user.
     public var logFilePath: String {
         logFile.path

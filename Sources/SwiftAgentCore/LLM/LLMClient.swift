@@ -506,12 +506,29 @@ public final class LLMClient: Sendable {
     }
 
     private func apiFormattedSystem(_ prompt: String, enablePromptCaching: Bool) -> Any {
-        if enablePromptCaching {
-            return [
-                ["type": "text", "text": prompt, "cache_control": ["type": "ephemeral"]]
-            ]
+        guard enablePromptCaching else { return prompt }
+
+        // Two-phase system prompt caching: split on dynamic boundary so only the
+        // static prefix gets cache_control. The dynamic suffix (CLAUDE.md, memory,
+        // environment, date, etc.) is sent uncached. Matches CC's splitSysPromptPrefix.
+        if let boundaryRange = prompt.range(of: SYSTEM_PROMPT_DYNAMIC_BOUNDARY) {
+            let staticPrefix = prompt[..<boundaryRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+            let dynamicSuffix = prompt[boundaryRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+
+            var blocks: [[String: Any]] = []
+            if !staticPrefix.isEmpty {
+                blocks.append(["type": "text", "text": staticPrefix, "cache_control": ["type": "ephemeral"]])
+            }
+            if !dynamicSuffix.isEmpty {
+                blocks.append(["type": "text", "text": dynamicSuffix])
+            }
+            return blocks.isEmpty ? prompt : blocks
         }
-        return prompt
+
+        // No boundary marker — cache entire prompt as a single block
+        return [
+            ["type": "text", "text": prompt, "cache_control": ["type": "ephemeral"]]
+        ]
     }
 
     /// Normalize model string for API:
@@ -611,13 +628,16 @@ extension Message {
         ]
     }
 
-    /// Format with cache_control on the last content block.
+    /// Format with cache_control on the last cacheable content block.
+    /// Walks backwards past thinking/redactedThinking blocks to find the correct
+    /// cache breakpoint. Matches CC's assistantMessageToMessageParam.
     var apiFormattedWithCache: [String: Any] {
+        let cacheMarkerIndex = lastCacheableBlockIndex()
         let contentBlocks: [[String: Any]] = content.enumerated().map { (i, block) in
             switch block {
             case .text(let text):
                 var dict: [String: Any] = ["type": "text", "text": text]
-                if i == content.count - 1 {
+                if i == cacheMarkerIndex {
                     dict["cache_control"] = ["type": "ephemeral"]
                 }
                 return dict
@@ -628,7 +648,7 @@ extension Message {
             case .toolResult(let toolID, let content, let isError):
                 let contentValue: Any = content.apiFormatted
                 var dict: [String: Any] = ["type": "tool_result", "tool_use_id": toolID, "content": contentValue, "is_error": isError]
-                if i == self.content.count - 1 {
+                if i == cacheMarkerIndex {
                     dict["cache_control"] = ["type": "ephemeral"]
                 }
                 return dict
@@ -648,6 +668,22 @@ extension Message {
             "role": role.rawValue,
             "content": contentBlocks
         ]
+    }
+
+    /// Walks backwards from the last content block to find the first block that can
+    /// carry a cache_control marker. Thinking and redactedThinking blocks are skipped
+    /// because the API ignores cache_control on them.
+    private func lastCacheableBlockIndex() -> Int? {
+        var idx = content.count - 1
+        while idx >= 0 {
+            switch content[idx] {
+            case .thinking, .redactedThinking:
+                idx -= 1
+            default:
+                return idx
+            }
+        }
+        return nil
     }
 }
 

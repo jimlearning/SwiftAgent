@@ -54,14 +54,18 @@ public struct SystemPromptBuilder: Sendable {
             parts.append(conversationPrompt)
         }
 
-        // Tool guidance (dynamic — tool names injected per CC's pattern)
+        // Dynamic boundary separator (for prompt-cache splitting).
+        // Everything before this marker is static/cacheable; everything after
+        // is session-specific and should not be cached.
+        parts.append(boundary)
+
+        // Tool guidance — placed after the boundary because tool names vary
+        // per session. Keeping it in the dynamic section prevents tool-set
+        // changes from invalidating the cached static prefix.
         let guidance = toolGuidanceSection(toolNames: toolNames)
         if !guidance.isEmpty {
             parts.append(guidance)
         }
-
-        // Dynamic boundary separator (for prompt-cache splitting)
-        parts.append(boundary)
 
         // Dynamic content (CLAUDE.md, memory, environment, MCP, session)
         parts.append(contentsOf: dynamicContent(for: conversation, inject: inject, toolNames: toolNames))

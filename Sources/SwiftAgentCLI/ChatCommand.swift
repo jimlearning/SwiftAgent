@@ -364,6 +364,9 @@ struct ChatCommand: AsyncParsableCommand {
 
             var responseText = ""
             var wasCancelled = false
+            var cumulativeCacheRead = 0
+            var cumulativeCacheCreation = 0
+            var cumulativeInputTokens = 0
 
             do {
                 // --- Inline agent loop ---
@@ -428,6 +431,9 @@ struct ChatCommand: AsyncParsableCommand {
                             stopReason = reason
                             if let u = usage {
                                 sessionState.addTokens(in: u.inputTokens, out: u.outputTokens)
+                                cumulativeCacheRead += u.cacheReadInputTokens
+                                cumulativeCacheCreation += u.cacheCreationInputTokens
+                                cumulativeInputTokens += u.inputTokens
                             }
 
                         case .contentBlockStop:
@@ -581,6 +587,20 @@ struct ChatCommand: AsyncParsableCommand {
             if wasCancelled {
                 conversationHistory.removeSubrange(historyCount...)
                 responseText = "(cancelled — press ↑ to recall previous input)"
+            }
+
+            // Display cache hit rate for the turn
+            if cumulativeInputTokens > 0 && !wasCancelled {
+                let cacheHitRate = Double(cumulativeCacheRead) / Double(cumulativeInputTokens) * 100.0
+                let cacheInfo = String(format: "  ↳ cache: %.0f%% hit (%d read, %d created, %d total in)",
+                                       cacheHitRate, cumulativeCacheRead, cumulativeCacheCreation, cumulativeInputTokens)
+                emitBlock(capability.color(cacheInfo, color: .brightBlack))
+                debugLog?.logUsage(
+                    inputTokens: cumulativeInputTokens,
+                    outputTokens: sessionState.totalTokensOut,
+                    cacheRead: cumulativeCacheRead,
+                    cacheCreation: cumulativeCacheCreation
+                )
             }
 
             // Display response with left border
