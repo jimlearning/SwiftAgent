@@ -48,6 +48,7 @@ struct LanguageRegistry: Sendable {
         "tsx": "typescript",
         "jsx": "javascript",
         "plaintext": "text",
+        "css": "css",
     ]
 
     private static let grammars: [String: LanguageGrammar] = [
@@ -277,6 +278,116 @@ struct LanguageRegistry: Sendable {
             blockComment: nil,
             stringDelimiters: [],
             numberPattern: nil,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: [],
+            usesCapitalizedTypes: false
+        ),
+        "css": LanguageGrammar(
+            name: "css",
+            keywords: [
+                // At-rules
+                "@media", "@import", "@font-face", "@keyframes", "@supports",
+                "@container", "@layer", "@scope", "@charset", "@namespace",
+                "@page", "@property", "@counter-style",
+                // Properties — layout
+                "display", "position", "top", "right", "bottom", "left",
+                "float", "clear", "z-index", "visibility", "overflow", "overflow-x",
+                "overflow-y", "box-sizing", "width", "height", "min-width", "min-height",
+                "max-width", "max-height", "margin", "margin-top", "margin-right",
+                "margin-bottom", "margin-left", "padding", "padding-top", "padding-right",
+                "padding-bottom", "padding-left",
+                // Properties — flexbox
+                "flex", "flex-direction", "flex-wrap", "flex-flow", "flex-grow",
+                "flex-shrink", "flex-basis", "justify-content", "align-items",
+                "align-self", "align-content", "order", "gap", "row-gap", "column-gap",
+                // Properties — grid
+                "grid", "grid-template", "grid-template-columns", "grid-template-rows",
+                "grid-template-areas", "grid-auto-columns", "grid-auto-rows",
+                "grid-auto-flow", "grid-column", "grid-row", "grid-area",
+                "justify-items", "justify-self", "place-items", "place-content",
+                // Properties — visual
+                "color", "background", "background-color", "background-image",
+                "background-size", "background-position", "background-repeat",
+                "background-attachment", "background-clip", "background-origin",
+                "opacity", "border", "border-width", "border-style", "border-color",
+                "border-radius", "border-top", "border-right", "border-bottom",
+                "border-left", "outline", "outline-width", "outline-style",
+                "outline-color", "outline-offset", "box-shadow",
+                // Properties — typography
+                "font", "font-family", "font-size", "font-weight", "font-style",
+                "font-variant", "line-height", "text-align", "text-decoration",
+                "text-transform", "text-indent", "text-overflow", "text-shadow",
+                "white-space", "word-break", "word-wrap", "letter-spacing",
+                "vertical-align", "direction", "unicode-bidi",
+                // Properties — animation
+                "animation", "animation-name", "animation-duration",
+                "animation-timing-function", "animation-delay",
+                "animation-iteration-count", "animation-direction",
+                "animation-fill-mode", "animation-play-state",
+                "transition", "transition-property", "transition-duration",
+                "transition-timing-function", "transition-delay",
+                "transform", "transform-origin", "will-change",
+                // Properties — other
+                "content", "cursor", "pointer-events", "user-select",
+                "resize", "object-fit", "object-position", "filter",
+                "clip-path", "mask", "list-style", "list-style-type",
+                "counter-reset", "counter-increment", "quotes",
+                "table-layout", "border-collapse", "border-spacing",
+                "empty-cells", "caption-side",
+                // Values — display
+                "none", "block", "inline", "inline-block", "inline-flex",
+                "inline-grid", "flex", "grid", "table", "table-row",
+                "table-cell", "list-item", "contents", "flow-root",
+                // Values — position
+                "static", "relative", "absolute", "fixed", "sticky",
+                // Values — float/clear
+                "left", "right", "both",
+                // Values — overflow
+                "visible", "hidden", "scroll", "auto",
+                // Values — sizing
+                "auto", "fit-content", "max-content", "min-content",
+                // Values — color
+                "transparent", "currentColor", "inherit", "initial", "unset", "revert",
+                // Values — font
+                "normal", "bold", "bolder", "lighter", "italic", "oblique",
+                "small-caps", "underline", "overline", "line-through",
+                // Values — text alignment
+                "left", "right", "center", "justify",
+                // Values — cursor
+                "pointer", "default", "crosshair", "move", "text", "wait", "help",
+                "not-allowed", "grab", "grabbing", "zoom-in", "zoom-out",
+                // Values — flex/grid
+                "flex-start", "flex-end", "center", "space-between",
+                "space-around", "space-evenly", "stretch", "baseline",
+                "start", "end",
+                // Values — box-sizing
+                "content-box", "border-box",
+                // Values — repeat
+                "repeat", "no-repeat", "repeat-x", "repeat-y",
+                "cover", "contain",
+                // Values — timing
+                "ease", "ease-in", "ease-out", "ease-in-out", "linear",
+                "step-start", "step-end", "infinite", "alternate",
+                "forwards", "backwards",
+                // Pseudo classes / elements
+                ":hover", ":active", ":focus", ":visited", ":link",
+                ":first-child", ":last-child", ":nth-child", ":not",
+                ":before", ":after", "::before", "::after",
+                "::placeholder", "::selection", "::first-letter",
+                "::first-line", "::marker", "::backdrop",
+                // Combinator / functional
+                ":root", ":empty", ":enabled", ":disabled", ":checked",
+                ":required", ":optional", ":valid", ":invalid",
+                "rgb(", "rgba(", "hsl(", "hsla(", "var(", "calc(",
+                "min(", "max(", "clamp(", "url(", "attr(",
+                // Important
+                "!important",
+            ],
+            lineComment: nil,
+            blockComment: ("/*", "*/"),
+            stringDelimiters: ["\"", "'"],
+            numberPattern: #"\b\d+\.?\d*(?:px|em|rem|vh|vw|vmin|vmax|%|ch|ex|cm|mm|in|pt|pc|dpi|dpcm|dppx|deg|rad|grad|turn|s|ms|fr)?\b"#,
             declarationKeywords: [],
             variableKeywords: [],
             typeDeclarationKeywords: [],

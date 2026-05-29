@@ -318,6 +318,9 @@ public struct MarkdownRenderer: Sendable {
             #/\b(?:new|delete|malloc|free|alloc|init|deinit|self|this|super|base)\b/#,
             #/\b(?:print|println|console[.]log|fmt[.]|printf|echo|write|read)\b/#,
             #/\b(?:http[.]|https[.]|fetch|axios|request|response|json[.]|JSON[.])\b/#,
+            // CSS patterns
+            #/@(?:media|import|font-face|keyframes|supports|container|layer|charset)\b/#,
+            #/\b(?:color|display|margin|padding|border|width|height|font-size|background|position|flex|grid)\s*:\s*[^;]+\;/#,
         ]
         return codePatterns.reduce(0) { count, pattern in
             count + (line.contains(pattern) ? 1 : 0)
@@ -398,6 +401,11 @@ public struct MarkdownRenderer: Sendable {
 
         // SQL
         if head.contains(#/\b(SELECT\s+|FROM\s+|WHERE\s+|INSERT\s+INTO|CREATE\s+TABLE|ALTER\s+TABLE)\b/#) { return "sql" }
+
+        // CSS
+        if head.contains(#/\{[^}]*\b(?:color|display|margin|padding|font-size|width|height|background)\s*:\s*[^;]+\;?\s*\}/#) { return "css" }
+        if head.contains(#/@(?:media|import|font-face|keyframes|supports|container|layer)\b/#) { return "css" }
+        if head.contains(#/^\.[\w-]+\s*\{|^#[\w-]+\s*\{|^[\w-]+\s*\{/#) && head.contains(":") && head.contains(";") { return "css" }
 
         // YAML
         if head.contains(#/^\w+:\s*$/#) && lines.count >= 2 { return "yaml" }
