@@ -589,7 +589,18 @@ struct ChatCommand: AsyncParsableCommand {
                 responseText = "(cancelled — press ↑ to recall previous input)"
             }
 
-            // Display cache hit rate for the turn
+            // Display response with left border
+            let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                let rendered = noMarkdown
+                    ? renderer.renderLeftBorder(content: trimmed)
+                    : markdown.render(trimmed)
+                emitBlock(rendered)
+            } else {
+                emitBlock(renderer.renderLeftBorder(content: "(done)"))
+            }
+
+            // Display cache hit rate after the response (footnote)
             if cumulativeInputTokens > 0 && !wasCancelled {
                 let cacheHitRate = Double(cumulativeCacheRead) / Double(cumulativeInputTokens) * 100.0
                 let cacheInfo = String(format: "  ↳ cache: %.0f%% hit (%d read, %d created, %d total in)",
@@ -601,17 +612,6 @@ struct ChatCommand: AsyncParsableCommand {
                     cacheRead: cumulativeCacheRead,
                     cacheCreation: cumulativeCacheCreation
                 )
-            }
-
-            // Display response with left border
-            let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                let rendered = noMarkdown
-                    ? renderer.renderLeftBorder(content: trimmed)
-                    : markdown.render(trimmed)
-                emitBlock(rendered)
-            } else {
-                emitBlock(renderer.renderLeftBorder(content: "(done)"))
             }
         }
 
