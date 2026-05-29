@@ -153,18 +153,62 @@ struct ChatCommand: AsyncParsableCommand {
         }
 
         editor.setPopupDataSources(
-            slash: CommandDataSource(commands: commandEntries),
+            slash: CommandDataSource(commands: commandEntries, argumentHints: [
+                "model": "[model-name]",
+                "permissions": "[mode]",
+                "plan": "[on|off]",
+                "memory": "[list|add|forget]",
+                "review": "[pr-url-or-number]",
+                "diff": "[base-branch]",
+                "resume": "[session-id]",
+                "mcp": "[action]",
+                "tasks": "[action]",
+                "goal": "[description]",
+                "expand": "[N|last]",
+                "config": "[key]",
+                "skills": "[filter]"
+            ], subOptions: [
+                "model": ["default", "deepseek-v4-flash", "deepseek-v4-pro", "gpt-4o", "claude-sonnet-4-6"],
+                "permissions": ["default", "acceptEdits", "bypass", "plan", "dontAsk", "auto"],
+                "plan": ["on", "off"]
+            ]),
             at: FileDataSource(workingDirectory: cwd, index: fileSearchIndex)
         )
 
         // Session tracking for slash commands (/cost, /status, /stats, etc.)
         let sessionStartTime = Date()
-        let sessionId = UUID().uuidString
+        var sessionId = UUID().uuidString
         let sessionState = SessionState()
 
         // Conversation history accumulates across turns so the LLM has full context.
         // Each turn appends user message → assistant message(s) → tool results.
         var conversationHistory: [Message] = []
+
+        // If --session flag provided, load the previous session
+        let sessionStore = SessionStore()
+        if let resumeID = session {
+            if let loaded = try? sessionStore.load(resumeID) {
+                conversationHistory = loaded.conversation.messages
+                sessionId = resumeID
+                let msgCount = conversationHistory.count
+                let titleSuffix = loaded.title.map { ": \"\($0)\"" } ?? ""
+                emitBlock("Resumed session \(resumeID.prefix(8))...\(titleSuffix) (\(msgCount) messages)")
+            } else {
+                // Try fuzzy match by partial title or ID prefix
+                if let match = try? sessionStore.listRecent(limit: 50).first(where: {
+                    $0.id.hasPrefix(resumeID) || ($0.title?.localizedCaseInsensitiveContains(resumeID) ?? false)
+                }) {
+                    if let loaded = try? sessionStore.load(match.id) {
+                        conversationHistory = loaded.conversation.messages
+                        sessionId = match.id
+                        let msgCount = conversationHistory.count
+                        emitBlock("Resumed session: \"\(match.title ?? match.id)\" (\(msgCount) messages)")
+                    }
+                } else {
+                    emitBlock("Session '\(resumeID)' not found. Starting fresh.")
+                }
+            }
+        }
 
         // ── Collapsed tool result tracking ──
         let toolResultCache = ToolResultCache()

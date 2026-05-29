@@ -14,6 +14,10 @@ public struct PopupItem {
     /// Optional hint for arguments shown as dim placeholder after the command is committed.
     /// E.g. "[model-id]" for /model, "[mode]" for /permissions.
     public let argumentHint: String?
+    /// Optional sub-options for argument value selection.
+    /// When the command is committed and this is non-nil, a second popup opens
+    /// to let the user pick from these values. E.g. ["deepseek-v4-flash", "deepseek-v4-pro", "gpt-4o"].
+    public let subOptions: [String]?
     /// Relevance score from FuzzyMatcher (0…1). Higher = better match.
     public let score: Float
     /// Indices of matched characters within `display` for highlight rendering.
@@ -26,6 +30,7 @@ public struct PopupItem {
         help: String? = nil,
         insertText: String,
         argumentHint: String? = nil,
+        subOptions: [String]? = nil,
         score: Float,
         matchPositions: [Int] = [],
         isDirectory: Bool = false
@@ -34,6 +39,7 @@ public struct PopupItem {
         self.help = help
         self.insertText = insertText
         self.argumentHint = argumentHint
+        self.subOptions = subOptions
         self.score = score
         self.matchPositions = matchPositions
         self.isDirectory = isDirectory
@@ -61,16 +67,19 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
         let help: String?
         let aliases: [String]
         let argumentHint: String? // e.g. "[model-id]", "[mode]"
+        let subOptions: [String]? // e.g. ["default", "acceptEdits", "bypass"]
     }
 
     /// - Parameter commands: Array of `(name: String, help: String?)` tuples.
     ///   `name` should include the leading `/` (e.g. `"/help"`, `"/commit"`).
     /// - Parameter aliases: Optional map of command name → alias list.
     /// - Parameter argumentHints: Optional map of command name → argument hint string.
+    /// - Parameter subOptions: Optional map of command name → array of valid argument choices.
     public init(
         commands: [(name: String, help: String?)],
         aliases: [String: [String]] = [:],
-        argumentHints: [String: String] = [:]
+        argumentHints: [String: String] = [:],
+        subOptions: [String: [String]] = [:]
     ) {
         self.entries = commands.map {
             let cmdName = $0.name.hasPrefix("/") ? String($0.name.dropFirst()) : $0.name
@@ -79,7 +88,8 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
                 displayName: $0.name.hasPrefix("/") ? $0.name : "/" + $0.name,
                 help: $0.help,
                 aliases: aliases[cmdName] ?? [],
-                argumentHint: argumentHints[cmdName]
+                argumentHint: argumentHints[cmdName],
+                subOptions: subOptions[cmdName]
             )
         }
     }
@@ -106,6 +116,7 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
                 help: entry.help,
                 insertText: entry.displayName,  // "/" + name
                 argumentHint: entry.argumentHint,
+                subOptions: entry.subOptions,
                 score: match.score,
                 matchPositions: match.positions
             ))
@@ -355,4 +366,37 @@ public final class FileDataSource: PopupDataSource, @unchecked Sendable {
     }
 
     private let vcsDirs: Set<String> = [".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]
+}
+
+// MARK: - Argument Data Source
+
+/// Simple popup data source for command argument choices (sub-menus).
+/// E.g. model names for /model, permission modes for /permissions.
+public final class ArgumentDataSource: PopupDataSource, @unchecked Sendable {
+    private let choices: [String]
+
+    public init(choices: [String]) {
+        self.choices = choices
+    }
+
+    public func search(query: String) -> [PopupItem] {
+        var items: [PopupItem] = []
+        let lowerQuery = query.lowercased()
+
+        for choice in choices {
+            let result = FuzzyMatcher.match(query: query, text: choice)
+            if !query.isEmpty && result.score == 0 { continue }
+            let displayName = query.isEmpty ? choice : choice
+
+            items.append(PopupItem(
+                display: displayName,
+                help: nil,
+                insertText: choice,
+                argumentHint: nil,
+                score: query.isEmpty ? 1.0 : result.score,
+                matchPositions: result.positions
+            ))
+        }
+        return items.sorted { $0.score > $1.score }
+    }
 }

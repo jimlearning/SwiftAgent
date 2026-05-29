@@ -22,6 +22,9 @@ struct PopupState {
     let triggerPos: Int
     /// The popup interaction engine.
     var popup: InlinePopup
+    /// Whether this is a sub-menu popup (opened after a command was committed).
+    /// When true, cancel just closes the popup without modifying the buffer.
+    var isSubMenu: Bool = false
 }
 
 /// Line editor with raw terminal mode, supporting arrow-key history navigation,
@@ -191,6 +194,7 @@ public final class LineEditor: @unchecked Sendable {
         var cursorPos = 0  // cursor position within buffer (0...buffer.count)
         var pasteExpansions: [String: String] = [:]
         stashedBuffer = nil
+        ghostText = nil
         lastCursorRow = 0
         drawnLines = 1
 
@@ -267,6 +271,7 @@ public final class LineEditor: @unchecked Sendable {
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 } else {
                     stashedBuffer = nil
+                    ghostText = nil
                     if cursorPos > 0 {
                         buffer.remove(at: buffer.index(buffer.startIndex, offsetBy: cursorPos - 1))
                         cursorPos -= 1
@@ -283,6 +288,7 @@ public final class LineEditor: @unchecked Sendable {
                     }
                 } else {
                     // Normal mode: Tab inserts spaces (standard terminal behavior)
+                    ghostText = nil
                     let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                     buffer.insert(contentsOf: "    ", at: idx)
                     cursorPos += 4
@@ -340,6 +346,7 @@ public final class LineEditor: @unchecked Sendable {
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 case .deleteWord:
                     stashedBuffer = nil
+                    ghostText = nil
                     // Alt+Backspace: delete word before cursor using alphanumeric boundaries
                     // Matches bash/zsh backward-kill-word behavior:
                     //   - If cursor is on or after a word boundary, delete preceding whitespace/punctuation
@@ -389,12 +396,14 @@ public final class LineEditor: @unchecked Sendable {
                 case .newline:
                     // Option+Enter / Alt+Enter — insert literal newline
                     stashedBuffer = nil
+                    ghostText = nil
                     let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                     buffer.insert(contentsOf: "\n", at: idx)
                     cursorPos += 1
                     redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                 case .paste(let content):
                     stashedBuffer = nil
+                    ghostText = nil
                     handlePaste(
                         content,
                         prompt: prompt,
@@ -409,6 +418,7 @@ public final class LineEditor: @unchecked Sendable {
 
             case 21:  // Ctrl+U — clear line
                 stashedBuffer = nil
+                ghostText = nil
                 editorMode = .normal
                 buffer = ""
                 cursorPos = 0
@@ -416,6 +426,7 @@ public final class LineEditor: @unchecked Sendable {
 
             case 23:  // Ctrl+W — delete word before cursor
                 stashedBuffer = nil
+                ghostText = nil
                 if cursorPos > 0 {
                     let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                     // Skip trailing whitespace
@@ -434,6 +445,7 @@ public final class LineEditor: @unchecked Sendable {
                 }
 
             case 11:  // Ctrl+K — delete from cursor to end
+                ghostText = nil
                 if cursorPos < buffer.count {
                     let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                     buffer.removeSubrange(idx...)
@@ -462,6 +474,7 @@ public final class LineEditor: @unchecked Sendable {
                     } else if shouldTriggerPopup(char: char, buffer: buffer, cursorPos: cursorPos) {
                         // Normal mode, word-boundary trigger: insert char and open popup
                         stashedBuffer = nil
+                        ghostText = nil
                         let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                         buffer.insert(char, at: idx)
                         cursorPos += 1
@@ -470,6 +483,7 @@ public final class LineEditor: @unchecked Sendable {
                     } else {
                         // Normal mode: insert character
                         stashedBuffer = nil
+                        ghostText = nil
                         let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
                         buffer.insert(char, at: idx)
                         cursorPos += 1
@@ -985,13 +999,11 @@ public final class LineEditor: @unchecked Sendable {
         // ── Ghost / placeholder text (argument hint) ──
         // Rendered after cursor as dim text. The cursor stays at target position
         // so user input replaces this placeholder.
-        var ghostLen = 0
         if let gt = ghostText, editorMode.isPopup == false {
             writeToStdout("\u{001B}[2m")       // dim
             writeToStdout("\u{001B}[90m")       // bright black
             writeToStdout(gt)
             writeToStdout("\u{001B}[0m")        // reset
-            ghostLen = TerminalDisplayWidth.width(gt)
             // Move cursor back to original position
             writeToStdout("\r")
             if target.column > 0 {
@@ -1145,11 +1157,34 @@ public final class LineEditor: @unchecked Sendable {
 
         // Show argument hint as ghost placeholder text (dim) if present
         ghostText = item.argumentHint
+
+        // If the command has sub-options (known argument choices), open a
+        // sub-menu popup so the user can pick the value immediately.
+        if let subOptions = item.subOptions, !subOptions.isEmpty {
+            let ds = ArgumentDataSource(choices: subOptions)
+            var subPopup = InlinePopup(dataSource: ds)
+            subPopup.refresh()
+            let newTriggerPos = cursorPos  // trigger is at current cursor (after space)
+            editorMode = .popup(PopupState(
+                trigger: Character(" "),  // space-triggered sub-menu
+                triggerPos: newTriggerPos,
+                popup: subPopup,
+                isSubMenu: true
+            ))
+            ghostText = nil  // clear ghost since sub-menu is active
+        }
     }
 
     /// Cancel the popup: remove the trigger character and any search query from the buffer.
+    /// For sub-menus, just closes the popup without modifying the buffer.
     private func cancelPopup(prompt: String, buffer: inout String, cursorPos: inout Int) {
         guard case .popup(let state) = editorMode else { return }
+        if state.isSubMenu {
+            // Sub-menu: just close it, keep the buffer + command intact
+            editorMode = .normal
+            ghostText = nil
+            return
+        }
         let triggerIdx = buffer.index(buffer.startIndex, offsetBy: state.triggerPos)
         let cursorIdx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
         buffer.removeSubrange(triggerIdx..<cursorIdx)
