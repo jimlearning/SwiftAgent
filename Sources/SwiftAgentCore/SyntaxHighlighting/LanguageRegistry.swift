@@ -49,6 +49,7 @@ struct LanguageRegistry: Sendable {
         "jsx": "javascript",
         "plaintext": "text",
         "css": "css",
+        "html": "html",
     ]
 
     private static let grammars: [String: LanguageGrammar] = [
@@ -388,6 +389,59 @@ struct LanguageRegistry: Sendable {
             blockComment: ("/*", "*/"),
             stringDelimiters: ["\"", "'"],
             numberPattern: #"\b\d+\.?\d*(?:px|em|rem|vh|vw|vmin|vmax|%|ch|ex|cm|mm|in|pt|pc|dpi|dpcm|dppx|deg|rad|grad|turn|s|ms|fr)?\b"#,
+            declarationKeywords: [],
+            variableKeywords: [],
+            typeDeclarationKeywords: [],
+            usesCapitalizedTypes: false
+        ),
+        "html": LanguageGrammar(
+            name: "html",
+            keywords: [
+                // Elements — document
+                "html", "head", "body", "title", "meta", "link", "style", "script",
+                "base", "noscript", "template", "slot",
+                // Elements — structure
+                "div", "span", "section", "article", "nav", "aside", "header",
+                "footer", "main", "h1", "h2", "h3", "h4", "h5", "h6", "p",
+                "blockquote", "pre", "code", "hr", "br", "address", "figure",
+                "figcaption", "details", "summary", "dialog",
+                // Elements — text
+                "a", "em", "strong", "small", "s", "cite", "q", "dfn", "abbr",
+                "ruby", "rt", "rp", "data", "time", "mark", "b", "i", "u",
+                "bdi", "bdo", "sub", "sup", "wbr", "del", "ins", "kbd", "samp", "var",
+                // Elements — lists
+                "ul", "ol", "li", "dl", "dt", "dd",
+                // Elements — tables
+                "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
+                "colgroup", "col",
+                // Elements — forms
+                "form", "input", "button", "select", "option", "optgroup",
+                "textarea", "label", "fieldset", "legend", "datalist", "output",
+                "progress", "meter",
+                // Elements — media
+                "img", "video", "audio", "source", "track", "canvas", "svg",
+                "picture", "iframe", "embed", "object", "param", "map", "area",
+                // Common attributes
+                "id", "class", "style", "href", "src", "alt", "title", "type",
+                "name", "value", "placeholder", "disabled", "readonly", "required",
+                "checked", "selected", "target", "rel", "method", "action",
+                "enctype", "charset", "lang", "dir", "tabindex", "accesskey",
+                "contenteditable", "draggable", "hidden", "autofocus",
+                "autocomplete", "novalidate", "multiple", "pattern", "min",
+                "max", "step", "maxlength", "minlength", "cols", "rows", "wrap",
+                "for", "form", "role", "aria-label", "aria-hidden",
+                "data-*", "onclick", "onchange", "oninput", "onsubmit",
+                "onload", "onerror", "onkeydown", "onkeyup", "onfocus", "onblur",
+                // Boolean attributes
+                "async", "defer", "crossorigin", "integrity", "referrerpolicy",
+                "loading", "decoding", "playsinline", "controls", "autoplay",
+                "loop", "muted", "ismap", "usemap", "reversed", "start",
+                "open", "compact", "nowrap",
+            ],
+            lineComment: nil,
+            blockComment: ("<!--", "-->"),
+            stringDelimiters: ["\"", "'"],
+            numberPattern: nil,
             declarationKeywords: [],
             variableKeywords: [],
             typeDeclarationKeywords: [],

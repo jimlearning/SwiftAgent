@@ -321,6 +321,10 @@ public struct MarkdownRenderer: Sendable {
             // CSS patterns
             #/@(?:media|import|font-face|keyframes|supports|container|layer|charset)\b/#,
             #/\b(?:color|display|margin|padding|border|width|height|font-size|background|position|flex|grid)\s*:\s*[^;]+\;/#,
+            // HTML patterns
+            #/<[a-z]+\b[^>]*>/#,
+            #/<\/[a-z]+\s*>/#,
+            #/\b(?:class|id|href|src|alt|type|name|value|placeholder|disabled|checked|selected)\s*=\s*["'][^"']*["']/#,
         ]
         return codePatterns.reduce(0) { count, pattern in
             count + (line.contains(pattern) ? 1 : 0)
@@ -401,6 +405,13 @@ public struct MarkdownRenderer: Sendable {
 
         // SQL
         if head.contains(#/\b(SELECT\s+|FROM\s+|WHERE\s+|INSERT\s+INTO|CREATE\s+TABLE|ALTER\s+TABLE)\b/#) { return "sql" }
+
+        // HTML
+        if head.contains(#/<!DOCTYPE\s+html/#) { return "html" }
+        if head.contains(#/<html\b/#) { return "html" }
+        if head.contains(#/<head\b|<body\b|<meta\b|<title\b|<link\b/#) { return "html" }
+        if head.contains(#/<div\b|<span\b|<p\b|<a\s|<table\b|<ul\b|<ol\b|<li\b|<form\b|<input\b/#) { return "html" }
+        if head.contains(#/<\/[a-z]+\s*>/#) && head.contains(#/<[a-z]+\b/#) { return "html" }
 
         // CSS
         if head.contains(#/\{[^}]*\b(?:color|display|margin|padding|font-size|width|height|background)\s*:\s*[^;]+\;?\s*\}/#) { return "css" }
