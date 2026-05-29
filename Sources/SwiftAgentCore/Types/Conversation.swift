@@ -324,14 +324,19 @@ public struct Conversation: Codable, Sendable, Identifiable {
     public let id: String
     public var turns: [Turn]
     public var systemPrompt: String?
+    /// Flat message storage for direct serialization/deserialization.
+    /// When set, `messages` returns this directly instead of deriving from `turns`.
+    public var flatMessages: [Message]?
 
-    public init(id: String = UUID().uuidString, turns: [Turn] = [], systemPrompt: String? = nil) {
+    public init(id: String = UUID().uuidString, turns: [Turn] = [], systemPrompt: String? = nil, flatMessages: [Message]? = nil) {
         self.id = id
         self.turns = turns
         self.systemPrompt = systemPrompt
+        self.flatMessages = flatMessages
     }
 
     public var messages: [Message] {
+        if let flat = flatMessages { return flat }
         var result: [Message] = []
         if let prompt = systemPrompt {
             result.append(Message(type: .system, content: [.text(prompt)]))

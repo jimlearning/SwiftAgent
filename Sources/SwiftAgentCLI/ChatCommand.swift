@@ -40,6 +40,9 @@ struct ChatCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable markdown rendering in responses")
     var noMarkdown: Bool = false
 
+    @Option(name: .long, help: "Resume a previous session by ID or partial title")
+    var session: String?
+
     @Flag(name: .shortAndLong, help: "Enable debug logging of all API requests and responses")
     var debug: Bool = false
 
@@ -510,6 +513,9 @@ struct ChatCommand: AsyncParsableCommand {
                 emitBlock(renderer.renderLeftBorder(content: "(done)"))
             }
         }
+
+        // Save session before exiting so /resume can find it
+        saveSession(history: conversationHistory, id: sessionId, store: sessionStore)
 
         editor.save()
         // Move cursor up to overwrite the "You: " prompt line, then print goodbye
@@ -1023,6 +1029,28 @@ private final class SessionState: @unchecked Sendable {
 }
 
     // MARK: - Helpers
+
+    /// Persist the current conversation history to `~/.swift-agent/sessions/<id>.json`.
+    /// Derives a title from the first user message.
+    private func saveSession(history: [Message], id: String, store: SessionStore) {
+        guard !history.isEmpty else { return }
+        let title = history
+            .first(where: { $0.type == .user })
+            .flatMap { msg -> String? in
+                for block in msg.content {
+                    if case .text(let text) = block {
+                        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !cleaned.isEmpty { return String(cleaned.prefix(100)) }
+                    }
+                }
+                return nil
+            }
+        var conv = Conversation()
+        conv.flatMessages = history
+        let s = Session(id: id, title: title, conversation: conv)
+        do { try store.save(s) }
+        catch { /* don't block exit on save failure */ }
+    }
 
     private func parsePermissionMode(_ mode: String) -> PermissionMode {
         switch mode {
