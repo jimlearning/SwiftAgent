@@ -11,6 +11,9 @@ public struct PopupItem {
     /// Text to insert into the input buffer on selection, including the trigger
     /// character (e.g. "@Sources/SwiftAgentCLI/" or "/help").
     public let insertText: String
+    /// Optional hint for arguments shown as dim placeholder after the command is committed.
+    /// E.g. "[model-id]" for /model, "[mode]" for /permissions.
+    public let argumentHint: String?
     /// Relevance score from FuzzyMatcher (0…1). Higher = better match.
     public let score: Float
     /// Indices of matched characters within `display` for highlight rendering.
@@ -22,6 +25,7 @@ public struct PopupItem {
         display: String,
         help: String? = nil,
         insertText: String,
+        argumentHint: String? = nil,
         score: Float,
         matchPositions: [Int] = [],
         isDirectory: Bool = false
@@ -29,6 +33,7 @@ public struct PopupItem {
         self.display = display
         self.help = help
         self.insertText = insertText
+        self.argumentHint = argumentHint
         self.score = score
         self.matchPositions = matchPositions
         self.isDirectory = isDirectory
@@ -55,14 +60,17 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
         let displayName: String   // e.g. "/help"
         let help: String?
         let aliases: [String]
+        let argumentHint: String? // e.g. "[model-id]", "[mode]"
     }
 
     /// - Parameter commands: Array of `(name: String, help: String?)` tuples.
     ///   `name` should include the leading `/` (e.g. `"/help"`, `"/commit"`).
     /// - Parameter aliases: Optional map of command name → alias list.
+    /// - Parameter argumentHints: Optional map of command name → argument hint string.
     public init(
         commands: [(name: String, help: String?)],
-        aliases: [String: [String]] = [:]
+        aliases: [String: [String]] = [:],
+        argumentHints: [String: String] = [:]
     ) {
         self.entries = commands.map {
             let cmdName = $0.name.hasPrefix("/") ? String($0.name.dropFirst()) : $0.name
@@ -70,7 +78,8 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
                 name: cmdName,
                 displayName: $0.name.hasPrefix("/") ? $0.name : "/" + $0.name,
                 help: $0.help,
-                aliases: aliases[cmdName] ?? []
+                aliases: aliases[cmdName] ?? [],
+                argumentHint: argumentHints[cmdName]
             )
         }
     }
@@ -96,6 +105,7 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
                 display: entry.displayName,
                 help: entry.help,
                 insertText: entry.displayName,  // "/" + name
+                argumentHint: entry.argumentHint,
                 score: match.score,
                 matchPositions: match.positions
             ))

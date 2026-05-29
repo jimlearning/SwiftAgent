@@ -84,6 +84,10 @@ public final class CommandRegistry: @unchecked Sendable {
     /// Matches CC's command context passing pattern.
     public var stateProvider: (@Sendable () -> CommandStateProvider?)?
 
+    /// Callback invoked when /model changes the current model.
+    /// The string parameter is the new model ID.
+    public var onModelChange: (@Sendable (String) -> Void)?
+
     public init(stateProvider: (@Sendable () -> CommandStateProvider?)? = nil) {
         self.stateProvider = stateProvider
         registerBuiltins()
@@ -179,9 +183,13 @@ public final class CommandRegistry: @unchecked Sendable {
             let current = self?.stateProvider?()?.currentModel ?? "unknown"
             if parts.count > 1 {
                 let newModel = String(parts[1]).trimmingCharacters(in: .whitespaces)
-                return .text("Model change requested: \(newModel)\nCurrent model: \(current)\nRestart or set ANTHROPIC_MODEL to apply.")
+                guard !newModel.isEmpty else {
+                    return .text("Current model: \(current)\nUse /model <model-id> to change.\nAvailable: default, deepseek-v4-flash, deepseek-v4-pro, gpt-4o, claude-sonnet-4-6")
+                }
+                self?.onModelChange?(newModel)
+                return .text("Model changed to \(newModel) (was \(current)). The next LLM call will use the new model.")
             }
-            return .text("Current model: \(current)\nUse /model <model-id> to change.\nTip: Set ANTHROPIC_MODEL env var for persistence.")
+            return .text("Current model: \(current)\nUse /model <model-id> to change.\nAvailable: default, deepseek-v4-flash, deepseek-v4-pro, gpt-4o, claude-sonnet-4-6")
         }
 
         // /config (CC alias: /settings)

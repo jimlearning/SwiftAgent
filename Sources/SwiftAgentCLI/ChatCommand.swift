@@ -12,6 +12,13 @@ final class ExpandState: Decodable, @unchecked Sendable {
     var expandedLineCount: Int = 0
 }
 
+/// Mutable model reference shared between the agent loop and slash commands.
+/// Allows /model to change the model at runtime without restart.
+final class SharedModel: @unchecked Sendable {
+    var current: String
+    init(_ model: String) { self.current = model }
+}
+
 struct ChatCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "chat",
@@ -43,6 +50,10 @@ struct ChatCommand: AsyncParsableCommand {
         // Resolve API key
         let resolver = APIKeyResolver()
         let key = apiKey ?? resolver.resolve() ?? ""
+
+        // Mutable model reference — allows /model to change at runtime
+        let sharedModel = SharedModel(model)
+
         if key.isEmpty {
             print("Error: API key not found. SwiftAgent checks the same sources as Claude Code:")
             print("  - ANTHROPIC_API_KEY env var")
@@ -76,12 +87,12 @@ struct ChatCommand: AsyncParsableCommand {
         // Set up debug logging
         let debugLog: DebugLogger? = debug ? DebugLogger() : nil
         if let dl = debugLog {
-            dl.logInfo("Session started. Model: \(model), Base URL: \(baseURL)")
+            dl.logInfo("Session started. Model: \(sharedModel.current), Base URL: \(baseURL)")
             emitBlock("Debug logging enabled → \(dl.logFilePath)\n")
         }
 
         // Set up client and tools
-        let client = LLMClient(apiKey: key, baseURL: baseURL, model: model, debugLogger: debugLog)
+        let client = LLMClient(apiKey: key, baseURL: baseURL, model: sharedModel.current, debugLogger: debugLog)
         let registry = ToolRegistry()
         let taskManager = TaskManager()
         let toolExecutor = ToolExecutor(registry: registry)
@@ -213,10 +224,11 @@ struct ChatCommand: AsyncParsableCommand {
                     continue
                 }
                 let (shouldExit, cmdOutput) = await handleCommand(
-                    input, model: model, permission: permission,
+                    input, model: sharedModel.current, permission: permission,
                     sessionId: sessionId, startTime: sessionStartTime,
                     tokensIn: sessionState.totalTokensIn, tokensOut: sessionState.totalTokensOut,
-                    planActive: sessionState.isPlanModeActive
+                    planActive: sessionState.isPlanModeActive,
+                    sharedModel: sharedModel
                 )
                 if let output = cmdOutput {
                     emitBlock(output)
@@ -287,7 +299,7 @@ struct ChatCommand: AsyncParsableCommand {
                     let sysPrompt = cachedSystemPrompt
                     let stream = client.send(
                         messages: conversationHistory,
-                        model: model,
+                        model: sharedModel.current,
                         systemPrompt: sysPrompt,
                         maxTokens: 16384,
                         tools: toolDefs
@@ -364,7 +376,7 @@ struct ChatCommand: AsyncParsableCommand {
                                 isConcurrencySafe: { call in registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false },
                                 execute: { call in
                                     if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
-                                    let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool)
+                                    let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool, sharedModel: sharedModel)
                                     if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                                     return summary
                                 }
@@ -437,7 +449,8 @@ struct ChatCommand: AsyncParsableCommand {
                                 toolUseID: call.id,
                                 registry: registry,
                                 sessionState: sessionState,
-                                currentTool: currentTool
+                                currentTool: currentTool,
+                                sharedModel: sharedModel
                             )
                             if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                             return summary
@@ -813,7 +826,8 @@ struct ChatCommand: AsyncParsableCommand {
         toolUseID: String,
         registry: ToolRegistry,
         sessionState: SessionState,
-        currentTool: CurrentToolTracker? = nil
+        currentTool: CurrentToolTracker? = nil,
+        sharedModel: SharedModel
     ) async -> String {
         let bylassAvailable = permission == "bypass"
 
@@ -826,7 +840,7 @@ struct ChatCommand: AsyncParsableCommand {
             isAutoModeAvailable: bylassAvailable,
             prePlanMode: sessionState.isPlanModeActive ? .plan : nil,
             tools: registry.allTools,
-            mainLoopModel: model,
+            mainLoopModel: sharedModel.current,
             querySource: .repl,
             permissionPromptHandler: { _, _, _ in
                 bylassAvailable ? .allow : .deny(reason: "Permission prompts not available in REPL mode")
@@ -1022,7 +1036,8 @@ private final class SessionState: @unchecked Sendable {
     /// Returns (shouldExit, outputToDisplay).
     private func handleCommand(_ input: String, model: String, permission: String,
                                 sessionId: String, startTime: Date,
-                                tokensIn: Int, tokensOut: Int, planActive: Bool) async -> (Bool, String?) {
+                                tokensIn: Int, tokensOut: Int, planActive: Bool,
+                                sharedModel: SharedModel) async -> (Bool, String?) {
         let registry = CommandRegistry()
         registry.stateProvider = {
             CommandStateProvider(
@@ -1038,6 +1053,9 @@ private final class SessionState: @unchecked Sendable {
                 totalTokensIn: tokensIn,
                 totalTokensOut: tokensOut
             )
+        }
+        registry.onModelChange = { newModel in
+            sharedModel.current = newModel
         }
         switch await registry.execute(input: input) {
         case .exit:

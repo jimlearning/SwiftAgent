@@ -64,6 +64,11 @@ public final class LineEditor: @unchecked Sendable {
         self.atDataSource = at
     }
 
+    /// Ghost / placeholder text shown after the cursor in dim style.
+    /// Set when a command with argumentHint is committed from popup.
+    /// Cleared when the user types anything in normal mode.
+    private var ghostText: String? = nil
+
     /// After Ctrl+O is processed by rawModeReadLine, this is set to true.
     /// The REPL loop should check this after readLine returns an empty
     /// string and call /expand last.
@@ -977,6 +982,23 @@ public final class LineEditor: @unchecked Sendable {
             writeToStdout("\u{001B}[\(target.column)C")
         }
 
+        // ── Ghost / placeholder text (argument hint) ──
+        // Rendered after cursor as dim text. The cursor stays at target position
+        // so user input replaces this placeholder.
+        var ghostLen = 0
+        if let gt = ghostText, editorMode.isPopup == false {
+            writeToStdout("\u{001B}[2m")       // dim
+            writeToStdout("\u{001B}[90m")       // bright black
+            writeToStdout(gt)
+            writeToStdout("\u{001B}[0m")        // reset
+            ghostLen = TerminalDisplayWidth.width(gt)
+            // Move cursor back to original position
+            writeToStdout("\r")
+            if target.column > 0 {
+                writeToStdout("\u{001B}[\(target.column)C")
+            }
+        }
+
         // ── Popup rendering (if active) ──
         var popupHeight = 0
         if case .popup(let state) = editorMode {
@@ -1074,6 +1096,25 @@ public final class LineEditor: @unchecked Sendable {
     private func handlePopupChar(char: Character,
                                   prompt: String, buffer: inout String, cursorPos: inout Int) {
         guard case .popup(var state) = editorMode else { return }
+
+        // Space typed — commit current selection + space, close popup.
+        // Matches the UX expectation that space finishes the current selection
+        // and lets the user continue typing arguments.
+        if char == " " {
+            if let item = selectedPopupItem(state) {
+                commitPopupSelection(item: item, state: state,
+                                     prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+            } else {
+                // No selection — just insert the space and exit popup
+                cancelPopup(prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                buffer.insert(" ", at: idx)
+                cursorPos += 1
+            }
+            redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+            return
+        }
+
         // Insert the character into the buffer (which IS the search query)
         let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
         buffer.insert(char, at: idx)
@@ -1101,6 +1142,9 @@ public final class LineEditor: @unchecked Sendable {
         buffer.replaceSubrange(triggerIdx..<cursorIdx, with: replacement)
         cursorPos = state.triggerPos + replacement.count
         editorMode = .normal
+
+        // Show argument hint as ghost placeholder text (dim) if present
+        ghostText = item.argumentHint
     }
 
     /// Cancel the popup: remove the trigger character and any search query from the buffer.
@@ -1111,6 +1155,7 @@ public final class LineEditor: @unchecked Sendable {
         buffer.removeSubrange(triggerIdx..<cursorIdx)
         cursorPos = state.triggerPos
         editorMode = .normal
+        ghostText = nil
     }
 
     private func writeToStdout(_ string: String) {

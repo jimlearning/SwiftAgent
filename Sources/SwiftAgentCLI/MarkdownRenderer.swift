@@ -26,11 +26,17 @@ public struct MarkdownRenderer: Sendable {
 
     /// Render markdown string to ANSI-formatted string.
     public func render(_ markdown: String) -> String {
-        let lines = markdown.components(separatedBy: "\n")
+        // Pre-process: auto-detect code blocks in plain text (no explicit fences)
+        // and wrap them in ``` fences so the rendering pipeline highlights them.
+        let processed = autoDetectCodeBlocks(markdown)
+        let lines = processed.components(separatedBy: "\n")
         var result: [String] = []
         var inFence = false
         var fenceLang: String? = nil
         var fenceLines: [String] = []
+        var fenceDelimiter: Character = "`"
+        var fenceCount: Int = 0
+        var fenceDepth: Int = 0   // depth of inner fences within a code block
         var tableBuffer: [String] = []
 
         /// Flush table buffer: detect if it forms a valid table, render accordingly.
@@ -60,16 +66,46 @@ public struct MarkdownRenderer: Sendable {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             // --- Fenced code block detection ---
-            if trimmed.hasPrefix("```") {
+            if let fi = parseFenceInfo(trimmed) {
                 flushTableBuffer()
                 if inFence {
-                    renderCodeBlock(fenceLines, language: fenceLang, into: &result)
-                    fenceLines = []
-                    inFence = false
-                    fenceLang = nil
+                    if !fi.isPureFence {
+                        // Language fence (e.g. ```bash): inner opening — content
+                        fenceDepth += 1
+                        fenceLines.append(line)
+                    } else if fi.delimiter == fenceDelimiter, fi.count > fenceCount {
+                        // More delimiters than opening — always closes
+                        fenceDepth = 0
+                        renderCodeBlock(fenceLines, language: fenceLang, into: &result)
+                        fenceLines = []
+                        inFence = false
+                        fenceLang = nil
+                    } else if fi.delimiter == fenceDelimiter, fi.count >= fenceCount {
+                        if fenceDepth > 0 {
+                            // Closing an inner opened block
+                            fenceDepth -= 1
+                            fenceLines.append(line)
+                        } else if fenceLang?.lowercased() == "markdown" {
+                            // Markdown source display (e.g. README) contains ```
+                            // fences as content. Treat same-count pure fences as
+                            // content — recursive render() handles inner blocks.
+                            fenceLines.append(line)
+                        } else {
+                            // Normal close: same-count pure fence closes the block
+                            renderCodeBlock(fenceLines, language: fenceLang, into: &result)
+                            fenceLines = []
+                            inFence = false
+                            fenceLang = nil
+                        }
+                    } else {
+                        fenceLines.append(line)
+                    }
                 } else {
-                    fenceLang = extractLanguage(from: trimmed)
+                    fenceLang = fi.language
                     inFence = true
+                    fenceDelimiter = fi.delimiter
+                    fenceCount = fi.count
+                    fenceDepth = 0
                 }
                 continue
             }
@@ -113,10 +149,281 @@ public struct MarkdownRenderer: Sendable {
         return result.joined(separator: "\n") + "\n"
     }
 
+    // MARK: - Code auto-detection
+
+    /// Scan plain text for code-like patterns and wrap them in ``` fences
+    /// so the rendering pipeline applies syntax highlighting.
+    ///
+    /// Only activates when the input has NO explicit ``` fences — if the LLM
+    /// already used fences we trust the markdown structure. Detects:
+    /// 1. Shebang lines (`#!/usr/bin/env ...`)
+    /// 2. Indented blocks (4+ spaces or tab, 3+ lines)
+    /// 3. Lines with high programming-keyword density
+    private func autoDetectCodeBlocks(_ text: String) -> String {
+        let rawLines = text.components(separatedBy: "\n")
+        guard rawLines.count >= 3 else { return text }
+
+        // If explicit ``` fences exist, trust the LLM's markdown structure
+        let hasExplicitFences = rawLines.contains { line in
+            parseFenceInfo(line.trimmingCharacters(in: .whitespaces)) != nil
+        }
+        guard !hasExplicitFences else { return text }
+
+        // First pass: classify each line
+        let lineKinds: [LineKind] = rawLines.map { classifyLine($0) }
+        guard lineKinds.contains(.code) else { return text }
+
+        // Second pass: merge adjacent code lines into blocks
+        var blocks: [(start: Int, end: Int, kind: CodeBlockKind)] = []
+        var i = 0
+        while i < lineKinds.count {
+            guard lineKinds[i] == .code else { i += 1; continue }
+
+            let blockStart = i
+            while i < lineKinds.count && lineKinds[i] == .code { i += 1 }
+            let blockEnd = i - 1
+            let lineCount = blockEnd - blockStart + 1
+
+            // Only wrap substantial blocks (3+ lines)
+            if lineCount >= 3 {
+                let blockLines = Array(rawLines[blockStart...blockEnd])
+                let kind = classifyBlock(blockLines)
+                blocks.append((blockStart, blockEnd, kind))
+            }
+        }
+
+        guard !blocks.isEmpty else { return text }
+
+        // Third pass: build output with code blocks wrapped in fences
+        var result = ""
+        var pos = 0
+        for block in blocks {
+            // Text before this block
+            while pos < block.start {
+                result += rawLines[pos] + "\n"
+                pos += 1
+            }
+
+            let blockLines = rawLines[block.start...block.end]
+            let content = blockLines.joined(separator: "\n")
+
+            // Dedent if indented code block
+            let dedented: String
+            if case .indented = block.kind {
+                dedented = blockLines.map { stripCommonIndent($0) }.joined(separator: "\n")
+            } else {
+                dedented = content
+            }
+
+            let lang = detectLanguage(dedented)
+            let fence = lang.map { "```\($0)" } ?? "```"
+            result += fence + "\n" + dedented + "\n```\n"
+
+            pos = block.end + 1
+        }
+        // Trailing text
+        while pos < rawLines.count {
+            result += rawLines[pos] + "\n"
+            pos += 1
+        }
+
+        // Trim trailing newline to match original
+        if result.hasSuffix("\n") && !text.hasSuffix("\n") {
+            result = String(result.dropLast())
+        }
+
+        return result
+    }
+
+    private enum LineKind { case code, other }
+    private enum CodeBlockKind { case indented, shebang, keyword }
+
+    /// Classify a single line as code-like or not.
+    private func classifyLine(_ line: String) -> LineKind {
+        // Blank lines are neutral — they can appear inside code blocks
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return .other }
+
+        // Shebang — definitely code
+        if trimmed.hasPrefix("#!/") { return .code }
+
+        // Already-fenced code — don't double-process
+        if parseFenceInfo(trimmed) != nil { return .other }
+
+        // Markdown headers — not code
+        if trimmed.firstMatch(of: #/^#{1,6}\s/#) != nil { return .other }
+
+        // List items — not code
+        if trimmed.firstMatch(of: #/^[-*]\s/#) != nil { return .other }
+
+        // Blockquote — not code
+        if trimmed.hasPrefix(">") { return .other }
+
+        // Table rows — not code
+        if trimmed.hasPrefix("|") && trimmed.hasSuffix("|") { return .other }
+
+        // Horizontal rules — not code
+        if trimmed.allSatisfy({ $0 == "-" }) && trimmed.count >= 3 { return .other }
+        if trimmed.allSatisfy({ $0 == "*" }) && trimmed.count >= 3 { return .other }
+        if trimmed.allSatisfy({ $0 == "_" }) && trimmed.count >= 3 { return .other }
+
+        // Indented with 4+ spaces or tab — indented code block pattern
+        if line.hasPrefix("    ") || line.hasPrefix("\t") { return .code }
+
+        // Keyword density: if a line has 2+ code keywords, it's likely code
+        if codeKeywordDensity(trimmed) >= 2 { return .code }
+
+        // Common code line patterns
+        if looksLikeCodeLine(trimmed) { return .code }
+
+        return .other
+    }
+
+    /// Classify a multi-line block for dedenting and language detection.
+    private func classifyBlock(_ lines: [String]) -> CodeBlockKind {
+        let nonEmpty = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        if let first = nonEmpty.first, first.trimmingCharacters(in: .whitespaces).hasPrefix("#!/") {
+            return .shebang
+        }
+        // Check if all non-empty lines are indented
+        let allIndented = nonEmpty.allSatisfy { $0.hasPrefix("    ") || $0.hasPrefix("\t") }
+        if allIndented { return .indented }
+        return .keyword
+    }
+
+    /// Strip common leading whitespace from an indented code line.
+    private func stripCommonIndent(_ line: String) -> String {
+        if line.hasPrefix("    ") {
+            return String(line.dropFirst(4))
+        }
+        if line.hasPrefix("\t") {
+            return String(line.dropFirst(1))
+        }
+        // Strip up to 4 leading spaces
+        var count = 0
+        for ch in line {
+            if ch == " ", count < 4 { count += 1 }
+            else { break }
+        }
+        return count > 0 ? String(line.dropFirst(count)) : line
+    }
+
+    /// Count programming keywords in a line (for density check).
+    private func codeKeywordDensity(_ line: String) -> Int {
+        // Non-capturing groups keep regex Output as Substring
+        let codePatterns: [Regex<Substring>] = [
+            #/\b(?:func|fn|def|function|class|struct|enum|interface|impl|trait|type|typedef|module|package|import|export|from|include|require|using|namespace)\b/#,
+            #/\b(?:public|private|protected|static|final|abstract|virtual|override|const|let|var|int|string|bool|void|float|double|char|byte|long|short)\b/#,
+            #/\b(?:return|yield|await|async|throw|raise|try|catch|except|finally|if|else|for|while|do|switch|case|break|continue|goto)\b/#,
+            #/\b(?:new|delete|malloc|free|alloc|init|deinit|self|this|super|base)\b/#,
+            #/\b(?:print|println|console[.]log|fmt[.]|printf|echo|write|read)\b/#,
+            #/\b(?:http[.]|https[.]|fetch|axios|request|response|json[.]|JSON[.])\b/#,
+        ]
+        return codePatterns.reduce(0) { count, pattern in
+            count + (line.contains(pattern) ? 1 : 0)
+        }
+    }
+
+    /// Check if a line looks like a code statement (not prose).
+    private func looksLikeCodeLine(_ line: String) -> Bool {
+        // Function calls with chaining: foo().bar().baz()
+        if line.contains(#/\w+\(.*\)\.\w+/#) { return true }
+
+        // Semicolon at end (C-like languages)
+        if line.hasSuffix(";") && line.count > 10 { return true }
+
+        // Decorator/annotation: @Identifier (not email addresses with @ mid-text)
+        if line.hasPrefix("@") && line.count > 3 && line.prefix(while: { $0 != " " }).count == line.count { return true }
+
+        // Comment lines — only block-comment syntax, not CLI flags
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("//") || trimmed.hasPrefix("/*") { return true }
+
+        return false
+    }
+
+    /// Simple language detection from code content — checks the first few lines
+    /// for language-specific patterns.
+    private func detectLanguage(_ code: String) -> String? {
+        let lines = code.components(separatedBy: "\n")
+        let head = lines.prefix(10).joined(separator: "\n")
+
+        // Shebang
+        if head.contains("#!/usr/bin/env python") || head.contains("#!/usr/bin/python") { return "python" }
+        if head.contains("#!/usr/bin/env node") || head.contains("#!/usr/bin/node") { return "javascript" }
+        if head.contains("#!/usr/bin/env bash") || head.contains("#!/bin/bash") || head.contains("#!/bin/sh") { return "bash" }
+        if head.contains("#!/usr/bin/env ruby") { return "ruby" }
+        if head.contains("#!/usr/bin/env swift") { return "swift" }
+
+        // Swift
+        if head.contains(#/\b(import\s+(Foundation|SwiftUI|UIKit|AppKit))\b/#) { return "swift" }
+        if head.contains(#/\b(func\s+\w+\s*\([^)]*\)\s*(->|throws|async))\b/#) { return "swift" }
+        if head.contains(#/\b(struct\s+\w+\s*:\s*\w|class\s+\w+\s*:\s*\w)\b/#) { return "swift" }
+        if head.contains(#/\b(guard\s+let|if\s+let|var\s+\w+\s*:\s*\w+|let\s+\w+\s*:\s*\w+)\b/#) { return "swift" }
+        if head.contains(#/\b(\.forEach|\.map|\.filter|\.reduce|\.compactMap)\b/#) { return "swift" }
+
+        // Python
+        if head.contains(#/\b(import\s+\w+|from\s+\w+\s+import)\b/#) { return "python" }
+        if head.contains(#/\b(def\s+\w+\s*\([^)]*\)\s*:)\b/#) { return "python" }
+        if head.contains(#/\b(class\s+\w+\s*(\(|:)|if\s+__name__)\b/#) { return "python" }
+        if head.contains(#/\b(print\(|self\.|\.format\(|f"[^"]*\{)\b/#) { return "python" }
+
+        // JavaScript / TypeScript
+        if head.contains(#/\b(const\s+\w+\s*=\s*(\(|function|=>|require)|let\s+\w+\s*=)\b/#) { return "javascript" }
+        if head.contains(#/\b(import\s+.*\s+from\s+['"]|export\s+(default\s+)?(function|const|class))\b/#) { return "javascript" }
+        if head.contains(#/\b(console\.log|document\.|window\.|\.then\(|async\s+\(|\.addEventListener)\b/#) { return "javascript" }
+        if head.contains(#/\b(interface\s+\w+\s*\{|type\s+\w+\s*=)\b/#) { return "typescript" }
+
+        // Rust
+        if head.contains(#/\b(fn\s+\w+\s*\([^)]*\)\s*(->|where)|impl\s+\w+|use\s+\w+::)\b/#) { return "rust" }
+        if head.contains(#/\b(let\s+mut\s+\w+|Vec<|Option<|Result<|\.unwrap\(|\.expect\()\b/#) { return "rust" }
+
+        // Go
+        if head.contains(#/\b(func\s+\w+\s*\([^)]*\)\s*\w*\{|package\s+main|go\s+func)\b/#) { return "go" }
+
+        // Kotlin
+        if head.contains(#/\b(fun\s+\w+\s*\([^)]*\)\s*:\s*\w+|val\s+\w+\s*:\s*\w+|var\s+\w+\s*:\s*\w+)\b/#) { return "kotlin" }
+
+        // C/C++
+        if head.contains(#/\b(#include\s*[<"]|int\s+main\s*\(|std::|printf\(|cout\s*<<)\b/#) { return "cpp" }
+
+        // Java
+        if head.contains(#/\b(public\s+class\s+\w+|public\s+static\s+void\s+main|System\.out\.)\b/#) { return "java" }
+
+        // Ruby
+        if head.contains(#/\b(def\s+\w+\s*$|\.each\s+do\s+\||require\s+['"]\w|attr_accessor)\b/#) { return "ruby" }
+
+        // Shell
+        if head.contains(#/\b(^#!/|if\s+\[\s|then\b|elif\b|fi\b|esac\b|done\b|local\s+\w+=)\b/#) { return "bash" }
+
+        // SQL
+        if head.contains(#/\b(SELECT\s+|FROM\s+|WHERE\s+|INSERT\s+INTO|CREATE\s+TABLE|ALTER\s+TABLE)\b/#) { return "sql" }
+
+        // YAML
+        if head.contains(#/^\w+:\s*$/#) && lines.count >= 2 { return "yaml" }
+
+        // JSON
+        if head.hasPrefix("{") && head.contains(#/"\w+"\s*:/#) { return "json" }
+
+        return nil
+    }
+
     // MARK: - Code blocks (TermKit-style boxed)
 
     private func renderCodeBlock(_ lines: [String], language: String?, into result: inout [String]) {
         guard !lines.isEmpty else { return }
+
+        // Recursively render markdown content as full markdown (tables, lists,
+        // nested code blocks, etc.) instead of treating it as flat code text.
+        if let lang = language, (lang.lowercased() == "markdown" || lang.lowercased() == "md") {
+            let source = lines.joined(separator: "\n")
+            let rendered = render(source)
+            let renderedLines = rendered.components(separatedBy: "\n").filter { !$0.isEmpty }
+            for rline in renderedLines {
+                result.append(rline)
+            }
+            return
+        }
 
         // Calculate inner width from the longest line (capped by terminal width)
         let maxContentLen = lines.map(TerminalDisplayWidth.width).max() ?? 0
@@ -130,13 +437,15 @@ public struct MarkdownRenderer: Sendable {
         let topBorder = "┌" + repeatChar("─", topDashCount) + langLabel + "┐"
         result.append(border(dim(topBorder)))
 
-        // Try syntax highlighting
+        // Try syntax highlighting via the generic engine
         let highlightedLines: [String]?
         if let syntaxHighlighter, let lang = language {
             let source = lines.joined(separator: "\n")
             if let tokens = syntaxHighlighter.highlight(source, language: lang) {
                 let renderer = TokenANSIRenderer(theme: codeTheme, capability: capability)
-                highlightedLines = renderer.render(source, tokens: tokens).components(separatedBy: "\n")
+                // Use line-balanced rendering so multi-line tokens (comments,
+                // strings) don't leak ANSI codes across line boundaries.
+                highlightedLines = renderer.renderLines(source, tokens: tokens)
             } else {
                 highlightedLines = nil
             }
@@ -146,11 +455,11 @@ public struct MarkdownRenderer: Sendable {
 
         // Content lines
         if let hlLines = highlightedLines {
-            let leftBorder = capability.color("│ ", color: theme.secondary, style: .dim)
-            let rightBorder = capability.color(" │", color: theme.secondary, style: .dim)
+            let innerLeft = capability.color("│ ", color: theme.secondary, style: .dim)
+            let innerRight = capability.color(" │", color: theme.secondary, style: .dim)
             for line in hlLines {
                 let padded = padToVisibleWidth(line, width: innerWidth)
-                result.append(leftBorder + padded + rightBorder)
+                result.append(border(innerLeft + padded + innerRight))
             }
         } else {
             for line in lines {
@@ -164,9 +473,27 @@ public struct MarkdownRenderer: Sendable {
         result.append(border(dim(bottom)))
     }
 
-    private func extractLanguage(from fence: String) -> String? {
-        let lang = String(fence.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-        return lang.isEmpty ? nil : lang
+    private func parseFenceInfo(_ trimmed: String) -> FenceInfo? {
+        // Backtick fence: 3+ backticks
+        if trimmed.hasPrefix("```") {
+            let count = trimmed.prefix(while: { $0 == "`" }).count
+            let rest = trimmed.dropFirst(count).trimmingCharacters(in: .whitespaces)
+            return FenceInfo(count: count, delimiter: "`", language: rest.isEmpty ? nil : rest, isPureFence: rest.isEmpty)
+        }
+        // Tilde fence: 3+ tildes
+        if trimmed.hasPrefix("~~~") {
+            let count = trimmed.prefix(while: { $0 == "~" }).count
+            let rest = trimmed.dropFirst(count).trimmingCharacters(in: .whitespaces)
+            return FenceInfo(count: count, delimiter: "~", language: rest.isEmpty ? nil : rest, isPureFence: rest.isEmpty)
+        }
+        return nil
+    }
+
+    struct FenceInfo {
+        let count: Int
+        let delimiter: Character
+        let language: String?
+        let isPureFence: Bool
     }
 
     // MARK: - Headings (TermKit-style)
@@ -333,7 +660,7 @@ public struct MarkdownRenderer: Sendable {
     }
 
     private func padToVisibleWidth(_ text: String, width: Int) -> String {
-        let pad = max(0, width - TerminalDisplayWidth.width(text))
+        let pad = max(0, width - TerminalDisplayWidth.visibleWidth(text))
         return text + String(repeating: " ", count: pad)
     }
 
@@ -407,11 +734,11 @@ public struct MarkdownRenderer: Sendable {
         styled(text, style: .dim)
     }
 
-    /// Inline code: underlined dim for standout effect against normal text.
+    /// Inline code: bright-cyan on dim background for standout effect against normal text.
     private func inlineCode(_ text: String) -> String {
         capability.supportsColor
-            ? "\u{001B}[2m\u{001B}[4m\(text)\u{001B}[0m"
-            : text
+            ? "\u{001B}[100m\u{001B}[96m \(text) \u{001B}[0m"
+            : "`\(text)`"
     }
 
     private func styled(_ text: String, style: ANIStyle) -> String {
