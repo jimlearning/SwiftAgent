@@ -113,6 +113,7 @@ struct ChatCommand: AsyncParsableCommand {
 
         // ── Set up inline popup data sources (@ and / completions) ──
         let cwd = FileManager.default.currentDirectoryPath
+        let sessionStore = SessionStore()  // needed early for SessionDataSource in popup
 
         // Shared file search index: built once via git ls-files, reused across
         // all @-mention searches so each keystroke is in-memory, not disk I/O.
@@ -152,8 +153,7 @@ struct ChatCommand: AsyncParsableCommand {
             commandEntries.append(("/" + m.name, m.description))
         }
 
-        editor.setPopupDataSources(
-            slash: CommandDataSource(commands: commandEntries, argumentHints: [
+        let cmdDataSource = CommandDataSource(commands: commandEntries, argumentHints: [
                 "model": "[model-name]",
                 "permissions": "[mode]",
                 "plan": "[on|off]",
@@ -171,7 +171,11 @@ struct ChatCommand: AsyncParsableCommand {
                 "model": ["default", "deepseek-v4-flash", "deepseek-v4-pro", "gpt-4o", "claude-sonnet-4-6"],
                 "permissions": ["default", "acceptEdits", "bypass", "plan", "dontAsk", "auto"],
                 "plan": ["on", "off"]
-            ]),
+            ])
+        cmdDataSource.sessionDataSource = SessionDataSource(store: sessionStore)
+
+        editor.setPopupDataSources(
+            slash: cmdDataSource,
             at: FileDataSource(workingDirectory: cwd, index: fileSearchIndex)
         )
 
@@ -185,7 +189,6 @@ struct ChatCommand: AsyncParsableCommand {
         var conversationHistory: [Message] = []
 
         // If --session flag provided, load the previous session
-        let sessionStore = SessionStore()
         if let resumeID = session {
             if let loaded = try? sessionStore.load(resumeID) {
                 conversationHistory = loaded.conversation.messages
@@ -270,17 +273,51 @@ struct ChatCommand: AsyncParsableCommand {
                     }
                     continue
                 }
-                let (shouldExit, cmdOutput) = await handleCommand(
+                // /resume without args → interactive session picker menu
+                if cmd == "/resume" && parts.count == 1 {
+                    let sessions = (try? sessionStore.listRecent(limit: 20)) ?? []
+                    if let picked = sessionPicker(sessions: sessions) {
+                        if let loaded = try? sessionStore.load(picked) {
+                            conversationHistory = loaded.conversation.messages
+                            sessionId = picked
+                            let msgCount = conversationHistory.count
+                            let titleSuffix = loaded.title.map { ": \"\($0)\"" } ?? ""
+                            emitBlock("Resumed session \(picked.prefix(8))...\(titleSuffix) (\(msgCount) messages)")
+                        } else {
+                            emitBlock("Session '\(picked)' not found on disk.")
+                        }
+                    }
+                    continue
+                }
+                let outcome = await handleCommand(
                     input, model: sharedModel.current, permission: permission,
                     sessionId: sessionId, startTime: sessionStartTime,
                     tokensIn: sessionState.totalTokensIn, tokensOut: sessionState.totalTokensOut,
                     planActive: sessionState.isPlanModeActive,
                     sharedModel: sharedModel
                 )
-                if let output = cmdOutput {
-                    emitBlock(output)
+                switch outcome {
+                case .normal(let output):
+                    if let output = output {
+                        emitBlock(output)
+                    }
+                case .exit:
+                    break  // will exit outer loop
+                case .resume(let resumeID):
+                    if let loaded = try? sessionStore.load(resumeID) {
+                        conversationHistory = loaded.conversation.messages
+                        sessionId = resumeID
+                        let msgCount = conversationHistory.count
+                        let titleSuffix = loaded.title.map { ": \"\($0)\"" } ?? ""
+                        emitBlock("Resumed session \(resumeID.prefix(8))...\(titleSuffix) (\(msgCount) messages)")
+                    } else {
+                        emitBlock("Session '\(resumeID)' not found on disk.")
+                    }
                 }
-                if shouldExit { break }
+                // .exit needs to break the outer while loop
+                if case .exit = outcome {
+                    break
+                }
                 continue
             }
 
@@ -1105,11 +1142,151 @@ private final class SessionState: @unchecked Sendable {
         }
     }
 
-    /// Returns (shouldExit, outputToDisplay).
+    /// Outcome of a slash command execution — richer than a simple tuple,
+    /// supporting in-place session resume without restarting.
+    private enum CommandOutcome {
+        case normal(output: String?)
+        case exit
+        case resume(sessionId: String)
+    }
+
+    // MARK: - Interactive session picker
+
+    /// Display an interactive arrow-key menu for selecting a saved session.
+    /// Enters raw terminal mode, shows a highlighted list, and returns the
+    /// chosen session ID (or nil if cancelled with Esc).
+    private func sessionPicker(sessions: [SessionMetadata]) -> String? {
+        guard !sessions.isEmpty else { return nil }
+        guard isatty(STDIN_FILENO) != 0 else { return nil }
+
+        // Save terminal state and enter raw mode
+        var saved = termios()
+        tcgetattr(STDIN_FILENO, &saved)
+        var raw = saved
+        raw.c_iflag &= ~tcflag_t(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON)
+        raw.c_oflag &= ~tcflag_t(OPOST)
+        raw.c_lflag &= ~tcflag_t(ECHO | ECHONL | ICANON | ISIG | IEXTEN)
+        raw.c_cflag &= ~tcflag_t(CSIZE | PARENB)
+        raw.c_cflag |= tcflag_t(CS8)
+        raw.c_cc.0 = 1   // VMIN
+        raw.c_cc.1 = 0   // VTIME
+        tcsetattr(STDIN_FILENO, TCSADRAIN, &raw)
+
+        defer {
+            tcsetattr(STDIN_FILENO, TCSADRAIN, &saved)
+        }
+
+        // Hide cursor
+        writeToStdout("\u{001B}[?25l")
+        defer { writeToStdout("\u{001B}[?25h") }
+
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
+        var selected = 0
+        let itemCount = sessions.count
+        let linesPerItem = 2  // Each item occupies 2 terminal lines (id line + date line)
+        let totalMenuLines = itemCount * linesPerItem
+
+        /// Redraw the full menu. `offset` accounts for the header line.
+        func drawMenu() {
+            var output = "\r\u{001B}[K"  // clear current line
+            output += "\u{001B}[1mSaved Sessions (↑↓ to move, Enter to select, Esc to cancel):\u{001B}[0m\r\n"
+            for (i, s) in sessions.enumerated() {
+                let prefix = i == selected ? "\u{001B}[7m" : ""
+                let suffix = i == selected ? "\u{001B}[0m" : ""
+                let idShort = String(s.id.prefix(36))
+                let dateStr = df.string(from: s.updatedAt)
+                let titleHint = s.title.map { "  \"\($0.prefix(60))\"" } ?? ""
+                output += "\r\u{001B}[K"
+                output += "\(prefix)  [\(i+1)] \(idShort)\(titleHint)\(suffix)\r\n"
+                output += "\r\u{001B}[K"
+                output += "\(prefix)      \(dateStr)  ·  \(s.messageCount) msgs\(suffix)\r\n"
+            }
+            // Move cursor back up to the first item
+            output += "\u{001B}[\(totalMenuLines + 1)A"
+            writeToStdout(output)
+        }
+
+        drawMenu()
+
+        while true {
+            guard let byte = readRawByte() else { return nil }
+
+            switch byte {
+            case 3:  // Ctrl+C
+                writeToStdout("\r\n")
+                return nil
+            case 10, 13:  // Enter
+                let chosen = sessions[selected].id
+                // Clear menu area: move to bottom, clear each line
+                writeToStdout("\u{001B}[\(totalMenuLines)B")
+                for _ in 0..<(totalMenuLines + 1) {
+                    writeToStdout("\u{001B}[2K\u{001B}[A")
+                }
+                writeToStdout("\r\n")
+                return chosen
+            case 27:  // Escape
+                // Check if it's an arrow key sequence
+                if let seq = readEscapeSeq() {
+                    switch seq {
+                    case .up:
+                        if selected > 0 {
+                            selected -= 1
+                            drawMenu()
+                        }
+                    case .down:
+                        if selected < itemCount - 1 {
+                            selected += 1
+                            drawMenu()
+                        }
+                    default:
+                        break
+                    }
+                } else {
+                    // Bare Escape → cancel
+                    writeToStdout("\r\n")
+                    return nil
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private func readRawByte() -> UInt8? {
+        var byte: UInt8 = 0
+        let n = Darwin.read(STDIN_FILENO, &byte, 1)
+        if n <= 0 { return nil }
+        return byte
+    }
+
+    private func readRawByteWithTimeout(ms: Int32 = 50) -> UInt8? {
+        var fds = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+        let ret = poll(&fds, 1, ms)
+        if ret <= 0 { return nil }
+        return readRawByte()
+    }
+
+    private enum EscapeSeq { case up, down, left, right }
+
+    private func readEscapeSeq() -> EscapeSeq? {
+        guard let second = readRawByteWithTimeout() else { return nil }
+        if second == 91 {  // '['
+            guard let third = readRawByteWithTimeout() else { return nil }
+            switch third {
+            case 65: return .up
+            case 66: return .down
+            case 67: return .right
+            case 68: return .left
+            default: return nil
+            }
+        }
+        return nil
+    }
+
     private func handleCommand(_ input: String, model: String, permission: String,
                                 sessionId: String, startTime: Date,
                                 tokensIn: Int, tokensOut: Int, planActive: Bool,
-                                sharedModel: SharedModel) async -> (Bool, String?) {
+                                sharedModel: SharedModel) async -> CommandOutcome {
         let registry = CommandRegistry()
         registry.stateProvider = {
             CommandStateProvider(
@@ -1131,13 +1308,15 @@ private final class SessionState: @unchecked Sendable {
         }
         switch await registry.execute(input: input) {
         case .exit:
-            return (true, nil)
+            return .exit
         case .text(let output):
-            return (false, output)
+            return .normal(output: output)
         case .error(let msg):
-            return (false, "Error: \(msg)")
+            return .normal(output: "Error: \(msg)")
+        case .resume(let id):
+            return .resume(sessionId: id)
         case .none:
-            return (false, "Unknown command: \(input). Type /help for available commands.")
+            return .normal(output: "Unknown command: \(input). Type /help for available commands.")
         }
     }
 

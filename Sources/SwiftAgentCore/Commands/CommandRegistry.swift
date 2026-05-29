@@ -6,6 +6,8 @@ public enum CommandResult: Sendable {
     case text(String)
     case exit
     case error(String)
+    /// Request the REPL to load and resume a saved session in-place.
+    case resume(sessionId: String)
 }
 
 /// State snapshot provided to slash commands that need app context.
@@ -497,7 +499,7 @@ public final class CommandRegistry: @unchecked Sendable {
 
         // /resume — resume a previous conversation
         register(Command(name: "resume", description: "Resume a previous conversation", type: .local,
-            arguments: [CommandArgument(name: "session-id", description: "Session ID or partial title to resume")])) { input in
+            arguments: [CommandArgument(name: "session-id", description: "Session ID or list number to resume")])) { input in
             let parts = input.split(separator: " ", maxSplits: 1)
             let arg = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
             let sessionsDir = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.swift-agent/sessions"
@@ -506,7 +508,8 @@ public final class CommandRegistry: @unchecked Sendable {
                   let files = try? fm.contentsOfDirectory(atPath: sessionsDir) else {
                 return .text("No saved sessions found at \(sessionsDir)")
             }
-            let sFiles = files.filter { $0.hasSuffix(".json") }.sorted().reversed()
+            let sFiles = Array(files.filter { $0.hasSuffix(".json") }.sorted().reversed())
+            // List sessions when no argument is given
             if arg.isEmpty {
                 var lines = ["Saved Sessions:", ""]
                 if sFiles.isEmpty { lines.append("  (no saved sessions)") }
@@ -519,13 +522,20 @@ public final class CommandRegistry: @unchecked Sendable {
                         lines.append("      \(d.map { df.string(from: $0) } ?? "unknown")")
                     }
                 }
-                lines.append(""); lines.append("To resume: /resume <session-id>")
+                lines.append(""); lines.append("To resume: /resume <number> or /resume <session-id>")
                 return .text(lines.joined(separator: "\n"))
             }
+            // Numeric argument → select by list index
+            if let idx = Int(arg), idx >= 1, idx <= sFiles.count {
+                let file = sFiles[idx - 1]
+                let sid = file.replacingOccurrences(of: ".json", with: "")
+                return .resume(sessionId: sid)
+            }
+            // Fuzzy match by session ID prefix or partial title
             let match = sFiles.first { $0.replacingOccurrences(of: ".json", with: "").localizedCaseInsensitiveContains(arg) }
             if let match = match {
                 let sid = match.replacingOccurrences(of: ".json", with: "")
-                return .text("Session found: \(sid.prefix(40))...\n\nTo resume: swift-agent chat --session \(sid)")
+                return .resume(sessionId: sid)
             }
             return .text("No session matching '\(arg)' found. Use /resume to list all sessions.")
         }

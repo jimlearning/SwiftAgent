@@ -224,6 +224,12 @@ public final class LineEditor: @unchecked Sendable {
                     if let item = selectedPopupItem(state) {
                         commitPopupSelection(item: item, state: state,
                                              prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                        if item.submitOnSelect {
+                            // Auto-submit: return the line immediately
+                            let trimmed = buffer.trimmingCharacters(in: .newlines)
+                            if !trimmed.isEmpty { addEntry(trimmed) }
+                            return trimmed
+                        }
                         redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
                     }
                 } else {
@@ -265,6 +271,9 @@ public final class LineEditor: @unchecked Sendable {
                     if queryExhausted || cursorPos <= state.triggerPos {
                         // Trigger only — exit popup and remove trigger char
                         cancelPopup(prompt: prompt, buffer: &buffer, cursorPos: &cursorPos)
+                    } else if state.popup.items.isEmpty {
+                        // No matches remain — dismiss popup, keep buffer text
+                        dismissPopupKeepBuffer()
                     } else {
                         editorMode = .popup(state)  // write back mutated state
                     }
@@ -1133,7 +1142,15 @@ public final class LineEditor: @unchecked Sendable {
         cursorPos += 1
         // Also append to the popup query
         state.popup.appendQuery(char)
-        editorMode = .popup(state)
+
+        // If no items match after this keystroke, dismiss the popup but
+        // keep the buffer text — the user is typing a literal string, not
+        // a file/command name. This matches Claude Code behaviour.
+        if state.popup.items.isEmpty {
+            dismissPopupKeepBuffer()
+        } else {
+            editorMode = .popup(state)
+        }
         redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
     }
 
@@ -1173,6 +1190,20 @@ public final class LineEditor: @unchecked Sendable {
             ))
             ghostText = nil  // clear ghost since sub-menu is active
         }
+        // If the item has a dynamic sub-data-source (e.g., /resume → sessions),
+        // open a sub-menu popup using that data source.
+        if let subDS = item.subDataSource {
+            var subPopup = InlinePopup(dataSource: subDS)
+            subPopup.refresh()
+            let newTriggerPos = cursorPos  // trigger is at current cursor (after space)
+            editorMode = .popup(PopupState(
+                trigger: Character(" "),  // space-triggered sub-menu
+                triggerPos: newTriggerPos,
+                popup: subPopup,
+                isSubMenu: true
+            ))
+            ghostText = nil
+        }
     }
 
     /// Cancel the popup: remove the trigger character and any search query from the buffer.
@@ -1189,6 +1220,14 @@ public final class LineEditor: @unchecked Sendable {
         let cursorIdx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
         buffer.removeSubrange(triggerIdx..<cursorIdx)
         cursorPos = state.triggerPos
+        editorMode = .normal
+        ghostText = nil
+    }
+
+    /// Dismiss the popup while keeping the buffer content intact.
+    /// Used when typing in the popup yields no matches — the user should
+    /// be able to continue typing normally without losing text.
+    private func dismissPopupKeepBuffer() {
         editorMode = .normal
         ghostText = nil
     }

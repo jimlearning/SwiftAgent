@@ -1,4 +1,5 @@
 import Foundation
+import SwiftAgentCore
 
 // MARK: - Popup Item
 
@@ -24,6 +25,13 @@ public struct PopupItem {
     public let matchPositions: [Int]
     /// Whether this item represents a directory (only meaningful for file data sources).
     public let isDirectory: Bool
+    /// When true, selecting this item submits the entire input line immediately
+    /// (no second Enter needed). Used by /resume to load sessions in one step.
+    public let submitOnSelect: Bool
+    /// Optional data source for a sub-menu popup opened after this item is committed.
+    /// When non-nil, selecting this item opens a new popup with this data source
+    /// instead of closing the popup. Used by /resume to show session list.
+    public let subDataSource: (any PopupDataSource)?
 
     public init(
         display: String,
@@ -33,7 +41,9 @@ public struct PopupItem {
         subOptions: [String]? = nil,
         score: Float,
         matchPositions: [Int] = [],
-        isDirectory: Bool = false
+        isDirectory: Bool = false,
+        submitOnSelect: Bool = false,
+        subDataSource: (any PopupDataSource)? = nil
     ) {
         self.display = display
         self.help = help
@@ -43,6 +53,8 @@ public struct PopupItem {
         self.score = score
         self.matchPositions = matchPositions
         self.isDirectory = isDirectory
+        self.submitOnSelect = submitOnSelect
+        self.subDataSource = subDataSource
     }
 }
 
@@ -60,6 +72,9 @@ public protocol PopupDataSource: AnyObject, Sendable {
 /// Provides slash-command completions from registered built-in commands and skills.
 public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
     private let entries: [CommandEntry]
+    /// Optional session data source — when set and query equals "resume",
+    /// delegates to this source instead of returning the /resume command entry.
+    public var sessionDataSource: PopupDataSource?
 
     private struct CommandEntry {
         let name: String          // e.g. "help", "clear"
@@ -95,6 +110,30 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
     }
 
     public func search(query: String) -> [PopupItem] {
+        // Special case: when query starts with "resume", delegate to session list.
+        // This handles both "resume" (all sessions) and "resume <partial-id>" (filtered).
+        if query.hasPrefix("resume"), let sessionDS = sessionDataSource {
+            let remainder = String(query.dropFirst("resume".count))
+            let sessions = sessionDS.search(query: remainder)
+            if !sessions.isEmpty {
+                // Wrap session items to include "/resume " prefix in insertText
+                // (the main popup replaces from the '/' trigger to cursor).
+                return sessions.map { item in
+                    PopupItem(
+                        display: item.display,
+                        help: item.help,
+                        insertText: "/resume \(item.insertText)",
+                        argumentHint: nil,
+                        subOptions: nil,
+                        score: item.score,
+                        matchPositions: item.matchPositions,
+                        isDirectory: false,
+                        submitOnSelect: true
+                    )
+                }
+            }
+        }
+
         var items: [PopupItem] = []
 
         for entry in entries {
@@ -118,7 +157,8 @@ public final class CommandDataSource: PopupDataSource, @unchecked Sendable {
                 argumentHint: entry.argumentHint,
                 subOptions: entry.subOptions,
                 score: match.score,
-                matchPositions: match.positions
+                matchPositions: match.positions,
+                subDataSource: entry.name == "resume" ? sessionDataSource : nil
             ))
         }
 
@@ -366,6 +406,64 @@ public final class FileDataSource: PopupDataSource, @unchecked Sendable {
     }
 
     private let vcsDirs: Set<String> = [".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]
+}
+
+// MARK: - Session Data Source
+
+/// Provides saved session completions for the /resume inline popup.
+/// Fetches sessions from `SessionStore` and returns them as selectable items.
+public final class SessionDataSource: PopupDataSource, @unchecked Sendable {
+    private let store: SessionStore
+    private let limit: Int
+
+    public init(store: SessionStore, limit: Int = 20) {
+        self.store = store
+        self.limit = limit
+    }
+
+    public func search(query: String) -> [PopupItem] {
+        let sessions: [SessionMetadata]
+        do {
+            sessions = try store.listRecent(limit: limit)
+        } catch {
+            return []
+        }
+
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
+        var items: [PopupItem] = []
+
+        // Strip leading spaces and trim for filtering
+        let filter = query.trimmingCharacters(in: .whitespaces)
+        let lowerFilter = filter.lowercased()
+
+        for (i, s) in sessions.enumerated() {
+            let idShort = String(s.id.prefix(36))
+            let dateStr = df.string(from: s.updatedAt)
+            let titleHint = s.title.map { "  \"\($0.prefix(60))\"" } ?? ""
+            let display = "[\(i+1)] \(idShort)\(titleHint)"
+            let help = "\(dateStr)  ·  \(s.messageCount) msgs"
+
+            // Filter by query if non-empty
+            if !lowerFilter.isEmpty {
+                let haystack = "\(i+1) \(idShort) \(s.title ?? "") \(dateStr)".lowercased()
+                if !haystack.contains(lowerFilter) { continue }
+            }
+
+            items.append(PopupItem(
+                display: display,
+                help: help,
+                insertText: s.id,   // just the session ID (caller wraps if needed)
+                argumentHint: nil,
+                subOptions: nil,
+                score: 1.0 - Float(i) * 0.01,
+                matchPositions: [],
+                isDirectory: false,
+                submitOnSelect: true   // selecting a session auto-submits the line
+            ))
+        }
+
+        return items
+    }
 }
 
 // MARK: - Argument Data Source
