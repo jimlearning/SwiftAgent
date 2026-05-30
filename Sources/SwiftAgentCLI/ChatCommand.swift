@@ -343,10 +343,6 @@ struct ChatCommand: AsyncParsableCommand {
             let spinnerTask = Task {
                 var frame = 0
                 while !Task.isCancelled {
-                    if currentTool.isThinking {
-                        try? await Task.sleep(nanoseconds: 100_000_000)
-                        continue
-                    }
                     let line: String
                     if let display = currentTool.displayLine {
                         line = "\r\u{001B}[K  \(renderer.spinnerFrame(index: frame)) \(display)"
@@ -399,25 +395,21 @@ struct ChatCommand: AsyncParsableCommand {
                         switch event {
                         case .textDelta(let text):
                             if currentTool.isThinking {
-                                print("\u{001B}[0m\n")  // end dim + blank line separator
+                                print("\r\u{001B}[K", terminator: "")  // clear spinner line
                                 currentTool.isThinking = false
                             }
                             turnText += text
 
                         case .thinkingDelta(let text):
-                            if !currentTool.isThinking {
-                                // First thinking delta: clear spinner and start dim mode
-                                currentTool.isThinking = true
-                                print("\r\u{001B}[K  \u{001B}[2m\(text)", terminator: "")
-                            } else {
-                                print(text, terminator: "")
-                            }
+                            // Accumulate thinking silently (needed for API history).
+                            // Keep the spinner running — match CC's behavior of not
+                            // streaming thinking text to the terminal.
+                            currentTool.isThinking = true
                             thinkingText += text
-                            fflush(stdout)
 
                         case .contentBlockStart(_, let block):
                             if currentTool.isThinking {
-                                print("\u{001B}[0m\n")  // end dim + blank line separator
+                                print("\r\u{001B}[K", terminator: "")  // clear spinner line
                                 currentTool.isThinking = false
                             }
                             if case .toolUse(let name, let id) = block {
