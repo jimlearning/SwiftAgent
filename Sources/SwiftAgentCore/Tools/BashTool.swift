@@ -363,45 +363,40 @@ public struct BashTool: Tool {
     /// Waits for the process to exit, killing it if the timeout is reached.
     /// Returns `true` if the process timed out.
     ///
-    /// Uses a continuation-based pattern to bridge Dispatch concurrency with
-    /// Swift async/await while avoiding races between the timeout and
-    /// process-exit paths. Only the first completion path (process-exit or
-    /// timeout) resumes the continuation — the lock ensures mutual exclusion.
+    /// Uses `withTaskGroup` to race process completion against a sleep-based
+    /// timeout. `process.waitUntilExit()` is offloaded to a Dispatch queue to
+    /// avoid blocking the Swift Concurrency cooperative thread pool.
+    /// The task group naturally resolves the race — first result wins.
     private func waitForProcess(
         _ process: Process,
         timeoutMs: Int
     ) async -> Bool {
-        let state = ProcessWaitState()
-
-        return await withCheckedContinuation { continuation in
+        await withTaskGroup(of: Bool.self) { group in
             // Path A: Process finishes naturally
-            DispatchQueue.global().async {
-                process.waitUntilExit()
-
-                state.lock.lock()
-                if !state.resolved {
-                    state.resolved = true
-                    state.lock.unlock()
-                    continuation.resume(returning: false) // completed normally
-                } else {
-                    state.lock.unlock()
+            group.addTask {
+                await withUnsafeContinuation { cont in
+                    DispatchQueue.global().async {
+                        process.waitUntilExit()
+                        cont.resume()
+                    }
                 }
+                return false // completed normally, not timed out
             }
 
             // Path B: Timeout fires
-            DispatchQueue.global().asyncAfter(
-                deadline: .now() + .milliseconds(timeoutMs)
-            ) {
-                state.lock.lock()
-                if !state.resolved, process.isRunning {
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+                if process.isRunning {
                     process.terminate()
-                    state.resolved = true
-                    state.lock.unlock()
-                    continuation.resume(returning: true) // timed out
-                } else {
-                    state.lock.unlock()
+                    return true // timed out
                 }
+                return false // process finished before timeout could fire
             }
+
+            // First path to complete wins; cancel the other
+            let timedOut = await group.next() ?? false
+            group.cancelAll()
+            return timedOut
         }
     }
 
@@ -578,16 +573,6 @@ private let dangerousPatterns: [DangerPattern] = [
         reason: "Suspicious device redirect"
     ),
 ]
-
-// MARK: - Process Wait State
-
-/// Mutable state holder for the process-wait timeout race.
-/// Uses NSLock to synchronize access from the process-exit and
-/// timeout dispatch queues, avoiding captured-var concurrency warnings.
-private final class ProcessWaitState: @unchecked Sendable {
-    let lock = NSLock()
-    var resolved = false
-}
 
 // MARK: - Output Buffer
 

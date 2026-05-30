@@ -61,7 +61,7 @@ public struct WorktreeManager: Sendable {
         return parseWorktreeOutput(String(data: data, encoding: .utf8) ?? "")
     }
 
-    private func runProcess(_ process: Process) async throws {
+    private func runProcess(_ process: Process, timeoutSeconds: Int = 30) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { proc in
                 if proc.terminationStatus == 0 {
@@ -74,6 +74,18 @@ public struct WorktreeManager: Sendable {
                 try process.run()
             } catch {
                 continuation.resume(throwing: error)
+                return
+            }
+
+            // Timeout: terminate the process after deadline. The terminationHandler
+            // above will fire and resume the continuation. This is safe because the
+            // timeout path only terminates the process — it never directly resumes
+            // the continuation, avoiding the double-resume race that plagues
+            // continuation + DispatchQueue patterns.
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(timeoutSeconds)) {
+                if process.isRunning {
+                    process.terminate()
+                }
             }
         }
     }

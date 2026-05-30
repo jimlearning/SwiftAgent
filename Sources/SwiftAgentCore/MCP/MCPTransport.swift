@@ -165,7 +165,10 @@ public final class SSETransport: MCPStreamingTransport, @unchecked Sendable {
 
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Error>) in
             streamTask = session.dataTask(with: request) { [weak self] _, response, error in
-                guard let self else { return }
+                guard let self else {
+                    cont.resume(throwing: MCPError.transportNotConnected)
+                    return
+                }
                 if error != nil {
                     self.stateLock.withLock { self.isConnected = false }
                     self.onClose?()
@@ -175,9 +178,13 @@ public final class SSETransport: MCPStreamingTransport, @unchecked Sendable {
                         }
                         self.pendingRequests.removeAll()
                     }
+                    cont.resume(throwing: MCPError.transportNotConnected)
                     return
                 }
-                guard let httpResponse = response as? HTTPURLResponse else { return }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    cont.resume(throwing: MCPError.transportNotConnected)
+                    return
+                }
                 if httpResponse.statusCode == 200 {
                     self.stateLock.withLock { self.isConnected = true }
                 }
@@ -207,7 +214,10 @@ public final class SSETransport: MCPStreamingTransport, @unchecked Sendable {
             pendingLock.withLock { pendingRequests[id] = continuation }
 
             let task = session.dataTask(with: request) { [weak self] data, response, error in
-                guard let self else { return }
+                guard let self else {
+                    continuation.resume(throwing: MCPError.transportNotConnected)
+                    return
+                }
                 if error != nil {
                     _ = self.pendingLock.withLock { self.pendingRequests.removeValue(forKey: id) }
                     continuation.resume(throwing: MCPError.transportNotConnected)
@@ -215,11 +225,18 @@ public final class SSETransport: MCPStreamingTransport, @unchecked Sendable {
                 }
                 if let httpResponse = response as? HTTPURLResponse {
                     let ct = httpResponse.allHeaderFields["Content-Type"] as? String ?? ""
-                    if ct.contains("text/event-stream") { return } // response via SSE stream
+                    if ct.contains("text/event-stream") {
+                        // Response will be handled via SSE stream parser;
+                        // continuation stays in pendingRequests to be resumed later.
+                        return
+                    }
                 }
                 if let data, !data.isEmpty, let msg = try? MessageCoder.decode(data) {
                     _ = self.pendingLock.withLock { self.pendingRequests.removeValue(forKey: id) }
                     continuation.resume(returning: msg)
+                } else {
+                    _ = self.pendingLock.withLock { self.pendingRequests.removeValue(forKey: id) }
+                    continuation.resume(throwing: MCPError.invalidResponse)
                 }
             }
             task.resume()

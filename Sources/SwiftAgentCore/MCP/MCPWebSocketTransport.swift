@@ -42,15 +42,32 @@ public final class MCPWebSocketTransport: MCPStreamingTransport, @unchecked Send
         task!.resume()
 
         // Wait for the connection to open (CC: await this.opened)
-        // URLSessionWebSocketTask.resume() starts connecting; we ping to confirm readiness
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            task!.sendPing { error in
-                if let error = error {
-                    cont.resume(throwing: error)
-                } else {
-                    cont.resume()
+        // URLSessionWebSocketTask.resume() starts connecting; we ping to confirm readiness.
+        // Timeout after 10s if ping doesn't respond.
+        let pingTask = Task {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                task!.sendPing { error in
+                    if let error = error {
+                        cont.resume(throwing: error)
+                    } else {
+                        cont.resume()
+                    }
                 }
             }
+        }
+
+        let timeoutTask = Task {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+            pingTask.cancel()
+            throw MCPTransportError.notConnected
+        }
+
+        do {
+            try await pingTask.value
+            timeoutTask.cancel()
+        } catch {
+            timeoutTask.cancel()
+            throw error
         }
 
         started = true

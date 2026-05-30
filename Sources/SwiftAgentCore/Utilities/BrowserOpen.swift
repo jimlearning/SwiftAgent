@@ -102,7 +102,12 @@ private func runCommand(_ command: String, _ args: String...) async throws {
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [command] + args
     try process.run()
-    process.waitUntilExit()
+    await withUnsafeContinuation { cont in
+        DispatchQueue.global().async {
+            process.waitUntilExit()
+            cont.resume()
+        }
+    }
     guard process.terminationStatus == 0 else {
         throw BrowserError.commandFailed(command, process.terminationStatus)
     }

@@ -116,7 +116,11 @@ public actor OAuthCallbackServer {
 
             // Accept connection
             DispatchQueue.global().async { [weak self] in
-                guard let self else { return }
+                guard let self else {
+                    timeoutTask.cancel()
+                    continuation.resume(throwing: OAuthFlowError.timeout)
+                    return
+                }
                 var clientAddr = sockaddr_in()
                 var addrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
 
