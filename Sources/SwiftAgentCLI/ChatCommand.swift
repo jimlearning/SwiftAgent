@@ -46,6 +46,9 @@ struct ChatCommand: AsyncParsableCommand {
     @Flag(name: .shortAndLong, help: "Enable debug logging of all API requests and responses")
     var debug: Bool = false
 
+    @Flag(name: .long, help: "Show model thinking content in dim text")
+    var showThinking: Bool = false
+
     /// Tracks Ctrl+O expand/collapse toggle state across the session.
     var expandState = ExpandState()
 
@@ -402,11 +405,14 @@ struct ChatCommand: AsyncParsableCommand {
                             turnText += text
 
                         case .thinkingDelta(let text):
-                            // Accumulate thinking silently (needed for API history).
-                            // Keep the spinner running — match CC's behavior of not
-                            // streaming thinking text to the terminal.
                             currentTool.isThinking = true
                             thinkingText += text
+                            if showThinking {
+                                // Dimmed output — matches old behavior before
+                                // thinking was hidden by default.
+                                print("\u{001B}[2m\(text)", terminator: "")
+                                fflush(stdout)
+                            }
 
                         case .contentBlockStart(_, let block):
                             if currentTool.isThinking {
