@@ -389,7 +389,8 @@ struct ChatCommand: AsyncParsableCommand {
                         model: sharedModel.current,
                         systemPrompt: sysPrompt,
                         maxTokens: 16384,
-                        tools: toolDefs
+                        tools: toolDefs,
+                        betas: [Betas.promptCachingScope, Betas.interleavedThinking]
                     )
 
                     for try await event in stream {

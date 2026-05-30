@@ -400,7 +400,7 @@ public final class LLMClient: Sendable {
         }
 
         if let tools {
-            body["tools"] = tools.map { $0.apiFormatted }
+            body["tools"] = apiFormattedTools(tools, enablePromptCaching: enablePromptCaching)
             body["tool_choice"] = ["type": toolChoice ?? "auto"]
         }
         let hasThinking: Bool
@@ -491,8 +491,12 @@ public final class LLMClient: Sendable {
 
     // MARK: - API formatting helpers
 
+    /// Format messages for the API, adding cache_control to the last message's
+    /// last cacheable content block when prompt caching is enabled.
+    /// Matches CC's addCacheBreakpoints — applies to ALL providers unconditionally.
     private func apiFormattedMessages(_ messages: [Message], enablePromptCaching: Bool) -> [[String: Any]] {
-        guard enablePromptCaching, let lastIndex = messages.lastIndex(where: { _ in true }) else {
+        guard enablePromptCaching,
+              let lastIndex = messages.lastIndex(where: { _ in true }) else {
             return messages.map { $0.apiFormatted }
         }
 
@@ -529,6 +533,27 @@ public final class LLMClient: Sendable {
         return [
             ["type": "text", "text": prompt, "cache_control": ["type": "ephemeral"]]
         ]
+    }
+
+    /// Format tool definitions for the API, with optional prompt caching on the last tool.
+    /// Placing cache_control on the last tool definition tells the server to cache
+    /// the entire tools array as a single prefix. This is critical for cost efficiency
+    /// when many tools (40+) are sent with every request — without it, the full
+    /// ~8,500 token tool schema is re-processed each time.
+    /// Matches Anthropic API: cache_control can be on tool definitions since May 2025.
+    private func apiFormattedTools(_ tools: [ToolDefinition], enablePromptCaching: Bool) -> [[String: Any]] {
+        guard enablePromptCaching, !tools.isEmpty else {
+            return tools.map { $0.apiFormatted }
+        }
+
+        // Place cache_control on the last tool only — the cache key covers
+        // the entire tools array prefix up to and including this tool.
+        return tools.enumerated().map { (i, tool) in
+            if i == tools.count - 1 {
+                return tool.apiFormattedWithCache
+            }
+            return tool.apiFormatted
+        }
     }
 
     /// Normalize model string for API:
@@ -592,6 +617,14 @@ public struct ToolDefinition: Sendable {
             return ["name": name, "description": description, "input_schema": dict]
         }
         return ["name": name, "description": description, "input_schema": ["type": "object"]]
+    }
+
+    /// Format tool definition with cache_control for prompt caching.
+    /// Should only be applied to the last tool in the tools array.
+    public var apiFormattedWithCache: [String: Any] {
+        var base = apiFormatted
+        base["cache_control"] = ["type": "ephemeral"]
+        return base
     }
 }
 
