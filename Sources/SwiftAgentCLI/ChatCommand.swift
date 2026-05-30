@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import ArgumentParser
 import SwiftAgentCore
 
@@ -17,6 +18,134 @@ final class ExpandState: Decodable, @unchecked Sendable {
 final class SharedModel: @unchecked Sendable {
     var current: String
     init(_ model: String) { self.current = model }
+}
+
+// MARK: - Shared I/O Helpers
+
+/// Write raw bytes directly to stdout (for ANSI escape codes).
+/// Used by both ChatCommand methods and promptUserForQuestions free function.
+private func writeToStdout(_ string: String) {
+    guard let data = string.data(using: .utf8) else { return }
+    _ = data.withUnsafeBytes { ptr in
+        Darwin.write(STDOUT_FILENO, ptr.baseAddress!, ptr.count)
+    }
+}
+
+/// Prompt the user with multiple-choice questions interactively.
+/// Used by AskUserQuestionTool via the userInputPromptHandler callback.
+/// Fully restores the original terminal state (saved before LineEditor entered
+/// raw mode) so that readLine() works correctly with proper line editing.
+/// Defined as a free function so it can be captured in a @Sendable closure
+/// without capturing `ChatCommand` (which is a non-Sendable struct).
+private func promptUserForQuestions(_ questions: [UserQuestion], originalTermios: inout termios) async -> [UserQuestionResponse] {
+    var responses: [UserQuestionResponse] = []
+    var savedTermios = termios()
+    let fd = STDIN_FILENO
+
+    // Clear residual spinner line before displaying questions
+    writeToStdout("\r\u{001B}[K")
+
+    // Save current terminal settings (raw mode from LineEditor) and restore
+    // the original cooked-mode state. OR-ing flags on top of raw mode is
+    // fragile: c_cc values (VEOF/VEOL/VERASE) are left in raw-mode state,
+    // and some cleared flags don't get properly re-enabled.
+    tcgetattr(fd, &savedTermios)
+    tcsetattr(fd, TCSADRAIN, &originalTermios)
+    defer {
+        // Restore raw mode terminal settings
+        tcsetattr(fd, TCSADRAIN, &savedTermios)
+    }
+
+    for question in questions {
+        // Print header
+        if !question.header.isEmpty {
+            writeToStdout("\n\u{001B}[1;36m── \(question.header) ──\u{001B}[0m\n")
+        } else {
+            writeToStdout("\n")
+        }
+
+        // Print question
+        writeToStdout("\u{001B}[1;97m\(question.question)\u{001B}[0m\n\n")
+
+        // Print options with letter labels
+        for (j, opt) in question.options.enumerated() {
+            let letter = Character(UnicodeScalar(97 + j)!)
+            writeToStdout("  \u{001B}[1;33m\(letter))\u{001B}[0m \u{001B}[1;97m\(opt.label)\u{001B}[0m")
+            if let desc = opt.description, !desc.isEmpty {
+                writeToStdout(" — \(desc)")
+            }
+            writeToStdout("\n")
+        }
+
+        // Prompt for input
+        if question.multiSelect {
+            writeToStdout("\n  \u{001B}[2mEnter your choices (comma-separated, e.g. a-\(Character(UnicodeScalar(96 + question.options.count)!))): \u{001B}[0m")
+        } else {
+            writeToStdout("\n  \u{001B}[2mYour choice (a-\(Character(UnicodeScalar(96 + question.options.count)!))): \u{001B}[0m")
+        }
+
+        // Read user input (in cooked mode, readLine works normally)
+        guard let line = Swift.readLine() else {
+            responses.append(UserQuestionResponse(optionIndices: []))
+            continue
+        }
+
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        if question.multiSelect {
+            // Parse comma/space-separated values like "a,c" or "a c"
+            let parts = trimmed.components(separatedBy: CharacterSet(charactersIn: ", "))
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+
+            var indices: [Int] = []
+            for part in parts {
+                if part.count == 1 {
+                    let letterChar = Character(part)
+                    if let ascii = letterChar.asciiValue {
+                        let idx = Int(ascii) - 97
+                        if idx >= 0 && idx < question.options.count && !indices.contains(idx) {
+                            indices.append(idx)
+                        }
+                    }
+                } else {
+                    // Try matching by label (case-insensitive)
+                    if let matchIdx = question.options.firstIndex(where: {
+                        $0.label.lowercased() == part
+                    }) {
+                        if !indices.contains(matchIdx) {
+                            indices.append(matchIdx)
+                        }
+                    }
+                }
+            }
+            indices.sort()
+            responses.append(UserQuestionResponse(optionIndices: indices))
+        } else {
+            // Single select
+            if trimmed.count == 1 {
+                let letterChar = Character(trimmed)
+                if let ascii = letterChar.asciiValue {
+                    let idx = Int(ascii) - 97
+                    if idx >= 0 && idx < question.options.count {
+                        responses.append(UserQuestionResponse(optionIndices: [idx]))
+                        continue
+                    }
+                }
+            }
+            // Try matching by label
+            if let matchIdx = question.options.firstIndex(where: {
+                $0.label.lowercased() == trimmed
+            }) {
+                responses.append(UserQuestionResponse(optionIndices: [matchIdx]))
+            } else {
+                // Custom text input
+                responses.append(UserQuestionResponse(optionIndices: [], customText: line.trimmingCharacters(in: .whitespacesAndNewlines)))
+            }
+        }
+    }
+
+    return responses
 }
 
 struct ChatCommand: AsyncParsableCommand {
@@ -53,6 +182,13 @@ struct ChatCommand: AsyncParsableCommand {
     var expandState = ExpandState()
 
     func run() async throws {
+        // Capture terminal state before LineEditor puts it in raw mode.
+        // promptUserForQuestions needs a fully correct cooked-mode terminal,
+        // and OR-ing flags on top of raw mode is fragile (c_cc, ICRNL, etc.).
+        var orig = termios()
+        tcgetattr(STDIN_FILENO, &orig)
+        let originalTermios = SendableTermios(value: orig)
+
         // Resolve API key
         let resolver = APIKeyResolver()
         let key = apiKey ?? resolver.resolve() ?? ""
@@ -113,6 +249,14 @@ struct ChatCommand: AsyncParsableCommand {
         let toolDefs = await registry.toolDefinitions()
 
         let editor = LineEditor()
+
+        // Pause the spinner during interactive prompts so its \r\e[K output
+        // doesn't clear the user's typed input in cooked terminal mode.
+        let spinnerPause = SpinnerPauseFlag()
+
+        // Holds the current escape-watcher Task so the interactive prompt
+        // handler can cancel it (preventing stdin stealing) and restart it.
+        let currentEscapeTask = EscapeTaskHolder()
 
         // ── Set up inline popup data sources (@ and / completions) ──
         let cwd = FileManager.default.currentDirectoryPath
@@ -332,10 +476,34 @@ struct ChatCommand: AsyncParsableCommand {
             let isCancelled = AtomicBool()
 
             // Escape watcher — runs in background, sets flag on bare ESC
-            let escapeTask = Task { [isCancelled] in
+            currentEscapeTask.task = Task { [isCancelled] in
                 if await editor.interceptEscape() {
                     isCancelled.value = true
                 }
+            }
+
+            // Interactive user input handler for AskUserQuestionTool.
+            // Defined inside the while loop so it can cancel/restart the
+            // escape-watcher Task. The watcher must be stopped before
+            // promptUserForQuestions switches to cooked mode, otherwise
+            // its poll()+read() loop steals the user's input byte-by-byte.
+            let userInputHandler: UserInputPromptHandler = { [currentEscapeTask, isCancelled] questions in
+                spinnerPause.paused = true
+                // Cancel the escape watcher so it stops reading stdin, then
+                // wait up to 150ms for its 100ms poll() timeout to let it exit.
+                currentEscapeTask.task?.cancel()
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                defer {
+                    spinnerPause.paused = false
+                    // Restart escape watcher for any remaining LLM rounds
+                    currentEscapeTask.task = Task { [isCancelled] in
+                        if await editor.interceptEscape() {
+                            isCancelled.value = true
+                        }
+                    }
+                }
+                var term = originalTermios.value
+                return await promptUserForQuestions(questions, originalTermios: &term)
             }
 
             // Track current tool name for spinner display
@@ -346,6 +514,12 @@ struct ChatCommand: AsyncParsableCommand {
             let spinnerTask = Task {
                 var frame = 0
                 while !Task.isCancelled {
+                    // Pause spinner during interactive user prompts (AskUserQuestion)
+                    // so its \r\e[K output doesn't clear the user's typed input.
+                    if spinnerPause.paused {
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        continue
+                    }
                     // When showing thinking text, pause the spinner so thinking
                     // can render in-place without flicker.
                     if showThinking, currentTool.isThinking {
@@ -494,7 +668,7 @@ struct ChatCommand: AsyncParsableCommand {
                                 isConcurrencySafe: { call in registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false },
                                 execute: { call in
                                     if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
-                                    let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool, sharedModel: sharedModel)
+                                    let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool, sharedModel: sharedModel, userInputPromptHandler: userInputHandler)
                                     if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                                     return summary
                                 }
@@ -571,7 +745,8 @@ struct ChatCommand: AsyncParsableCommand {
                                 registry: registry,
                                 sessionState: sessionState,
                                 currentTool: currentTool,
-                                sharedModel: sharedModel
+                                sharedModel: sharedModel,
+                                userInputPromptHandler: userInputHandler
                             )
                             if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
                             return summary
@@ -618,7 +793,7 @@ struct ChatCommand: AsyncParsableCommand {
             }
 
             spinnerTask.cancel()
-            escapeTask.cancel()
+            currentEscapeTask.task?.cancel()
             try? await Task.sleep(nanoseconds: 50_000_000)
 
             if wasCancelled {
@@ -885,14 +1060,6 @@ struct ChatCommand: AsyncParsableCommand {
         expandState.expandedLineCount = 0
     }
 
-    /// Write raw bytes directly to stdout (for ANSI escape codes).
-    private func writeToStdout(_ string: String) {
-        guard let data = string.data(using: .utf8) else { return }
-        _ = data.withUnsafeBytes { ptr in
-            Darwin.write(STDOUT_FILENO, ptr.baseAddress!, ptr.count)
-        }
-    }
-
     /// Expand a previously collapsed tool result group identified by
     /// an index number or the keyword "last".
     private func expandCollapsedResult(
@@ -975,7 +1142,8 @@ struct ChatCommand: AsyncParsableCommand {
         registry: ToolRegistry,
         sessionState: SessionState,
         currentTool: CurrentToolTracker? = nil,
-        sharedModel: SharedModel
+        sharedModel: SharedModel,
+        userInputPromptHandler: UserInputPromptHandler? = nil
     ) async -> String {
         let bylassAvailable = permission == "bypass"
 
@@ -992,7 +1160,8 @@ struct ChatCommand: AsyncParsableCommand {
             querySource: .repl,
             permissionPromptHandler: { _, _, _ in
                 bylassAvailable ? .allow : .deny(reason: "Permission prompts not available in REPL mode")
-            }
+            },
+            userInputPromptHandler: userInputPromptHandler
         )
 
         // Plan mode state callback — allows EnterPlanMode/ExitPlanMode tools to toggle state
@@ -1433,6 +1602,31 @@ private final class SessionState: @unchecked Sendable {
 
 /// Thread-safe tracker for the currently executing tool name.
 /// Written by the agent loop and read by the spinner Task.
+/// Thread-safe flag to pause the spinner during interactive user prompts.
+/// When the spinner writes to stdout while a readLine() prompt is active,
+/// its \\r\\e[K output clears the user's typed input, making interaction impossible.
+private final class SpinnerPauseFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _paused = false
+    var paused: Bool {
+        get { lock.withLock { _paused } }
+        set { lock.withLock { _paused = newValue } }
+    }
+}
+
+/// Holds a reference to the current escape-watcher Task so the interactive
+/// prompt handler can cancel it (to stop it stealing stdin bytes) and restart
+/// a fresh one afterwards.
+private final class EscapeTaskHolder: @unchecked Sendable {
+    var task: Task<Void, Never>?
+}
+
+/// Wraps a `termios` for safe capture in @Sendable closures.
+/// termios is a C struct of integers (no pointers) — safe to copy across actors.
+private struct SendableTermios: @unchecked Sendable {
+    var value: termios
+}
+
 /// Thread-safe boolean flag for ESC cancellation coordination between Tasks.
 private final class AtomicBool: @unchecked Sendable {
     private let lock = NSLock()

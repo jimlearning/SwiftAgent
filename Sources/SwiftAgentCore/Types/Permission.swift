@@ -335,6 +335,55 @@ public typealias PermissionPromptHandler = @Sendable (
     _ decision: PermissionAskDecision
 ) async -> PermissionPromptResponse
 
+// MARK: - User Input Prompt (AskUserQuestion)
+
+/// A single multiple-choice question for the user.
+public struct UserQuestion: Sendable, Codable {
+    public let header: String
+    public let question: String
+    public let options: [UserQuestionOption]
+    public let multiSelect: Bool
+
+    public init(header: String, question: String, options: [UserQuestionOption], multiSelect: Bool = false) {
+        self.header = header
+        self.question = question
+        self.options = options
+        self.multiSelect = multiSelect
+    }
+}
+
+/// An option in a multiple-choice question.
+public struct UserQuestionOption: Sendable, Codable {
+    public let label: String
+    public let description: String?
+
+    public init(label: String, description: String? = nil) {
+        self.label = label
+        self.description = description
+    }
+}
+
+/// The user's response to a question.
+public struct UserQuestionResponse: Sendable {
+    /// Indices of the selected options (in the question's options array).
+    public let optionIndices: [Int]
+    /// Raw text input if the user typed a custom answer.
+    public let customText: String?
+
+    public init(optionIndices: [Int], customText: String? = nil) {
+        self.optionIndices = optionIndices
+        self.customText = customText
+    }
+}
+
+/// Callback invoked by AskUserQuestionTool to present a question to the user
+/// and collect their response interactively.
+/// - Parameter questions: Array of questions to ask (max 4).
+/// - Returns: Array of user responses, one per question.
+public typealias UserInputPromptHandler = @Sendable (
+    _ questions: [UserQuestion]
+) async -> [UserQuestionResponse]
+
 /// The full permission result with passthrough support.
 /// Matches Claude Code's PermissionResult.
 public enum PermissionResult: Sendable {

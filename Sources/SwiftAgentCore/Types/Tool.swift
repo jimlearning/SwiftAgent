@@ -621,6 +621,12 @@ public struct ToolUseContext: Sendable {
     /// Matches CC's permission prompt callback flow in the TUI layer.
     public var permissionPromptHandler: PermissionPromptHandler?
 
+    /// Interactive user input prompt handler. Called by AskUserQuestionTool to
+    /// present multiple-choice questions to the user and collect their response.
+    /// When set, the tool blocks until the user responds.
+    /// When nil, the tool falls back to formatting the question as text output.
+    public var userInputPromptHandler: UserInputPromptHandler?
+
     // MARK: - State accessors
 
     /// Read file state for staleness detection. Matches CC's readFileState.
@@ -760,6 +766,7 @@ public struct ToolUseContext: Sendable {
         querySource: QuerySource? = nil,
         refreshTools: (@Sendable () -> [any Tool])? = nil,
         permissionPromptHandler: PermissionPromptHandler? = nil,
+        userInputPromptHandler: UserInputPromptHandler? = nil,
         addNotification: (@Sendable (String, String) -> Void)? = nil,
         appendSystemMessage: (@Sendable (String) -> Void)? = nil,
         sendOSNotification: (@Sendable (String, String) -> Void)? = nil,
@@ -834,6 +841,7 @@ public struct ToolUseContext: Sendable {
         self.queryTracking = queryTracking
         self.refreshTools = refreshTools
         self.permissionPromptHandler = permissionPromptHandler
+        self.userInputPromptHandler = userInputPromptHandler
         self.abortSignal = abortSignal
         self.sandbox = sandbox
         self.shell = shell
