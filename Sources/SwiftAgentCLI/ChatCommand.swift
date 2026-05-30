@@ -464,11 +464,14 @@ struct ChatCommand: AsyncParsableCommand {
                                     return summary
                                 }
                             )
+                            var sentUserMessage = false
                             for result in results {
                                 if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
-                                    emitBlock(msg)
+                                    responseText = msg
+                                    sentUserMessage = true
                                 }
                             }
+                            if sentUserMessage { break }
                             // Collapse and emit tool results (excluding SendUserMessage)
                             let nonMessageResults = results.filter { $0.call.name != "SendUserMessage" }
                             await emitCollapsedResults(
@@ -540,10 +543,15 @@ struct ChatCommand: AsyncParsableCommand {
                         }
                     )
 
-                    // Render tool results visible to the user
+                    // Render tool results visible to the user.
+                    // SendUserMessage: the model's user-facing response — display
+                    // with left-border treatment and break the agent loop (matching
+                    // CC's behavior where SendUserMessage terminates the turn).
+                    var sentUserMessage = false
                     for result in results {
                         if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
-                            emitBlock(msg)
+                            responseText = msg
+                            sentUserMessage = true
                         }
                     }
                     // Collapse and emit tool results (excluding SendUserMessage)
@@ -566,6 +574,7 @@ struct ChatCommand: AsyncParsableCommand {
 
                     // Send tool results as a user message with tool_result blocks
                     conversationHistory.append(Message(type: .user, content: resultBlocks))
+                    if sentUserMessage { break }
                 }
 
             } catch {
