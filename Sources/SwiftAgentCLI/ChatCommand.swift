@@ -346,6 +346,12 @@ struct ChatCommand: AsyncParsableCommand {
             let spinnerTask = Task {
                 var frame = 0
                 while !Task.isCancelled {
+                    // When showing thinking text, pause the spinner so thinking
+                    // can render in-place without flicker.
+                    if showThinking, currentTool.isThinking {
+                        try? await Task.sleep(nanoseconds: 100_000_000)
+                        continue
+                    }
                     let line: String
                     if let display = currentTool.displayLine {
                         line = "\r\u{001B}[K  \(renderer.spinnerFrame(index: frame)) \(display)"
@@ -399,7 +405,14 @@ struct ChatCommand: AsyncParsableCommand {
                         switch event {
                         case .textDelta(let text):
                             if currentTool.isThinking {
-                                print("\r\u{001B}[K", terminator: "")  // clear spinner line
+                                // End thinking: if we were showing thinking text,
+                                // reset dim mode + newline so thinking stays on
+                                // screen. Otherwise just clear the spinner.
+                                if showThinking {
+                                    print("\u{001B}[0m\n")
+                                } else {
+                                    print("\r\u{001B}[K", terminator: "")
+                                }
                                 currentTool.isThinking = false
                             }
                             turnText += text
@@ -408,15 +421,26 @@ struct ChatCommand: AsyncParsableCommand {
                             currentTool.isThinking = true
                             thinkingText += text
                             if showThinking {
-                                // Dimmed output — matches old behavior before
-                                // thinking was hidden by default.
-                                print("\u{001B}[2m\(text)", terminator: "")
+                                // Stream thinking in dim mode, clearing the spinner
+                                // line on first delta. Thinking text stays on screen
+                                // after the turn because we emit a reset+newline on
+                                // the next textDelta or contentBlockStart.
+                                if thinkingText == text {
+                                    // First delta: clear spinner, indent, start dim
+                                    print("\r\u{001B}[K  \u{001B}[2m\(text)", terminator: "")
+                                } else {
+                                    print(text, terminator: "")
+                                }
                                 fflush(stdout)
                             }
 
                         case .contentBlockStart(_, let block):
                             if currentTool.isThinking {
-                                print("\r\u{001B}[K", terminator: "")
+                                if showThinking {
+                                    print("\u{001B}[0m\n")
+                                } else {
+                                    print("\r\u{001B}[K", terminator: "")
+                                }
                                 currentTool.isThinking = false
                             }
                             if case .toolUse(let name, let id) = block {
