@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CoreGraphics
 
 // MARK: - Editor Mode
 
@@ -219,6 +220,19 @@ public final class LineEditor: @unchecked Sendable {
                 // Otherwise ignore (like bash)
 
             case 10, 13:  // Enter (\n or \r)
+                // Shift+Enter detection via OS-level HID keyboard state.
+                // Most terminals send the same bytes for Shift+Enter as plain Enter,
+                // so checking the hardware modifier state is the only reliable method.
+                if Self.isShiftHeld() {
+                    stashedBuffer = nil
+                    ghostText = nil
+                    let idx = buffer.index(buffer.startIndex, offsetBy: cursorPos)
+                    buffer.insert(contentsOf: "\n", at: idx)
+                    cursorPos += 1
+                    redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+                    break
+                }
+
                 if case .popup(let state) = editorMode {
                     // Commit selection: replace trigger..cursor with selected text + space
                     if let item = selectedPopupItem(state) {
@@ -591,6 +605,13 @@ public final class LineEditor: @unchecked Sendable {
         buffer = placeholder
         cursorPos = buffer.count
         redrawLine(prompt: prompt, buffer: buffer, cursorPos: cursorPos)
+    }
+
+    /// Read OS-level Shift key state via HID subsystem.
+    /// Used to distinguish Shift+Enter from plain Enter, since most terminals
+    /// send identical bytes for both.
+    private static func isShiftHeld() -> Bool {
+        CGEventSource.flagsState(.hidSystemState).contains(.maskShift)
     }
 
     // MARK: - Terminal control
