@@ -131,6 +131,25 @@ public final class DebugLogger: LLMDebugLogger, @unchecked Sendable {
 
     // MARK: - Private
 
+    /// Recursively expand JSON-encoded strings into proper nested dict/array structures.
+    /// `"{\"key\": 1}"` → `["key": 1]`, applied depth-first to all values.
+    private func expandJSONStrings(_ value: Any) -> Any {
+        switch value {
+        case let str as String:
+            guard let data = str.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) else {
+                return str
+            }
+            return expandJSONStrings(json)
+        case let dict as [String: Any]:
+            return dict.mapValues { expandJSONStrings($0) }
+        case let arr as [Any]:
+            return arr.map { expandJSONStrings($0) }
+        default:
+            return value
+        }
+    }
+
     private let writeQueue = DispatchQueue(label: "com.swiftagent.debuglogger", qos: .utility)
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
@@ -139,8 +158,8 @@ public final class DebugLogger: LLMDebugLogger, @unchecked Sendable {
     }()
 
     private func append(_ dict: [String: Any]) {
-        let jsonObj = dict.mapValues { $0 as Any }
-        guard JSONSerialization.isValidJSONObject(jsonObj),
+        guard let jsonObj = expandJSONStrings(dict) as? [String: Any],
+              JSONSerialization.isValidJSONObject(jsonObj),
               let raw = try? JSONSerialization.data(withJSONObject: jsonObj) else { return }
         let data = raw + [10] // newline (JSONL format)
         writeQueue.async { [weak self] in
