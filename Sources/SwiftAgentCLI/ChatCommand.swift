@@ -409,12 +409,16 @@ struct ChatCommand: AsyncParsableCommand {
 
                         case .contentBlockStart(_, let block):
                             if currentTool.isThinking {
-                                print("\r\u{001B}[K", terminator: "")  // clear spinner line
+                                print("\r\u{001B}[K", terminator: "")
                                 currentTool.isThinking = false
                             }
                             if case .toolUse(let name, let id) = block {
                                 toolInputAccumulator.startTool(name: name, id: id)
-                                currentTool.name = name
+                                // Suppress SendUserMessage spinner — it's a transparent
+                                // delivery mechanism, not a user-facing tool.
+                                if name != "SendUserMessage" {
+                                    currentTool.name = name
+                                }
                             }
 
                         case .inputJSONDelta(let delta):
