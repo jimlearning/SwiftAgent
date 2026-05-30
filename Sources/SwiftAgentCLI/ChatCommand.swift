@@ -363,6 +363,7 @@ struct ChatCommand: AsyncParsableCommand {
             var cumulativeCacheRead = 0
             var cumulativeCacheCreation = 0
             var cumulativeInputTokens = 0
+            let turnStart = Date()
 
             do {
                 // --- Inline agent loop ---
@@ -611,7 +612,11 @@ struct ChatCommand: AsyncParsableCommand {
                 let cacheHitRate = Double(cumulativeCacheRead) / Double(cumulativeInputTokens) * 100.0
                 let cacheInfo = String(format: "  ↳ cache: %.0f%% hit (%d read, %d created, %d total in)",
                                        cacheHitRate, cumulativeCacheRead, cumulativeCacheCreation, cumulativeInputTokens)
-                emitBlock(capability.color(cacheInfo, color: .brightBlack))
+                let elapsed = Date().timeIntervalSince(turnStart)
+                let elapsedStr = elapsed < 1.0
+                    ? String(format: "%.0fms", elapsed * 1000)
+                    : String(format: "%.0fs", elapsed)
+                emitBlock(capability.color("\(cacheInfo)  ✻ \(elapsedStr)", color: .brightBlack))
                 debugLog?.logUsage(
                     inputTokens: cumulativeInputTokens,
                     outputTokens: sessionState.totalTokensOut,
