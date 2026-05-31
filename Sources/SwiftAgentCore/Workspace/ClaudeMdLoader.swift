@@ -66,6 +66,8 @@ public struct ClaudeMdLoader: Sendable {
         "md", "txt", "markdown", "mdown", "mkdn", "mkd", "rst"
     ]
 
+    public init() {}
+
     // MARK: - Public API
 
     /// Load all CLAUDE.md files for the given working directory.

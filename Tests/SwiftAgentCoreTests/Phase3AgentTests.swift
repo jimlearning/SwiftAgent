@@ -116,13 +116,14 @@ struct MessageNormalizerTests {
 struct SystemPromptBuilderTests {
     @Test
     func buildsPrompt() {
-        let builder = SystemPromptBuilder()
+        let builder = SystemPromptBuilder(workingDirectory: "/test")
         let conversation = Conversation()
-        let prompt = builder.build(for: conversation, inject: ["workingDirectory": "/test"])
+        let prompt = builder.build(for: conversation)
         #expect(prompt.contains("SwiftAgent"))
         #expect(prompt.contains("/test"))
         #expect(prompt.contains("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"))
-        #expect(prompt.contains("Safety"))
+        // "Executing actions with care" is the CC-aligned safety section (replaces old "Safety" header)
+        #expect(prompt.contains("Executing actions with care"))
     }
 
     @Test

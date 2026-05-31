@@ -120,7 +120,12 @@ private func promptUserForQuestions(_ questions: [UserQuestion], originalTermios
                 }
             }
             indices.sort()
-            responses.append(UserQuestionResponse(optionIndices: indices))
+            if indices.isEmpty && !trimmed.isEmpty {
+                // No options matched — treat entire input as free-text answer
+                responses.append(UserQuestionResponse(optionIndices: [], customText: line.trimmingCharacters(in: .whitespacesAndNewlines)))
+            } else {
+                responses.append(UserQuestionResponse(optionIndices: indices))
+            }
         } else {
             // Single select
             if trimmed.count == 1 {
@@ -1126,7 +1131,8 @@ struct ChatCommand: AsyncParsableCommand {
 
     /// Built once per session. Rebuilding on every API call would break prompt caching.
     private func buildSystemPrompt() -> String {
-        let builder = SystemPromptBuilder()
+        let loader = ClaudeMdLoader()
+        let builder = SystemPromptBuilder(claudeMdLoader: loader)
         return builder.build(for: Conversation())
     }
 

@@ -6,6 +6,33 @@ public struct AskUserQuestionTool: Tool {
     public let name = "AskUserQuestion"
     public var searchHint: String? { "prompt the user with a multiple-choice question" }
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Ask the user a multiple-choice question" }
+
+    /// Matches CC's ASK_USER_QUESTION_TOOL_PROMPT. The critical line is
+    /// "Users will always be able to select 'Other' to provide custom text input"
+    /// — this tells the LLM that free-text answers outside the listed options are
+    /// expected and normal, not an anomaly to question or overthink.
+    public func prompt(
+        getToolPermissionContext: @Sendable () async -> ToolPermissionContext,
+        tools: [any Tool],
+        agents: [any Sendable],
+        allowedAgentTypes: [String]?
+    ) async -> String {
+        """
+        Use this tool when you need to ask the user questions during execution. This allows you to:
+        1. Gather user preferences or requirements
+        2. Clarify ambiguous instructions
+        3. Get decisions on implementation choices as you work
+        4. Offer choices to the user about what direction to take.
+
+        Usage notes:
+        - Users will always be able to select "Other" to provide custom text input
+        - Use multiSelect: true to allow multiple answers to be selected for a question
+        - If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
+
+        Plan mode note: In plan mode, use this tool to clarify requirements or choose between approaches BEFORE finalizing your plan. Do NOT use this tool to ask "Is my plan ready?" or "Should I proceed?" - use ExitPlanMode for plan approval. IMPORTANT: Do not reference "the plan" in your questions (e.g., "Do you have feedback about the plan?", "Does the plan look good?") because the user cannot see the plan in the UI until you call ExitPlanMode. If you need plan approval, use ExitPlanMode instead.
+        """
+    }
+
     public let isReadOnly = true
     public let isConcurrencySafe = false // Must run alone — cannot parallelize user interaction
     public var shouldDefer: Bool { true }
@@ -22,7 +49,7 @@ public struct AskUserQuestionTool: Tool {
         questionSchema.properties?["header"] = JSONSchemaProperty(type: "string", description: "A label for the option group")
         questionSchema.properties?["multiSelect"] = JSONSchemaProperty(type: "boolean", description: "Allow selecting multiple options")
 
-        schema.properties?["questions"] = JSONSchemaProperty(type: "array", description: "Questions to ask (max 4)")
+        schema.properties?["questions"] = JSONSchemaProperty(type: "array", description: "Questions to ask (max 4). Users can always type free-text answers outside the listed options — the text is treated as a valid custom answer.")
         schema.required = ["questions"]
         return schema
     }()
@@ -79,34 +106,36 @@ public struct AskUserQuestionTool: Tool {
         if let handler = context.userInputPromptHandler {
             let responses = await handler(parsedQuestions)
 
-            // Build result string from responses
-            var output = ""
-            for (i, response) in responses.enumerated() {
-                let q = parsedQuestions[i]
-                if !output.isEmpty { output += "\n" }
-
-                if !q.header.isEmpty { output += "\(q.header): " }
-                output += "\(q.question)\n"
-
+            // Build result string in CC-compatible format.
+            // Concise, declarative — tells the LLM the interaction is done
+            // and to continue with the user's answers in mind.
+            let answersText = zip(parsedQuestions, responses).compactMap { q, response -> String? in
+                let answer: String
                 if let customText = response.customText, !customText.isEmpty {
-                    output += "User answered: \(customText)"
+                    answer = customText
                 } else if !response.optionIndices.isEmpty {
-                    let selectedLabels = response.optionIndices.compactMap { idx in
+                    answer = response.optionIndices.compactMap { idx in
                         q.options.indices.contains(idx) ? q.options[idx].label : nil
-                    }
-                    output += "User answered: \(selectedLabels.joined(separator: ", "))"
+                    }.joined(separator: ", ")
                 } else {
-                    output += "User did not select an option."
+                    return nil // skipped (no answer)
                 }
-            }
+                return "\"\(q.question)\"=\"\(answer)\""
+            }.joined(separator: ", ")
 
+            let output: String
+            if answersText.isEmpty {
+                output = "User did not select an option."
+            } else {
+                output = "User has answered your questions: \(answersText). You can now continue with the user's answers in mind."
+            }
             return ToolResult(content: output)
         }
 
         // Fallback: no interactive handler — format as text to the LLM
         // (useful in non-interactive contexts like sub-agents or tests)
         var output = ""
-        for (i, q) in parsedQuestions.enumerated() {
+        for (_, q) in parsedQuestions.enumerated() {
             if !output.isEmpty { output += "\n" }
             if !q.header.isEmpty { output += "\(q.header): " }
             output += "\(q.question)\n"
