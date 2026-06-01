@@ -24,7 +24,7 @@ public actor MCPClient {
             ])
         ])
 
-        _ = try? await sendRequest(method: "notifications/initialized", params: nil)
+        try? await transport.sendWithoutResponse(.notification(method: "notifications/initialized", params: nil))
         isInitialized = true
     }
 

@@ -59,6 +59,7 @@ public enum MCPMessage: Sendable {
 public protocol MCPTransport: Sendable {
     func connect() async throws
     func send(_ message: MCPMessage) async throws -> MCPMessage
+    func sendWithoutResponse(_ message: MCPMessage) async throws
     func disconnect() async
 }
 
@@ -100,11 +101,16 @@ public actor StdioTransport: MCPTransport {
         guard let stdinHandle, let stdoutHandle else {
             throw MCPError.transportNotConnected
         }
-        let requestData = try MessageCoder.encode(message)
-        stdinHandle.write(requestData)
+        return try await sendAndReadJSON(message, stdinHandle: stdinHandle, stdoutHandle: stdoutHandle)
+    }
+
+    public func sendWithoutResponse(_ message: MCPMessage) async throws {
+        guard let stdinHandle else {
+            throw MCPError.transportNotConnected
+        }
+        let data = try MessageCoder.encode(message)
+        stdinHandle.write(data)
         stdinHandle.write("\n".data(using: .utf8)!)
-        let responseData = try await readResponse(from: stdoutHandle)
-        return try MessageCoder.decode(responseData)
     }
 
     public func disconnect() {
@@ -114,18 +120,50 @@ public actor StdioTransport: MCPTransport {
         stdinHandle = nil
     }
 
+    /// Read from FileHandle asynchronously until we get a newline-delimited line.
+    /// Uses readabilityHandler to avoid blocking the Swift cooperative thread pool.
     private func readResponse(from handle: FileHandle) async throws -> Data {
-        var buffer = Data()
-        for _ in 0..<1000 {
-            let available = try handle.read(upToCount: 4096) ?? Data()
-            buffer.append(available)
-            if buffer.contains(10) { break }
-            try await Task.sleep(nanoseconds: 50_000_000)
+        final class Buffer: @unchecked Sendable { var data = Data() }
+        return try await withCheckedThrowingContinuation { continuation in
+            let buffer = Buffer()
+            handle.readabilityHandler = { h in
+                let available = h.availableData
+                if available.isEmpty {
+                    handle.readabilityHandler = nil
+                    continuation.resume(throwing: MCPError.transportNotConnected)
+                    return
+                }
+                buffer.data.append(available)
+                if buffer.data.contains(10) {
+                    handle.readabilityHandler = nil
+                    if let newline = buffer.data.firstIndex(of: 10) {
+                        continuation.resume(returning: buffer.data[..<newline])
+                    } else {
+                        continuation.resume(throwing: MCPError.invalidResponse)
+                    }
+                }
+            }
         }
-        guard let newline = buffer.firstIndex(of: 10) else {
-            throw MCPError.invalidResponse
+    }
+
+    /// Read a line and validate it is parseable JSON. Skips non-JSON status/log lines.
+    private func readJSONLine(from handle: FileHandle) async throws -> Data {
+        for _ in 0..<50 {
+            let raw = try await readResponse(from: handle)
+            if let first = raw.first, first == 0x7B { // '{'
+                return raw
+            }
         }
-        return buffer[..<newline]
+        throw MCPError.invalidResponse
+    }
+
+    /// Send a message and skip non-JSON lines until we get a valid JSON-RPC response.
+    private func sendAndReadJSON(_ message: MCPMessage, stdinHandle: FileHandle, stdoutHandle: FileHandle) async throws -> MCPMessage {
+        let requestData = try MessageCoder.encode(message)
+        stdinHandle.write(requestData)
+        stdinHandle.write("\n".data(using: .utf8)!)
+        let responseData = try await readJSONLine(from: stdoutHandle)
+        return try MessageCoder.decode(responseData)
     }
 }
 

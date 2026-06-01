@@ -20,6 +20,14 @@ final class SharedModel: @unchecked Sendable {
     init(_ model: String) { self.current = model }
 }
 
+/// Reference-type holder for MCP clients, sharable across closures and methods
+/// without requiring struct mutation (same pattern as SharedModel).
+final class MCPClientsHolder: @unchecked Sendable, Decodable {
+    var clients: [any Sendable] = []
+    init() {}
+    convenience init(from decoder: Decoder) throws { self.init() }
+}
+
 // MARK: - Shared I/O Helpers
 
 /// Write raw bytes directly to stdout (for ANSI escape codes).
@@ -186,6 +194,10 @@ struct ChatCommand: AsyncParsableCommand {
     /// Tracks Ctrl+O expand/collapse toggle state across the session.
     var expandState = ExpandState()
 
+    /// Holds connected MCP clients. Reference type so it can be mutated in run()
+    /// without needing struct mutation (same pattern as ExpandState).
+    var mcpClientsList = MCPClientsHolder()
+
     func run() async throws {
         // Capture terminal state before LineEditor puts it in raw mode.
         // promptUserForQuestions needs a fully correct cooked-mode terminal,
@@ -251,7 +263,6 @@ struct ChatCommand: AsyncParsableCommand {
         )
         let subAgentManager = SubAgentManager(engine: subAgentEngine, taskManager: taskManager)
         registerBuiltinTools(into: registry, taskManager: taskManager, subAgentManager: subAgentManager)
-        let toolDefs = await registry.toolDefinitions()
 
         let editor = LineEditor()
 
@@ -263,8 +274,47 @@ struct ChatCommand: AsyncParsableCommand {
         // handler can cancel it (preventing stdin stealing) and restart it.
         let currentEscapeTask = EscapeTaskHolder()
 
-        // ── Set up inline popup data sources (@ and / completions) ──
+        // ── Bootstrap MCP servers ──
         let cwd = FileManager.default.currentDirectoryPath
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        let mcpBootstrapper = MCPBootstrapper()
+        let mcpToolDefs = await mcpBootstrapper.bootstrap(cwd: cwd, home: homeDir)
+
+        // Register each discovered MCP tool into the ToolRegistry
+        for def in mcpToolDefs {
+            let parts = def.name.split(separator: "__", maxSplits: 2, omittingEmptySubsequences: true)
+            if parts.count >= 3, parts[0] == "mcp" {
+                let serverName = String(parts[1])
+                let toolName = String(parts[2])
+                let dynamicTool = DynamicMCPTool(
+                    serverName: serverName,
+                    toolName: toolName,
+                    toolDescription: def.description,
+                    inputSchema: def.inputSchema,
+                    bootstrapper: mcpBootstrapper
+                )
+                registry.register(dynamicTool)
+            }
+        }
+
+        // Store clients in the holder for use in ToolUseContext
+        let mcpClientMap = await mcpBootstrapper.clients
+        mcpClientsList.clients = Array(mcpClientMap.values)
+
+        // Log MCP startup status
+        if !mcpClientMap.isEmpty {
+            let serverNames = mcpClientMap.keys.sorted().joined(separator: ", ")
+            emitBlock("[bold]MCP:[/] \(mcpToolDefs.count) tools from \(serverNames)")
+        }
+        let mcpFailures = await mcpBootstrapper.failures
+        for (server, error) in mcpFailures {
+            emitBlock("[bold]MCP:[/] [yellow]\(server)[/] — \(error)")
+        }
+
+        // Refresh toolDefs after MCP registration
+        let toolDefs = await registry.toolDefinitions()
+
+        // ── Set up inline popup data sources (@ and / completions) ──
         let sessionStore = SessionStore()  // needed early for SessionDataSource in popup
 
         // Shared file search index: built once via git ls-files, reused across
@@ -1162,6 +1212,7 @@ struct ChatCommand: AsyncParsableCommand {
             isAutoModeAvailable: bylassAvailable,
             prePlanMode: sessionState.isPlanModeActive ? .plan : nil,
             tools: registry.allTools,
+            mcpClients: mcpClientsList.clients.isEmpty ? nil : mcpClientsList.clients,
             mainLoopModel: sharedModel.current,
             querySource: .repl,
             permissionPromptHandler: { _, _, _ in

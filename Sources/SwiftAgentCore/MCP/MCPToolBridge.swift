@@ -14,6 +14,19 @@ public struct MCPToolBridge: Sendable {
         }
     }
 
+    /// Convert MCP tool descriptions into ToolDefinition with server-prefixed names.
+    /// E.g. codegraph's `codegraph_search` → `mcp__codegraph__codegraph_search`.
+    public static func buildMCPToolDefinitions(from tools: [MCPToolDescription], serverName: String) -> [ToolDefinition] {
+        let prefix = getMcpPrefix(serverName)
+        return tools.map { tool in
+            ToolDefinition(
+                name: "\(prefix)\(tool.name)",
+                description: tool.description ?? "[\(serverName)] \(tool.name)",
+                inputSchema: tool.inputSchema ?? JSONSchema(type: "object", properties: [:])
+            )
+        }
+    }
+
     /// Convert MCP tool result into the agent's ToolResult.
     public static func buildToolResult(_ result: MCPToolResult) -> ToolResult {
         ToolResult(content: result.content, isError: result.isError)
