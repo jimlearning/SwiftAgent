@@ -61,7 +61,7 @@ SwiftAgent 不使用全屏 framebuffer、不实现 diff 引擎。所有终端更
 
 ### 模式 A：单行原地覆盖 — Spinner
 
-**位置**：`ChatCommand.swift:627-633`
+**位置**：`ChatCommand.swift:627-633` (原版，现位于内联 agent 循环中)
 
 ```
 时序：每 100ms 一帧，同一条终端行上覆盖
@@ -88,7 +88,7 @@ fflush(stdout)
 
 ### 模式 B：输入区域边界重绘 — LineEditor
 
-**位置**：`LineEditor.swift:992-1074`
+**位置**：`EditorRenderer.redraw()` (原 `LineEditor.redrawLine()`, L992-1074)。已重构至 `EditorRenderer.swift`。
 
 这是 SwiftAgent 中最复杂的更新路径。每次按键后触发。
 
@@ -161,7 +161,7 @@ private func cursorPosition(promptWidth: Int, prefix: String) -> (row: Int, colu
 }
 ```
 
-**Ghost Text 渲染**（`LineEditor.swift:1029-1042`）：
+**Ghost Text 渲染**（`EditorRenderer.redraw()`, 原 `LineEditor.swift:1029-1042`）：
 
 选中 `/model` 后，`[model-name]` 以 dim 样式显示在光标后：
 
@@ -185,7 +185,7 @@ if let gt = ghostText, editorMode.isPopup == false {
 
 ### 模式 C：Popup 区域全量重绘 — InlinePopup
 
-**位置**：`InlinePopup.swift:187-329`，由 `LineEditor.redrawLine()` 调用
+**位置**：`InlinePopup.swift:187-329`，由 `ComposerState.renderPopup()` 调用
 
 ```
 You: /mod█
@@ -242,7 +242,7 @@ private mutating func updateScroll() {
 
 ### 模式 D：纯追加（流式输出）— 零 ANSI 控制
 
-**位置**：`ChatCommand.swift:674-746`
+**位置**：`ChatCommand.swift` 内联 agent 循环 (原 L674-746，现位于 `run()` 方法的流式处理循环中)
 
 LLM 文本 delta 直接 `print()` 输出：
 
@@ -284,7 +284,7 @@ case .thinkingDelta(let text):
 
 ### 模式 E：区域清除 + 重绘 — 工具结果折叠/展开
 
-**位置**：`ChatCommand.swift:1145-1164`
+**位置**：`ChatCommand.swift:1122-1164` (原版，现位于 `ChatCommand+ToolDisplay.swift` 中 `handleCtrlO` / `collapseExpandedOutput`)
 
 **折叠**（Ctrl+O 在已展开状态下）：
 ```

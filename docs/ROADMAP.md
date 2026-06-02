@@ -18,7 +18,7 @@
 | 11 | Sub-Agent & Tasks | Done | SubAgentManager, TaskManager (actor), WorktreeManager |
 | 12+ | Advanced Features | Done | HookSystem, PluginManager, FeatureFlags |
 
-Build: 0 errors, 0 warnings. Tests: 171 tests, 47 suites, all passing.
+Build: 0 errors, 0 warnings. Tests: 232 tests, 57 suites, all passing (1 pre-existing failure: `loadAllReturnsEmptyForEmptyDirectory` finds `~/.claude/CLAUDE.md`).
 
 ## MVP Scope (Complete)
 
@@ -39,3 +39,9 @@ None.
 ## Recently Completed
 
 All 12 phases complete. Recent CLI enhancements: paste detection, multi-line input (Option+Enter/Shift+Enter), ESC to cancel, markdown rendering (headings, code blocks, display-width-aligned tables), emitBlock spacing, zero build warnings.
+
+### TUI Decomposition (June 2026)
+
+- **ChatCommand** split into 5 extension files: `+Types`, `+SystemPrompt`, `+ToolDisplay`, `+SessionPicker`, `+UserPrompt`. Main file reduced from 1,992→1,111 lines (-44%).
+- **LineEditor** decomposed into 5 independent modules: `TextBuffer` (value-type buffer), `TerminalInput` (raw I/O + escape parsing), `EditorRenderer` (terminal drawing), `PasteBurstDetector` (paste handling), `ComposerState` (popup state machine). Main file reduced from 1,287→461 lines (-64%).
+- CLI directory grew from 10 files to 27 files, each with a single well-defined responsibility.

@@ -47,6 +47,8 @@ Thin CLI layer. All UI/UX lives here.
 | Agent loop location | ChatCommand (inline), not QueryEngine | Matches CC's pattern; CLI owns the loop orchestration |
 | Stream parsing | Manual SSE accumulation + contentBlockStop parse | CC pattern; avoids premature parse of partial tool input |
 | Sub-agent execution | REPL wires `AgentTool` to `SubAgentManager` | Foreground sub-agents run to completion with status-line progress; background sub-agents return a `TaskOutput` task ID and store progress/final output in `TaskManager` |
+| ChatCommand decomposition | Extension files (`+Type`, `+SystemPrompt`, etc.) | Keeps struct definition intact, uses module-level visibility for extension access. Reduced from 1,992→1,111 lines (-44%) |
+| LineEditor decomposition | 5 independent modules (`TextBuffer`, `TerminalInput`, `EditorRenderer`, `PasteBurstDetector`, `ComposerState`) | Pure function-like subsystems with no terminal side-effects. Reduced from 1,287→461 lines (-64%) |
 
 ## Design Conventions
 
@@ -160,15 +162,36 @@ Sources/SwiftAgentCore/
 
 Sources/SwiftAgentCLI/
 ├── EntryPoint.swift          # Program entry point
-├── ChatCommand.swift         # Main command + 43 tool registrations + inline agent loop
+├── ChatCommand.swift         # Orchestrator: run() + ArgumentParser struct
+├── ChatCommand+Types.swift   # Shared types (ExpandState, SessionState, CurrentToolTracker, etc.)
+├── ChatCommand+SystemPrompt.swift  # System prompt builders (MCP, CLAUDE.md, deferred tools)
+├── ChatCommand+ToolDisplay.swift   # Tool result display, Ctrl+O expand/collapse
+├── ChatCommand+SessionPicker.swift # Interactive session picker menu
+├── ChatCommand+UserPrompt.swift    # Interactive question prompt handler
 ├── TerminalRenderer.swift    # ANSI rendering (banner, spinner, left-border, panel)
-├── TerminalCapability.swift  # Terminal capability detection
-├── LineEditor.swift          # Raw-mode editor (history, bracketed paste, multi-line, ESC cancel)
-├── MarkdownRenderer.swift    # Markdown → ANSI (headings, code blocks, display-width-aligned tables)
+├── TerminalCapability.swift  # Terminal capability detection (TTY, color, size)
+├── StatusLine.swift          # Bottom-line overlay (token usage, working state)
+├── LineEditor.swift          # Thin orchestrator for raw-mode editing
+├── TextBuffer.swift          # Value-type text/cursor buffer with word boundaries
+├── TerminalInput.swift       # Raw terminal I/O + escape sequence parser
+├── EditorRenderer.swift      # Buffer-to-terminal drawing with display-width
+├── ComposerState.swift       # Popup mode state machine (/ and @ completions)
+├── PasteBurstDetector.swift  # Paste burst detection + placeholder substitution
+├── MarkdownRenderer.swift    # Markdown → ANSI (headings, code blocks, tables)
+├── InlinePopup.swift         # Popup UI rendering (menu with scroll/highlight)
+├── PopupDataSource.swift     # Command + file data sources for popups
 ├── TerminalDisplayWidth.swift # CJK/emoji-aware terminal column width helpers
+├── ColorTheme.swift          # Color theme definitions (default, monochrome)
 ├── DebugLogger.swift         # JSONL API request/response logging
-├── ColorTheme.swift          # Color theme definitions
-└── StreamRenderer.swift      # SSE stream event rendering
+├── CollapseDetector.swift    # Tool result collapse detection
+├── ToolResultCache.swift     # Collapsed result storage for /expand
+├── FileSearchIndex.swift     # git ls-files based search index for @-mentions
+├── FuzzyMatcher.swift        # Fuzzy matching for popup search
+├── TokenANSIRenderer.swift   # Token-level ANSI rendering
+├── CodeTheme.swift           # Code syntax highlighting themes
+├── ChatToolExecutionScheduler.swift  # Concurrent tool execution
+├── ChatToolInputAccumulator.swift    # Streaming tool input JSON accumulator
+└── ToolResultCache.swift     # Tool result caching for collapse/expand
 
 Tests/
 ├── SwiftAgentCoreTests/      # Core library tests
@@ -178,6 +201,6 @@ Tests/
 
 ## Reference Materials
 
-- [Claude Code Source Study](../Claude-Code-Source-Study/) — 25-chapter deep analysis
-- [Claude Code System Prompts](../claude-code-system-prompts/) — 190+ modular prompts
-- [Claude Code Source](../claude-code/) — Full TypeScript reference implementation (~512K lines)
+- [Claude Code Source Study](~/CLI/Claude-Code-Source-Study/) — 25-chapter deep analysis
+- [Claude Code System Prompts](~/CLI/claude-code-system-prompts/) — 190+ modular prompts
+- [Claude Code Source](~/CLI/claude-code/) — Full TypeScript reference implementation (~512K lines)

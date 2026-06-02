@@ -21,11 +21,28 @@ Sources/
 │   ├── Safety/               # PermissionEngine, SafetyChecker
 │   └── MCP/ Config/ State/ Hooks/ Plugins/ Storage/ Commands/
 └── SwiftAgentCLI/            # CLI entry point
-    ├── ChatCommand.swift     # Inline agent loop + 43 tool registrations
+    ├── ChatCommand.swift     # Orchestrator: run() + ArgumentParser struct
+    ├── ChatCommand+Types.swift, ChatCommand+SystemPrompt.swift,
+    │   ChatCommand+ToolDisplay.swift, ChatCommand+SessionPicker.swift,
+    │   ChatCommand+UserPrompt.swift  # Decoupled extensions
+    ├── LineEditor.swift      # Thin orchestrator for raw-mode editing
+    ├── TextBuffer.swift      # Value-type text/cursor buffer
+    ├── TerminalInput.swift   # Raw terminal I/O + escape sequence parser
+    ├── EditorRenderer.swift  # Buffer-to-terminal drawing
+    ├── ComposerState.swift   # Popup mode state machine
+    ├── PasteBurstDetector.swift # Paste detection + placeholder substitution
     ├── TerminalRenderer.swift # ANSI rendering (banner, left-border, panel, spinner)
-    ├── LineEditor.swift      # Raw-mode line editor with history
-    └── DebugLogger.swift     # JSONL debug logging for API interactions
-Tests/ — 171 tests, 47 suites
+    ├── MarkdownRenderer.swift # Markdown → ANSI
+    ├── TerminalCapability.swift # TTY/color/size detection
+    ├── TerminalDisplayWidth.swift # CJK-aware display width
+    ├── InlinePopup.swift     # Popup UI rendering
+    ├── PopupDataSource.swift # Command + file data sources for popups
+    ├── StatusLine.swift      # Bottom-line overlay
+    ├── ColorTheme.swift      # ANSI color theme
+    ├── DebugLogger.swift     # JSONL debug logging
+    └── ...                   # CollapseDetector, ToolResultCache, FileSearchIndex,
+                                FuzzyMatcher, TokenANSIRenderer, CodeTheme
+Tests/ — 232 tests, 57 suites
 ```
 
 ## Key Conventions
@@ -60,7 +77,7 @@ You are an autonomous operator for SwiftAgent. Don't wait for narrow instruction
 - **Direct and evidence-driven.** Every claim should rest on code, docs, examples, or clear reasoning.
 - **Push back** when a direction is technically weak or inconsistent. Silence is worse than a well-reasoned objection.
 - **Prefer action.** In auto mode, proceed on low-risk work without asking. For destructive/irreversible actions, confirm first.
-- **Stay aligned with Claude Code.** When in doubt about naming, behavior, or boundaries, consult the CC source (`/Users/jim/SwiftAgent/claude-code/`). Don't preserve mismatches by default.
+- **Stay aligned with Claude Code.** When in doubt about naming, behavior, or boundaries, consult the CC source (`~/CLI/claude-code/`). Don't preserve mismatches by default.
 
 ## After Gathering User Input
 
@@ -79,7 +96,7 @@ SwiftAgent is the Swift/Apple-platform counterpart to Claude Code: a local agent
 ## Engineering Principles
 
 - **Core vs CLI boundary**: `SwiftAgentCore` is the reusable runtime; `SwiftAgentCLI` is ArgumentParser + terminal rendering + user interaction. Don't mix them.
-- **No god files.** Decompose when a file becomes hard to reason about. High-touch files (ChatCommand, TerminalRenderer, LineEditor) are targets for decomposition.
+- **No god files.** Decompose when a file becomes hard to reason about. ChatCommand (1,992→1,111 lines, -44%) decomposed via extension files. LineEditor (1,287→461 lines, -64%) decomposed into TextBuffer, TerminalInput, EditorRenderer, PasteBurstDetector, and ComposerState.
 - **Explicit types over ambiguity.** Prefer enums and structs over booleans and positional literals in public APIs.
 - **Actor isolation** for mutable shared state.
 - **Testable without live models.** UI output, protocol payloads, persistence schemas, and command behavior should all be testable without a live LLM call.
@@ -90,7 +107,7 @@ SwiftAgent is the Swift/Apple-platform counterpart to Claude Code: a local agent
 
 - Terminal UX is a core product surface, not a thin wrapper.
 - Streaming must: preserve partially-rendered text, recover status lines correctly, avoid flicker or stale "Working" states.
-- Composer should move toward CC-like separation: terminal capability detection, text buffer, paste burst detection, composer state, composer renderer, slash popup.
+- Composer separation achieved: `TextBuffer` (buffer), `TerminalInput` (raw I/O), `EditorRenderer` (drawing), `PasteBurstDetector` (paste handling), `ComposerState` (popup state machine) are independent modules used by `LineEditor`.
 - Slash commands are typed command metadata, not just string switches.
 - Plan mode is collaboration behavior, not just a local tool-execution flag.
 - `exec`/CI output must remain deterministic and script-friendly.

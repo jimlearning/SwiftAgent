@@ -14,7 +14,7 @@
 **SwiftAgent** 是 [Claude Code](https://github.com/anthropics/claude-code) 的 Swift 语言 1:1 复刻版。目标是完整复刻 Claude Code 的源码架构、类型系统、工具生态和交互行为。
 
 - **项目路径**: `/Users/jim/SwiftAgent/`
-- **CC 源码参考**: `/Users/jim/SwiftAgent/claude-code/`
+- **CC 源码参考**: `~/CLI/claude-code/`
 - **当前对齐度**: ~99.0%
 - **构建系统**: Swift Package Manager (0 warnings)
 - **测试**: 171 个测试 / 47 个测试套件，全部通过

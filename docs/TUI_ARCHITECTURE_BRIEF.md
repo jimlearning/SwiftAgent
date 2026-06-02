@@ -2,13 +2,18 @@
 
 ## 总览
 
-纯 Swift + ANSI 转义序列的终端 UI，零外部 TUI 框架依赖（无 ncurses/TermKit）。采用 Nanobot REPL 模式，所有代码位于 `Sources/SwiftAgentCLI/`（~22 文件，~4000 行）。
+纯 Swift + ANSI 转义序列的终端 UI，零外部 TUI 框架依赖（无 ncurses/TermKit）。采用 Nanobot REPL 模式，所有代码位于 `Sources/SwiftAgentCLI/`（~27 文件，~5000 行）。
 
 ## 分层架构
 
 ```
-ChatCommand.run()              ← REPL 主循环 + 内联 agent 循环（1799 行）
-  ├── LineEditor               ← raw-mode 输入（1288 行）
+ChatCommand.run()              ← REPL 主循环 + 内联 agent 循环（1111 行，已分解）
+  ├── LineEditor               ← raw-mode 编排器（461 行，已分解）
+  │     ├── TextBuffer         ← 纯值类型文本/光标缓冲区
+  │     ├── TerminalInput      ← 原始终端 I/O + 转义序列解析
+  │     ├── EditorRenderer     ← 缓冲区→终端绘制
+  │     ├── PasteBurstDetector ← 粘贴检测 + 占位符
+  │     ├── ComposerState      ← 弹出模式状态机
   │     └── InlinePopup        ← / 命令补全 + @ 文件补全 + 子菜单
   ├── TerminalRenderer         ← ANSI 输出基元（panel/banner/spinner/光标）
   ├── MarkdownRenderer         ← Markdown → ANSI + 语法高亮
@@ -124,18 +129,18 @@ LineEditor.readLine("You: ") → /slash? → 命令分发 or LLM 请求
 
 | 层         | 文件                                                                                              |
 |------------|---------------------------------------------------------------------------------------------------|
-| **输入**   | `LineEditor`(1288行)、`InlinePopup`(330行)、`PopupDataSource`(500行)、`FuzzyMatcher`、`FileSearchIndex` |
+| **输入**   | `LineEditor`(461行)、`TextBuffer`(279行)、`TerminalInput`(254行)、`EditorRenderer`(141行)、`PasteBurstDetector`(88行)、`ComposerState`(220行)、`InlinePopup`(330行)、`PopupDataSource`(500行)、`FuzzyMatcher`、`FileSearchIndex` |
 | **输出**   | `TerminalRenderer`(232行)、`MarkdownRenderer`(780行)、`StatusLine`、`StreamRenderer`(Core,100行)    |
 | **语法高亮** | `SyntaxHighlighter`(400行)、`TokenANSIRenderer`(100行)、`CodeTheme`、`LanguageRegistry`              |
-| **编排**   | `ChatCommand`(1799行)、`ChatToolInputAccumulator`、`ChatToolExecutionScheduler`、`CurrentToolTracker`、`CollapseDetector`、`CollapsedSummaryFormatter`、`ToolResultCache` |
+| **编排**   | `ChatCommand`(1111行，已分解)、`ChatCommand+Types`、`ChatCommand+SystemPrompt`、`ChatCommand+ToolDisplay`、`ChatCommand+SessionPicker`、`ChatCommand+UserPrompt`、`ChatToolInputAccumulator`、`ChatToolExecutionScheduler`、`CurrentToolTracker`、`CollapseDetector`、`CollapsedSummaryFormatter`、`ToolResultCache` |
 | **基础设施** | `TerminalCapability`(62行)、`TerminalDisplayWidth`(105行)、`ColorTheme`(116行)、`DebugLogger`(198行)  |
 
 ## 改进清单
 
 | 优先级 | 问题                                                      |
 |--------|-----------------------------------------------------------|
-| **P0** | `ChatCommand`(1799行) 含全部 agent loop/工具/渲染，需拆分 |
-|        | `LineEditor`(1288行) 应拆为 Readline/Paste/Popup/History  |
+| **P0** | ~~`ChatCommand`(1799行) 含全部 agent loop/工具/渲染，需拆分~~ ✅ 已完成 |
+|        | ~~`LineEditor`(1288行) 应拆为 Readline/Paste/Popup/History~~ ✅ 已完成 |
 | **P1** | InlinePopup/LineEditor 中 ANSI 硬编码，未通过 ColorTheme   |
 |        | `StreamRenderer.highlightCodeBlocks` 未使用，高亮集成待完善 |
 |        | 无终端 resize 信号处理（popup 宽度不动态更新）            |

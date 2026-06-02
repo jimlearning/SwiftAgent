@@ -27,7 +27,7 @@ struct TerminalModeTests {
         var attrs = termios()
         attrs.c_oflag = tcflag_t(OPOST)
 
-        let raw = LineEditor.rawInputAttributes(from: attrs, preserveOutputProcessing: true)
+        let raw = TerminalInput.rawAttributes(from: attrs, preserveOutputProcessing: true)
 
         #expect((raw.c_oflag & tcflag_t(OPOST)) != 0)
     }
@@ -37,7 +37,7 @@ struct TerminalModeTests {
         var attrs = termios()
         attrs.c_oflag = tcflag_t(OPOST)
 
-        let raw = LineEditor.rawInputAttributes(from: attrs, preserveOutputProcessing: false)
+        let raw = TerminalInput.rawAttributes(from: attrs, preserveOutputProcessing: false)
 
         #expect((raw.c_oflag & tcflag_t(OPOST)) == 0)
     }
@@ -74,15 +74,14 @@ struct PastePlaceholderTests {
     @Test
     func multilinePasteDisplaysPlaceholderButExpandsToOriginalText() {
         let pasted = "first line\nsecond line\nthird line"
-        let placeholder = LineEditor.makePastePlaceholder(pasteIndex: 2, content: pasted)
-        let display = "Please inspect \(placeholder)"
-        let expanded = LineEditor.expandPastePlaceholders(
-            in: display,
-            expansions: [placeholder: pasted]
-        )
 
-        #expect(placeholder == "[Pasted text #2 +2 lines]")
-        #expect(display.contains("[Pasted text #2 +2 lines]"))
+        var detector = PasteBurstDetector()
+        let placeholder = detector.processPaste(pasted)
+        let display = "Please inspect \(placeholder)"
+        let expanded = detector.expandPlaceholders(in: display)
+
+        #expect(placeholder == "[Pasted text #1 +2 lines]")
+        #expect(display.contains("[Pasted text #1 +2 lines]"))
         #expect(expanded == "Please inspect first line\nsecond line\nthird line")
     }
 
@@ -94,7 +93,7 @@ struct PastePlaceholderTests {
         /help 里显示的菜单功能除了 clear 其他都不能用。
         """
 
-        #expect(LineEditor.makePastePlaceholder(pasteIndex: 1, content: pasted) == "[Pasted text #1 +2 lines]")
+        #expect(PasteBurstDetector.makePlaceholder(pasteIndex: 1, content: pasted) == "[Pasted text #1 +2 lines]")
     }
 }
 

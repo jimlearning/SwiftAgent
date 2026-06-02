@@ -6,7 +6,7 @@ SwiftAgent 的 TUI 是一个零外部依赖、纯 Swift 实现的终端 UI，直
 
 不使用任何外部 TUI 框架（ncurses、SwiftTerm、TermKit）。唯一的间接系统依赖是 Apple 的 `swift-argument-parser`，仅用于 CLI 入口点接线。
 
-所有代码位于 `Sources/SwiftAgentCLI/`（约 22 个文件，~4000 行）。设计目标：Claude Code 行为层面的 1:1 对齐，但以 Swift 原生惯用方式实现，不盲从 TypeScript 模式。
+所有代码位于 `Sources/SwiftAgentCLI/`（约 27 个文件，~5000 行）。设计目标：Claude Code 行为层面的 1:1 对齐，但以 Swift 原生惯用方式实现，不盲从 TypeScript 模式。
 
 ---
 
@@ -19,16 +19,26 @@ SwiftAgent 的 TUI 是一个零外部依赖、纯 Swift 实现的终端 UI，直
 │           初始化 · 斜杠命令 · 流式处理 · 工具执行 · 会话管理            │
 ├──────────────────────────────────────────────────────────────────────────┤
 │                                                                            │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
-│  │   LineEditor     │  │ TerminalRenderer  │  │   MarkdownRenderer    │  │
-│  │   raw-mode 输入  │  │   ANSI 输出渲染   │  │   Markdown → ANSI     │  │
-│  │                  │  │                   │  │   含语法高亮          │  │
-│  │ ┌──────────────┐ │  │ · renderBanner   │  │ · 代码块检测          │  │
-│  │ │ InlinePopup  │ │  │ · renderPanel    │  │ · 表格渲染            │  │
-│  │ │ @ / / 补全   │ │  │ · renderLeftBorder│ │ · 标题 + 内联格式    │  │
-│  │ │ PopupDataSrc │ │  │ · spinnerFrame   │  │ · TreeSitter 集成     │  │
-│  │ └──────────────┘ │  │ · cursor 控制    │  └───────────────────────┘  │
-│  └──────────────────┘  └───────┬──────────┘                             │
+│  ┌────────────────────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
+│  │     LineEditor (thin)      │  │ TerminalRenderer  │  │   MarkdownRenderer    │  │
+│  │     raw-mode 编排          │  │   ANSI 输出渲染   │  │   Markdown → ANSI     │  │
+│  │                            │  │                   │  │   含语法高亮          │  │
+│  │ ┌──────────┐ ┌───────────┐│  │ · renderBanner   │  │ · 代码块检测          │  │
+│  │ │TextBuffer│ │Terminal   ││  │ · renderPanel    │  │ · 表格渲染            │  │
+│  │ │光标+文本  │ │Input      ││  │ · renderLeftBorder│ │ · 标题 + 内联格式    │  │
+│  │ │纯值类型  │ │raw I/O+   ││  │ · spinnerFrame   │  │ · TreeSitter 集成     │  │
+│  │ └──────────┘ │Escape解析 ││  │ · cursor 控制    │  └───────────────────────┘  │
+│  │ ┌──────────┐ └───────────┘│  └───────┬──────────┘                             │
+│  │ │Editor    │ ┌──────────┐ │          │                                         │
+│  │ │Renderer  │ │Composer  │ │          │                                         │
+│  │ │终端绘制  │ │State     │ │          │                                         │
+│  │ └──────────┘ │popup状态│ │          │                                         │
+│  │ ┌──────────┐ │机        │ │          │                                         │
+│  │ │PasteBurst│ └──────────┘ │          │                                         │
+│  │ │Detector  │ ┌──────────┐ │          │                                         │
+│  │ │粘贴检测  │ │InlinePopup│ │          │                                         │
+│  │ └──────────┘ │渲染+状态  │ │          │                                         │
+│  │              └──────────┘ │          │                                         │
 │                                │                                         │
 │  ┌─────────────────────────────┴──────────────────────────────────────┐  │
 │  │                      基础设施层                                     │  │
@@ -54,8 +64,18 @@ Core/CLI 边界：
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `ChatCommand.swift` | ~1799 | 主 REPL 循环 + 内联 Agent 循环 + 43 工具注册 + 斜杠命令分发 + Spinner/Escape 管理 |
-| `LineEditor.swift` | ~1288 | Raw-mode 行编辑器：历史 · 粘贴 · 转义序列 · 词边界 · Popup 集成 · Ghost text |
+| `ChatCommand.swift` | ~1111 | 精简编排器：参数解析 + REPL 循环 + Agent 循环 + 工具分发 |
+| `ChatCommand+Types.swift` | ~218 | 共享类型：ExpandState、SessionState、CurrentToolTracker、AtomicBool 等 9 个类型 |
+| `ChatCommand+SystemPrompt.swift` | ~136 | 系统提示构建器：MCP 指令、deferred tools、CLAUDE.md 注入 |
+| `ChatCommand+ToolDisplay.swift` | ~257 | 工具结果显示、Ctrl+O 展开/折叠、命令格式化 |
+| `ChatCommand+SessionPicker.swift` | ~131 | 交互式会话选择器（箭头键导航） |
+| `ChatCommand+UserPrompt.swift` | ~108 | 用户多选提问处理器（恢复 cooked mode） |
+| `LineEditor.swift` | ~461 | Raw-mode 编辑编排器：调用子系统完成输入、绘制、弹出、粘贴 |
+| `TextBuffer.swift` | ~279 | 纯值类型文本缓冲区：光标导航、词边界、ghost text、多行支持 |
+| `TerminalInput.swift` | ~254 | 原始终端 I/O + 转义序列解析器（CSI、SS3、kitty、bracketed paste） |
+| `EditorRenderer.swift` | ~141 | 缓冲区→终端绘制：行布局、光标定位、ghost 文本渲染 |
+| `ComposerState.swift` | ~220 | 弹出模式状态机：EditorMode、PopupState、提交/取消/导航 |
+| `PasteBurstDetector.swift` | ~88 | 粘贴爆发检测、规范化、多行占位符替换 |
 | `MarkdownRenderer.swift` | ~780 | Markdown → ANSI：代码高亮 · 表格 · 标题 · 内联格式 · 左边界 · 自动代码块检测 |
 | `InlinePopup.swift` | ~330 | 内联补全弹出菜单：`/` 命令 + `@` 文件搜索 · 滚动 · 选中高亮 · 子菜单 |
 | `TerminalRenderer.swift` | ~232 | ANSI 基元：Banner · Panel · LeftBorder · Spinner · 光标控制 · TTY drain |
@@ -200,11 +220,21 @@ Unicode 感知的列宽测量。对正确的光标定位至关重要：
 
 ## 3. 输入系统
 
-### `LineEditor.swift` — Raw-Mode 行编辑器
+### `LineEditor.swift` — Raw-Mode 编辑编排器（461 行）
 
-最复杂的单文件（1288 行）。在 raw terminal mode 下实现完整的行编辑器。
+编排器模式：`LineEditor` 不再是一个 1288 行的单体，而是将职责委托给 5 个独立子系统的薄编排器：
 
-**Raw Mode 设置** (`enterRawMode()`, L619-645):
+| 子系统 | 文件 | 行数 | 职责 |
+|--------|------|------|------|
+| `TextBuffer` | `TextBuffer.swift` | 279 | 纯值类型文本缓冲区：光标、ghost text、词边界、多行 |
+| `TerminalInput` | `TerminalInput.swift` | 254 | 终端 raw mode + `TerminalRawReader` 协议 + 转义序列解析 |
+| `EditorRenderer` | `EditorRenderer.swift` | 141 | 缓冲区→终端绘制 + 光标定位（`TerminalDisplayWidth` 计算） |
+| `PasteBurstDetector` | `PasteBurstDetector.swift` | 88 | 粘贴爆发检测 + 规范化 + 多行占位符替换 |
+| `ComposerState` | `ComposerState.swift` | 220 | 弹出模式状态机（`EditorMode`、`PopupState`） |
+
+`LineEditor` 本身仅处理：历史管理、shift 键检测、非 TTY 回退、以及将按键事件路由到合适的子系统。
+
+**Raw Mode 设置** (`TerminalInput.enterRawMode()`):
 - 通过 `termios` + `tcsetattr` 禁用：ICANON（行缓冲）、ECHO（回显）、ISIG（信号生成）、IXON（流控）、ICRNL（`\r`→`\n` 转换）、OPOST（输出处理）
 - 启用 bracket paste 模式 (`\033[?2004h`)
 
@@ -760,6 +790,8 @@ emitCollapsedResults()
 | **Kitty protocol 前向兼容** | 已实现 kitty keyboard protocol 解析 (`CSI key;mods u`)，尽管当前主要依赖传统 escape codes |
 | **写时渲染无缓冲** | 文本 delta 直接 `print()` + `fflush(stdout)`，不经过渲染缓冲层。Markdown 后处理在完整响应文本积累后执行 |
 | **双路输出** | `emitBlock()` 统一块输出（自动规范化换行），`writeToStdout()` 直接 `Darwin.write()` 输出原始 ANSI 控制序列 |
+| **ChatCommand 扩展模式** | `extension ChatCommand` 在 5 个单独文件中，使用模块级（internal）可见性，而非 `private`。将 struct 定义保存在一个文件中，同时允许多个关注点特定的文件 |
+| **LineEditor 组合模式** | LineEditor 拥有 TerminalInput、ComposerState、PasteBurstDetector，并就地创建 EditorRenderer 和 TextBuffer。子系统是纯值类型，可独立测试，不耦合终端 I/O |
 
 ---
 
@@ -769,7 +801,12 @@ emitCollapsedResults()
 
 | 文件 | 角色 |
 |------|------|
-| `LineEditor.swift` | Raw-mode 行编辑器、历史、popup 集成 (1288 行) |
+| `LineEditor.swift` | Raw-mode 编排器：路由按键事件到子系统 (461 行) |
+| `TextBuffer.swift` | 纯值类型文本缓冲区：光标、词边界、多行 (279 行) |
+| `TerminalInput.swift` | 终端 raw mode I/O + 转义序列解析器 (254 行) |
+| `EditorRenderer.swift` | 缓冲区→终端绘制 + 光标定位 (141 行) |
+| `PasteBurstDetector.swift` | 粘贴检测 + 多行占位符替换 (88 行) |
+| `ComposerState.swift` | 弹出模式状态机（/ 和 @ 补全）(220 行) |
 | `InlinePopup.swift` | 内联补全菜单渲染与状态管理 |
 | `PopupDataSource.swift` | `/` 命令和 `@` 文件补全数据源 |
 | `FuzzyMatcher.swift` | 模糊字符串匹配引擎 |
@@ -847,8 +884,8 @@ emitCollapsedResults()
 
 | 问题 | 说明 |
 |------|------|
-| `ChatCommand` 过长 (1799 行) | `run()` 方法约 1200 行，含 stream 处理、tool 执行、UI 更新——应提取 `AgentLoopController` |
-| `LineEditor` 过长 (1288 行) | 拆分为 `LineEditor+History`、`LineEditor+Paste`、`LineEditor+Popup`、`LineEditor+Readline` |
+| ~~`ChatCommand` 过长 (1799 行)~~ | ✅ **已完成**：分解为 5 个扩展文件，精简为 1111 行 (-44%) |
+| ~~`LineEditor` 过长 (1288 行)~~ | ✅ **已完成**：分解为 TextBuffer、TerminalInput、EditorRenderer、PasteBurstDetector、ComposerState，精简为 461 行 (-64%) |
 
 ### P1 — 重要
 

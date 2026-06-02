@@ -29,4 +29,4 @@ SwiftAgent is a Swift-native Claude Code reimplementation. Two modules:
 - **SwiftAgentCore** — Agent runtime: types, tools, LLM adapter, agent loop, safety, config, MCP, hooks, plugins
 - **SwiftAgentCLI** — Terminal: ArgumentParser commands, chat loop, ANSI rendering, line editor, markdown renderer
 
-CC source reference: `/Users/jim/SwiftAgent/claude-code/`
+CC source reference: `~/CLI/claude-code/`
