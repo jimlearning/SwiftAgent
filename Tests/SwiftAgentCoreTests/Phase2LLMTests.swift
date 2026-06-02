@@ -232,6 +232,77 @@ struct SystemPromptCachingTests {
 
 struct CacheControlPlacementTests {
     @Test
+    func systemPromptBoundaryCreatesGlobalStaticCacheBlock() {
+        let client = LLMClient(apiKey: "test")
+        let prompt = "STATIC\n\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\n\nDYNAMIC"
+        let formatted = client.apiFormattedSystem(prompt, enablePromptCaching: true)
+        guard let blocks = formatted as? [[String: Any]], blocks.count == 2 else {
+            Issue.record("Expected split system prompt blocks")
+            return
+        }
+
+        #expect(blocks[0]["type"] as? String == "text")
+        #expect(blocks[0]["text"] as? String == "STATIC")
+        let cacheControl = blocks[0]["cache_control"] as? [String: String]
+        #expect(cacheControl?["type"] == "ephemeral")
+        #expect(cacheControl?["scope"] == "global")
+        #expect(blocks[1]["text"] as? String == "DYNAMIC")
+        #expect(blocks[1]["cache_control"] == nil)
+    }
+
+    @Test
+    func systemPromptWithoutBoundaryUsesLegacySingleCacheBlock() {
+        let client = LLMClient(apiKey: "test")
+        let formatted = client.apiFormattedSystem("STATIC ONLY", enablePromptCaching: true)
+        guard let blocks = formatted as? [[String: Any]], blocks.count == 1 else {
+            Issue.record("Expected one system prompt block")
+            return
+        }
+
+        let cacheControl = blocks[0]["cache_control"] as? [String: String]
+        #expect(blocks[0]["text"] as? String == "STATIC ONLY")
+        #expect(cacheControl?["type"] == "ephemeral")
+        #expect(cacheControl?["scope"] == nil)
+    }
+
+    @Test
+    func requestBodyUsesSystemGlobalCacheInsteadOfToolCache() {
+        let client = LLMClient(apiKey: "test")
+        let prompt = "STATIC\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\nDYNAMIC"
+        let tools = [
+            ToolDefinition(name: "Read", description: "Read files", inputSchema: JSONSchema()),
+            ToolDefinition(name: "Write", description: "Write files", inputSchema: JSONSchema())
+        ]
+        let messages = [Message(type: .user, content: [.text("hello")])]
+
+        let streaming = client.buildMessagesRequestBody(
+            messages: messages,
+            model: "deepseek-v4-pro",
+            stream: true,
+            systemPrompt: prompt,
+            maxTokens: 1024,
+            tools: tools,
+            enablePromptCaching: true
+        )
+        let nonStreaming = client.buildMessagesRequestBody(
+            messages: messages,
+            model: "deepseek-v4-pro",
+            stream: false,
+            systemPrompt: prompt,
+            maxTokens: 1024,
+            tools: tools,
+            enablePromptCaching: true
+        )
+
+        #expect(countCacheControl(in: streaming["messages"]) == 1)
+        #expect(countCacheControl(in: streaming["system"]) == 1)
+        #expect(countCacheControl(in: streaming["tools"]) == 0)
+        #expect(countCacheControl(in: nonStreaming["messages"]) == 1)
+        #expect(countCacheControl(in: nonStreaming["system"]) == 1)
+        #expect(countCacheControl(in: nonStreaming["tools"]) == 0)
+    }
+
+    @Test
     func cacheControlOnLastTextBlock() {
         let msg = Message(type: .user, content: [.text("Hello")])
         let formatted = msg.apiFormattedWithCache
@@ -322,5 +393,72 @@ struct CacheControlPlacementTests {
         for block in blocks {
             #expect(block["cache_control"] == nil, "No block should get cache_control when all are thinking")
         }
+    }
+}
+
+private func countCacheControl(in value: Any?) -> Int {
+    if let dict = value as? [String: Any] {
+        let here = dict["cache_control"] == nil ? 0 : 1
+        return here + dict.values.map { countCacheControl(in: $0) }.reduce(0, +)
+    }
+    if let array = value as? [Any] {
+        return array.map { countCacheControl(in: $0) }.reduce(0, +)
+    }
+    return 0
+}
+
+struct ToolRegistryCachingTests {
+    @Test
+    func toolDefinitionsAreSortedAndStable() async {
+        let registry = ToolRegistry()
+        registry.register(WriteCacheTestTool())
+        registry.register(ReadCacheTestTool())
+
+        let first = await registry.toolDefinitions()
+        let second = await registry.toolDefinitions()
+
+        #expect(first.map(\.name) == ["Read", "Write"])
+        #expect(second.map(\.name) == ["Read", "Write"])
+        #expect(first.map(\.apiFormattedDescription) == second.map(\.apiFormattedDescription))
+    }
+}
+
+private struct ReadCacheTestTool: Tool {
+    let name = "Read"
+    let inputSchema = JSONSchema()
+    func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
+        "read"
+    }
+    func call(
+        input: [String: JSONValue],
+        context: ToolUseContext,
+        canUseTool: CanUseToolFn?,
+        parentMessage: Message?,
+        onProgress: ToolCallProgress?
+    ) async throws -> ToolResult {
+        ToolResult(content: "")
+    }
+}
+
+private struct WriteCacheTestTool: Tool {
+    let name = "Write"
+    let inputSchema = JSONSchema()
+    func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
+        "write"
+    }
+    func call(
+        input: [String: JSONValue],
+        context: ToolUseContext,
+        canUseTool: CanUseToolFn?,
+        parentMessage: Message?,
+        onProgress: ToolCallProgress?
+    ) async throws -> ToolResult {
+        ToolResult(content: "")
+    }
+}
+
+private extension ToolDefinition {
+    var apiFormattedDescription: String {
+        apiFormatted["description"] as? String ?? ""
     }
 }
