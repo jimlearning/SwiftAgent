@@ -7,6 +7,10 @@ public actor MCPClient {
     private var nextID = 1
     private var isInitialized = false
 
+    /// Server instructions from the initialize handshake (InitializeResult.instructions).
+    /// Per the MCP spec this is the canonical source of server-level instructions.
+    public private(set) var initializeInstructions: String?
+
     public init(transport: MCPTransport) {
         self.transport = transport
     }
@@ -15,7 +19,7 @@ public actor MCPClient {
     public func connect() async throws {
         try await transport.connect()
 
-        _ = try await sendRequest(method: "initialize", params: [
+        let initResult = try await sendRequest(method: "initialize", params: [
             "protocolVersion": JSONValue.string("2024-11-05"),
             "capabilities": .object([:]),
             "clientInfo": .object([
@@ -24,17 +28,32 @@ public actor MCPClient {
             ])
         ])
 
+        // Capture instructions from InitializeResult (canonical per MCP spec)
+        if let result = initResult,
+           let inst = result["instructions"],
+           case .string(let s) = inst,
+           !s.isEmpty {
+            initializeInstructions = s
+        }
+
         try? await transport.sendWithoutResponse(.notification(method: "notifications/initialized", params: nil))
         isInitialized = true
     }
 
     /// List tools available on the MCP server.
-    public func listTools() async throws -> [MCPToolDescription] {
+    /// Also returns server-level `instructions` from the response.
+    public func listTools() async throws -> (tools: [MCPToolDescription], instructions: String?) {
         let result = try await sendRequest(method: "tools/list", params: nil)
-        guard let tools = result?["tools"] else { return [] }
-        guard case .array(let items) = tools else { return [] }
 
-        return items.compactMap { item in
+        let instructions: String? = {
+            if let inst = result?["instructions"], case .string(let s) = inst, !s.isEmpty { return s }
+            return nil
+        }()
+
+        guard let tools = result?["tools"] else { return ([], instructions) }
+        guard case .array(let items) = tools else { return ([], instructions) }
+
+        let parsed = items.compactMap { item -> MCPToolDescription? in
             guard case .object(let obj) = item,
                   let name = obj["name"],
                   case .string(let nameStr) = name else { return nil }
@@ -44,8 +63,12 @@ public actor MCPClient {
                 return nil
             }
 
-            return MCPToolDescription(name: nameStr, description: desc, inputSchema: JSONSchema(type: "object", properties: [:]))
+            let schema = parseMCPInputSchema(obj["inputSchema"])
+
+            return MCPToolDescription(name: nameStr, description: desc, inputSchema: schema)
         }
+
+        return (parsed, instructions)
     }
 
     /// Call a tool on the MCP server by name.
@@ -236,6 +259,88 @@ public struct MCPToolDescription: Sendable {
         self.description = description
         self.inputSchema = inputSchema
     }
+}
+
+// MARK: - JSON Schema Parsing (MCP → SwiftAgent)
+
+/// Parse an MCP `inputSchema` JSON object into a `JSONSchema`.
+/// The MCP server returns standard JSON Schema; we extract the fields
+/// SwiftAgent's Tool protocol understands.
+private func parseMCPInputSchema(_ value: JSONValue?) -> JSONSchema? {
+    guard case .object(let obj) = value,
+          let type = obj["type"], case .string(let typeStr) = type,
+          typeStr == "object" else { return nil }
+
+    let description: String? = {
+        if let d = obj["description"], case .string(let s) = d { return s }
+        return nil
+    }()
+
+    let required: [String]? = {
+        guard let r = obj["required"], case .array(let arr) = r else { return nil }
+        return arr.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
+    }()
+
+    let additionalProperties: Bool? = {
+        guard let a = obj["additionalProperties"], case .bool(let b) = a else { return nil }
+        return b
+    }()
+
+    let properties: [String: JSONSchemaProperty]? = {
+        guard let props = obj["properties"], case .object(let propsObj) = props else { return nil }
+        var result: [String: JSONSchemaProperty] = [:]
+        for (key, val) in propsObj {
+            if let prop = parseMCPProperty(val) {
+                result[key] = prop
+            }
+        }
+        return result.isEmpty ? nil : result
+    }()
+
+    return JSONSchema(
+        type: typeStr,
+        properties: properties,
+        required: required,
+        additionalProperties: additionalProperties,
+        description: description
+    )
+}
+
+/// Parse a single MCP JSON Schema property.
+private func parseMCPProperty(_ value: JSONValue) -> JSONSchemaProperty? {
+    guard case .object(let obj) = value,
+          let type = obj["type"], case .string(let typeStr) = type else { return nil }
+
+    let description: String? = {
+        if let d = obj["description"], case .string(let s) = d { return s }
+        return nil
+    }()
+
+    let enumValues: [String]? = {
+        guard let e = obj["enum"], case .array(let arr) = e else { return nil }
+        return arr.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
+    }()
+
+    let items: JSONSchemaItems? = {
+        guard let i = obj["items"] else { return nil }
+        if case .object(let itemObj) = i,
+           let itemType = itemObj["type"], case .string(let itemTypeStr) = itemType {
+            return JSONSchemaItems(type: itemTypeStr)
+        }
+        return nil
+    }()
+
+    return JSONSchemaProperty(
+        type: typeStr,
+        description: description,
+        enum: enumValues,
+        items: items,
+        pattern: nil,
+        minimum: nil,
+        maximum: nil,
+        minLength: nil,
+        maxLength: nil
+    )
 }
 
 /// Result of calling an MCP tool (from tools/call response).

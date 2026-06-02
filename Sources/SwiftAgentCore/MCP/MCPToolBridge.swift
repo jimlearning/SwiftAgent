@@ -73,7 +73,7 @@ public struct MCPToolBridge: Sendable {
 
         let client = MCPClient(transport: transport)
         try await client.connect()
-        let tools = try await client.listTools()
+        let (tools, _) = try await client.listTools()
         await client.disconnect()
 
         return buildToolDefinitions(from: tools)

@@ -21,6 +21,9 @@ public actor MCPBootstrapper {
     /// Resource collections keyed by server name.
     public private(set) var resources: [String: [SerializedMCPResource]] = [:]
 
+    /// Server-level instructions keyed by server name (from tools/list response).
+    public private(set) var serverInstructions: [String: String] = [:]
+
     /// Server names that failed to connect (with error messages).
     public private(set) var failures: [(server: String, error: String)] = []
 
@@ -134,17 +137,21 @@ public actor MCPBootstrapper {
         // Connect stdio servers with limited concurrency
         let localBatchSize = 3
         let sortedLocal = Array(localConfigs)
+        var collectedInstructions: [String: String] = [:]
         for batch in stride(from: 0, to: sortedLocal.count, by: localBatchSize) {
             let end = min(batch + localBatchSize, sortedLocal.count)
-            await withTaskGroup(of: (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?).self) { group in
+            await withTaskGroup(of: (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?, String?).self) { group in
                 for i in batch..<end {
                     let (name, entry) = sortedLocal[i]
                     group.addTask {
                         await self.connectAndDiscover(name: name, config: entry.config, scope: entry.scope)
                     }
                 }
-                for await (name, client, tools, resources, error) in group {
-                    if let client { clients[name] = client }
+                for await (name, client, tools, resources, instructions, error) in group {
+                    if let client {
+                        clients[name] = client
+                        collectedInstructions[name] = instructions
+                    }
                     toolDefinitions.append(contentsOf: tools)
                     if let resources { self.resources[name] = resources }
                     if let error { failures.append((name, error)) }
@@ -161,14 +168,17 @@ public actor MCPBootstrapper {
         }
 
         if !remoteConfigs.isEmpty {
-            await withTaskGroup(of: (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?).self) { group in
+            await withTaskGroup(of: (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?, String?).self) { group in
                 for (name, entry) in remoteConfigs {
                     group.addTask {
                         await self.connectAndDiscover(name: name, config: entry.config, scope: entry.scope)
                     }
                 }
-                for await (name, client, tools, resources, error) in group {
-                    if let client { clients[name] = client }
+                for await (name, client, tools, resources, instructions, error) in group {
+                    if let client {
+                        clients[name] = client
+                        collectedInstructions[name] = instructions
+                    }
                     toolDefinitions.append(contentsOf: tools)
                     if let resources { self.resources[name] = resources }
                     if let error { failures.append((name, error)) }
@@ -176,6 +186,7 @@ public actor MCPBootstrapper {
             }
         }
 
+        serverInstructions = collectedInstructions.compactMapValues { $0 }
         return toolDefinitions
     }
 
@@ -184,12 +195,12 @@ public actor MCPBootstrapper {
         name: String,
         config: MCPDiscriminatedServerConfig,
         scope: ConfigScope
-    ) async -> (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?) {
+    ) async -> (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?, String?) {
         // 10-second timeout per server — MCP is a startup optimization, not a hard dependency
         let result = await withTimeout(seconds: 10) {
             await self.doConnectAndDiscover(name: name, config: config)
         }
-        return result ?? (name, nil, [], nil, "Connection timed out after 10s")
+        return result ?? (name, nil, [], nil, nil, "Connection timed out after 10s")
     }
 
     /// Runs a block with a timeout. Returns nil if the timeout fires first.
@@ -216,7 +227,7 @@ public actor MCPBootstrapper {
     private func doConnectAndDiscover(
         name: String,
         config: MCPDiscriminatedServerConfig
-    ) async -> (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?) {
+    ) async -> (String, MCPClient?, [ToolDefinition], [SerializedMCPResource]?, String?, String?) {
         let transport: any MCPTransport
 
         switch config {
@@ -227,25 +238,25 @@ public actor MCPBootstrapper {
 
         case .sse(let sseConfig):
             guard let url = URL(string: sseConfig.url) else {
-                return (name, nil, [], nil, "Invalid URL: \(sseConfig.url)")
+                return (name, nil, [], nil, nil, "Invalid URL: \(sseConfig.url)")
             }
             transport = SSETransport(url: url, headers: sseConfig.headers ?? [:])
 
         case .http(let httpConfig):
             guard let url = URL(string: httpConfig.url) else {
-                return (name, nil, [], nil, "Invalid URL: \(httpConfig.url)")
+                return (name, nil, [], nil, nil, "Invalid URL: \(httpConfig.url)")
             }
             transport = HTTPTransport(url: url, headers: httpConfig.headers ?? [:])
 
         case .ws(let wsConfig):
             guard let url = URL(string: wsConfig.url) else {
-                return (name, nil, [], nil, "Invalid URL: \(wsConfig.url)")
+                return (name, nil, [], nil, nil, "Invalid URL: \(wsConfig.url)")
             }
             let wsTransport = MCPWebSocketTransport(url: url, headers: wsConfig.headers ?? [:])
             transport = wsTransport
 
         case .sseIDE, .wsIDE, .sdk, .claudeAIProxy:
-            return (name, nil, [], nil, "Transport type not yet supported: \(config)")
+            return (name, nil, [], nil, nil, "Transport type not yet supported: \(config)")
         }
 
         let client = MCPClient(transport: transport)
@@ -253,7 +264,10 @@ public actor MCPBootstrapper {
         do {
             try await client.connect()
 
-            let mcpTools = try await client.listTools()
+            let (mcpTools, toolsListInstructions) = try await client.listTools()
+            // Prefer InitializeResult.instructions (canonical per MCP spec),
+            // falling back to tools/list instructions.
+            let instructions = await client.initializeInstructions ?? toolsListInstructions
             let defs = MCPToolBridge.buildMCPToolDefinitions(from: mcpTools, serverName: name)
 
             let mcpResources = (try? await client.listResources()) ?? []
@@ -267,10 +281,10 @@ public actor MCPBootstrapper {
                 )
             }
 
-            return (name, client, defs, serialized, nil)
+            return (name, client, defs, serialized, instructions, nil)
         } catch {
             await client.disconnect()
-            return (name, nil, [], nil, error.localizedDescription)
+            return (name, nil, [], nil, nil, error.localizedDescription)
         }
     }
 
