@@ -11,3 +11,5 @@ TermKit
 .swiftpm/xcode/package.xcworkspace/xcuserdata
 .swiftpm/xcode/xcuserdata/jim.xcuserdatad
 .claude/prompt-gateway
+.codegraph
+.understand-anything
