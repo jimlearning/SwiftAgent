@@ -239,21 +239,17 @@ public final class LLMClient: Sendable {
         request.setValue(sessionID, forHTTPHeaderField: "X-Claude-Code-Session-Id")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "x-client-request-id")
 
-        var body: [String: Any] = [
-            "model": normalizeModelStringForAPI(model),
-            "max_tokens": maxTokens,
-            "stream": false,
-            "messages": apiFormattedMessages(messages, enablePromptCaching: enablePromptCaching)
-        ]
+        var body = buildMessagesRequestBody(
+            messages: messages,
+            model: model,
+            stream: false,
+            systemPrompt: systemPrompt,
+            maxTokens: maxTokens,
+            tools: tools,
+            enablePromptCaching: enablePromptCaching,
+            toolChoice: "auto"
+        )
 
-        if let systemPrompt {
-            body["system"] = apiFormattedSystem(systemPrompt, enablePromptCaching: enablePromptCaching)
-        }
-
-        if let tools {
-            body["tools"] = tools.map { $0.apiFormatted }
-            body["tool_choice"] = ["type": "auto"]
-        }
 
         if let thinking, case .disabled = thinking {
             // no-op
@@ -387,22 +383,16 @@ public final class LLMClient: Sendable {
         request.setValue(sessionID, forHTTPHeaderField: "X-Claude-Code-Session-Id")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "x-client-request-id")
 
-        var body: [String: Any] = [
-            "model": normalizeModelStringForAPI(model),
-            "max_tokens": maxTokens,
-            "stream": true,
-            "messages": apiFormattedMessages(messages, enablePromptCaching: enablePromptCaching)
-        ]
-
-        // System prompt with optional cache_control
-        if let systemPrompt {
-            body["system"] = apiFormattedSystem(systemPrompt, enablePromptCaching: enablePromptCaching)
-        }
-
-        if let tools {
-            body["tools"] = apiFormattedTools(tools, enablePromptCaching: enablePromptCaching)
-            body["tool_choice"] = ["type": toolChoice ?? "auto"]
-        }
+        var body = buildMessagesRequestBody(
+            messages: messages,
+            model: model,
+            stream: true,
+            systemPrompt: systemPrompt,
+            maxTokens: maxTokens,
+            tools: tools,
+            enablePromptCaching: enablePromptCaching,
+            toolChoice: toolChoice ?? "auto"
+        )
         let hasThinking: Bool
         if let thinking, case .disabled = thinking {
             hasThinking = false
@@ -491,6 +481,54 @@ public final class LLMClient: Sendable {
 
     // MARK: - API formatting helpers
 
+    /// Build the common Anthropic Messages request body shared by streaming and
+    /// non-streaming fallback paths. Keeping this centralized prevents fallback
+    /// requests from silently dropping cache markers.
+    func buildMessagesRequestBody(
+        messages: [Message],
+        model: String,
+        stream: Bool,
+        systemPrompt: String?,
+        maxTokens: Int,
+        tools: [ToolDefinition]?,
+        enablePromptCaching: Bool,
+        toolChoice: String? = nil
+    ) -> [String: Any] {
+        let system = systemPrompt.map {
+            apiFormattedSystem($0, enablePromptCaching: enablePromptCaching)
+        }
+        var body: [String: Any] = [
+            "model": normalizeModelStringForAPI(model),
+            "max_tokens": maxTokens,
+            "stream": stream,
+            "messages": apiFormattedMessages(messages, enablePromptCaching: enablePromptCaching)
+        ]
+
+        if let system {
+            body["system"] = system
+        }
+
+        if let tools {
+            let hasGlobalSystemCache = containsGlobalSystemCache(system)
+            body["tools"] = apiFormattedTools(
+                tools,
+                enablePromptCaching: enablePromptCaching && !hasGlobalSystemCache
+            )
+            body["tool_choice"] = ["type": toolChoice ?? "auto"]
+        }
+
+        return body
+    }
+
+    private func containsGlobalSystemCache(_ system: Any?) -> Bool {
+        guard let blocks = system as? [[String: Any]] else { return false }
+        return blocks.contains { block in
+            guard let cacheControl = block["cache_control"] as? [String: Any] else { return false }
+            return cacheControl["type"] as? String == "ephemeral"
+                && cacheControl["scope"] as? String == "global"
+        }
+    }
+
     /// Format messages for the API, adding cache_control to the last message's
     /// last cacheable content block when prompt caching is enabled.
     /// Matches CC's addCacheBreakpoints — applies to ALL providers unconditionally.
@@ -509,27 +547,33 @@ public final class LLMClient: Sendable {
         }
     }
 
-    private func apiFormattedSystem(_ prompt: String, enablePromptCaching: Bool) -> Any {
+    func apiFormattedSystem(_ prompt: String, enablePromptCaching: Bool) -> Any {
         guard enablePromptCaching else { return prompt }
 
-        // Two-phase system prompt caching: split on dynamic boundary so only the
-        // static prefix gets cache_control. The dynamic suffix (CLAUDE.md, memory,
-        // environment, date, etc.) is sent uncached. Matches CC's splitSysPromptPrefix.
+        // Claude Code splits the system prompt into cache-scoped blocks. The
+        // static prefix can be shared globally; per-session content after the
+        // boundary stays uncached so cwd/date/memory changes do not bust it.
         if let boundaryRange = prompt.range(of: SYSTEM_PROMPT_DYNAMIC_BOUNDARY) {
             let staticPrefix = prompt[..<boundaryRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
             let dynamicSuffix = prompt[boundaryRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-
             var blocks: [[String: Any]] = []
             if !staticPrefix.isEmpty {
-                blocks.append(["type": "text", "text": staticPrefix, "cache_control": ["type": "ephemeral"]])
+                blocks.append([
+                    "type": "text",
+                    "text": String(staticPrefix),
+                    "cache_control": ["type": "ephemeral", "scope": "global"]
+                ])
             }
             if !dynamicSuffix.isEmpty {
-                blocks.append(["type": "text", "text": dynamicSuffix])
+                blocks.append(["type": "text", "text": String(dynamicSuffix)])
             }
-            return blocks.isEmpty ? prompt : blocks
+            if !blocks.isEmpty {
+                return blocks
+            }
         }
 
-        // No boundary marker — cache entire prompt as a single block
+        // No boundary marker: retain safe legacy behavior and cache the single
+        // whole prompt block.
         return [
             ["type": "text", "text": prompt, "cache_control": ["type": "ephemeral"]]
         ]
@@ -604,19 +648,36 @@ public struct ToolDefinition: Sendable {
     public let name: String
     public let description: String
     public let inputSchema: JSONSchema
+    public let deferLoading: Bool
 
-    public init(name: String, description: String, inputSchema: JSONSchema) {
+    public init(name: String, description: String, inputSchema: JSONSchema, deferLoading: Bool = false) {
         self.name = name
         self.description = description
         self.inputSchema = inputSchema
+        self.deferLoading = deferLoading
+    }
+
+    public func withDeferLoading(_ deferLoading: Bool) -> ToolDefinition {
+        ToolDefinition(
+            name: name,
+            description: description,
+            inputSchema: inputSchema,
+            deferLoading: deferLoading
+        )
     }
 
     public var apiFormatted: [String: Any] {
+        var base: [String: Any]
         if let data = try? JSONEncoder().encode(inputSchema),
            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return ["name": name, "description": description, "input_schema": dict]
+            base = ["name": name, "description": description, "input_schema": dict]
+        } else {
+            base = ["name": name, "description": description, "input_schema": ["type": "object"]]
         }
-        return ["name": name, "description": description, "input_schema": ["type": "object"]]
+        if deferLoading {
+            base["defer_loading"] = true
+        }
+        return base
     }
 
     /// Format tool definition with cache_control for prompt caching.

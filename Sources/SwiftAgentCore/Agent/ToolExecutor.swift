@@ -137,12 +137,14 @@ public struct ToolExecutor: Sendable {
 public final class ToolRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var tools: [String: any Tool] = [:]
+    private var schemaCache: [String: ToolDefinition] = [:]
 
     public init() {}
 
     public func register(_ tool: any Tool) {
         lock.lock()
         tools[tool.name] = tool
+        schemaCache.removeValue(forKey: tool.name)
         lock.unlock()
     }
 
@@ -151,33 +153,28 @@ public final class ToolRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         if let tool = tools[name] { return tool }
-        for (_, tool) in tools {
+        for tool in tools.values.sorted(by: { $0.name < $1.name }) {
             if tool.aliases.contains(name) { return tool }
         }
         return nil
     }
 
     public var allTools: [any Tool] {
-        lock.lock()
-        defer { lock.unlock() }
-        return Array(tools.values)
+        syncGetToolList()
     }
 
     /// Build ToolDefinition list for API calls.
     /// Matches CC's toolToAPISchema() pattern: calls tool.prompt() to get
     /// the LLM-facing description, passing tools and permission context.
+    /// Deferred tools (shouldDefer=true, alwaysLoad=false) get defer_loading:true.
     public func toolDefinitions() async -> [ToolDefinition] {
         let toolList = syncGetToolList()
         var defs: [ToolDefinition] = []
         let permContext = ToolPermissionContext()
         for tool in toolList {
-            let desc = await tool.prompt(
-                getToolPermissionContext: { permContext },
-                tools: toolList,
-                agents: [],
-                allowedAgentTypes: nil
-            )
-            defs.append(ToolDefinition(name: tool.name, description: desc, inputSchema: tool.inputSchema))
+            let base = await cachedToolDefinition(for: tool, tools: toolList, permissionContext: permContext)
+            let deferred = tool.shouldDefer && !tool.alwaysLoad
+            defs.append(base.withDeferLoading(deferred))
         }
         return defs
     }
@@ -186,7 +183,38 @@ public final class ToolRegistry: @unchecked Sendable {
     private func syncGetToolList() -> [any Tool] {
         lock.lock()
         defer { lock.unlock() }
-        return Array(tools.values)
+        return tools.values.sorted { $0.name < $1.name }
+    }
+
+    private func cachedToolDefinition(
+        for tool: any Tool,
+        tools toolList: [any Tool],
+        permissionContext: ToolPermissionContext
+    ) async -> ToolDefinition {
+        lock.lock()
+        if let cached = schemaCache[tool.name] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let desc = await tool.prompt(
+            getToolPermissionContext: { permissionContext },
+            tools: toolList,
+            agents: [],
+            allowedAgentTypes: nil
+        )
+        let base = ToolDefinition(
+            name: tool.name,
+            description: desc,
+            inputSchema: tool.inputSchema,
+            deferLoading: false
+        )
+
+        lock.lock()
+        schemaCache[tool.name] = base
+        lock.unlock()
+        return base
     }
 
     /// Filter tools by deny rules — remove tools that match blanket deny patterns.
@@ -202,13 +230,9 @@ public final class ToolRegistry: @unchecked Sendable {
                 tool.name == rule || tool.aliases.contains(rule)
             }
             guard !isDenied else { continue }
-            let desc = await tool.prompt(
-                getToolPermissionContext: { permContext },
-                tools: toolList,
-                agents: [],
-                allowedAgentTypes: nil
-            )
-            defs.append(ToolDefinition(name: tool.name, description: desc, inputSchema: tool.inputSchema))
+            let base = await cachedToolDefinition(for: tool, tools: toolList, permissionContext: permContext)
+            let deferred = tool.shouldDefer && !tool.alwaysLoad
+            defs.append(base.withDeferLoading(deferred))
         }
         return defs
     }

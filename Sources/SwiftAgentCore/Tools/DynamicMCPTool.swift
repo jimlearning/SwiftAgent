@@ -10,6 +10,7 @@ public struct DynamicMCPTool: Tool {
     public let name: String
     public let inputSchema: JSONSchema
     public let isMcp: Bool = true
+    public let shouldDefer: Bool = true
     public let mcpInfo: MCPToolInfo?
 
     private let serverName: String
