@@ -237,9 +237,6 @@ struct ChatCommand: AsyncParsableCommand {
             codeTheme: codeTheme
         )
 
-        // Build system prompt once — rebuilding on every API call breaks prompt caching.
-        let cachedSystemPrompt = buildSystemPrompt()
-
         emitBlock(renderer.renderBanner(version: "0.1.0"))
         emitBlock("Type [bold]/help[/] for commands, [bold]/exit[/] to quit.\n")
 
@@ -301,6 +298,9 @@ struct ChatCommand: AsyncParsableCommand {
         let mcpClientMap = await mcpBootstrapper.clients
         mcpClientsList.clients = Array(mcpClientMap.values)
 
+        // Collect MCP server instructions for system prompt injection
+        let mcpInstructions = await mcpBootstrapper.serverInstructions
+
         // Log MCP startup status
         if !mcpClientMap.isEmpty {
             let serverNames = mcpClientMap.keys.sorted().joined(separator: ", ")
@@ -313,6 +313,11 @@ struct ChatCommand: AsyncParsableCommand {
 
         // Refresh toolDefs after MCP registration
         let toolDefs = await registry.toolDefinitions()
+
+        // Build system prompt once — rebuilding on every API call breaks prompt caching.
+        // Must happen AFTER MCP bootstrap to include server instructions.
+        let toolNames = Set(toolDefs.map { $0.name })
+        let cachedSystemPrompt = buildSystemPrompt(model: sharedModel.current, toolNames: toolNames)
 
         // ── Set up inline popup data sources (@ and / completions) ──
         let sessionStore = SessionStore()  // needed early for SessionDataSource in popup
@@ -523,9 +528,47 @@ struct ChatCommand: AsyncParsableCommand {
                 continue
             }
 
-            // Append user message to conversation history
+            // Append user message to conversation history.
+            // On the first turn, prepend MCP server instructions as a
+            // <system-reminder> block — matching Claude Code's injection
+            // mechanism which places MCP instructions in the conversation
+            // where the model is forced to attend to them.
             let historyCount = conversationHistory.count
-            conversationHistory.append(Message(type: .user, content: [.text(input)]))
+
+            // On the first turn, inject system-reminder blocks as SEPARATE
+            // text content blocks — matching Claude Code's message structure
+            // where each <system-reminder> is its own {type: "text", text: "..."}
+            // block. This preserves semantic separation for the LLM.
+            let userContent: [ContentBlock]
+            if historyCount == 0 {
+                var blocks: [ContentBlock] = []
+
+                // Block 1: Deferred tools announcement (if any tools are deferred)
+                let deferredNames = toolDefs
+                    .filter { $0.deferLoading }
+                    .map { $0.name }
+                if let deferredReminder = buildDeferredToolsReminder(deferredNames: deferredNames) {
+                    blocks.append(.text(deferredReminder))
+                }
+
+                // Block 2: MCP server instructions (if any)
+                if let mcpReminder = buildMcpSystemReminder(instructions: mcpInstructions),
+                   !mcpInstructions.isEmpty {
+                    blocks.append(.text(mcpReminder))
+                }
+
+                // Block 3: CLAUDE.md + project memory + current date
+                if let claudeReminder = buildClaudeMdReminder() {
+                    blocks.append(.text(claudeReminder))
+                }
+
+                // Block 4: User input (always last, separate block)
+                blocks.append(.text(input))
+                userContent = blocks
+            } else {
+                userContent = [.text(input)]
+            }
+            conversationHistory.append(Message(type: .user, content: userContent))
 
             // Shared cancellation flag: escape watcher sets it, agent loop checks it
             let isCancelled = AtomicBool()
@@ -619,13 +662,25 @@ struct ChatCommand: AsyncParsableCommand {
                     var stopReason: String?
 
                     let sysPrompt = cachedSystemPrompt
+                    // Filter tools to match CC's deferred-tool behavior:
+                    // Undiscovered deferred tools are REMOVED from the array
+                    // (the model cannot call them). Discovered tools are
+                    // included with full schemas (deferLoading: false).
+                    // Matches CC's claude.ts:1154-1167.
+                    let discovered = extractDiscoveredToolNames(messages: conversationHistory)
+                    let adjustedToolDefs = filterDeferredTools(toolDefs, discovered: discovered)
+                    // Build betas: include advanced-tool-use when deferred tools exist.
+                    // CC: "required for defer_loading to be accepted" (claude.ts:1174)
+                    var betas = [Betas.promptCachingScope, Betas.interleavedThinking]
+                    let hasDeferred = adjustedToolDefs.contains { $0.deferLoading }
+                    if hasDeferred { betas.append(Betas.toolSearch1P) }
                     let stream = client.send(
                         messages: conversationHistory,
                         model: sharedModel.current,
                         systemPrompt: sysPrompt,
                         maxTokens: 16384,
-                        tools: toolDefs,
-                        betas: [Betas.promptCachingScope, Betas.interleavedThinking]
+                        tools: adjustedToolDefs,
+                        betas: betas
                     )
 
                     for try await event in stream {
@@ -869,9 +924,18 @@ struct ChatCommand: AsyncParsableCommand {
 
             // Display cache hit rate after the response (footnote)
             if cumulativeInputTokens > 0 && !wasCancelled {
-                let cacheHitRate = Double(cumulativeCacheRead) / Double(cumulativeInputTokens) * 100.0
-                let cacheInfo = String(format: "  ↳ cache: %.0f%% hit (%d read, %d created, %d total in)",
-                                       cacheHitRate, cumulativeCacheRead, cumulativeCacheCreation, cumulativeInputTokens)
+                let comparableInputTokens = cumulativeInputTokens + cumulativeCacheRead + cumulativeCacheCreation
+                let cacheHitRate = comparableInputTokens > 0
+                    ? Double(cumulativeCacheRead) / Double(comparableInputTokens) * 100.0
+                    : 0
+                let cacheInfo = String(
+                    format: "  ↳ cache: %.0f%% hit (%d read, %d created, %d raw in, %d comparable in)",
+                    cacheHitRate,
+                    cumulativeCacheRead,
+                    cumulativeCacheCreation,
+                    cumulativeInputTokens,
+                    comparableInputTokens
+                )
                 let elapsed = Date().timeIntervalSince(turnStart)
                 let elapsedStr = elapsed < 1.0
                     ? String(format: "%.0fms", elapsed * 1000)
@@ -1180,10 +1244,137 @@ struct ChatCommand: AsyncParsableCommand {
     // MARK: - System prompt
 
     /// Built once per session. Rebuilding on every API call would break prompt caching.
-    private func buildSystemPrompt() -> String {
+    private func buildSystemPrompt(model: String? = nil, toolNames: Set<String> = []) -> String {
         let loader = ClaudeMdLoader()
         let builder = SystemPromptBuilder(claudeMdLoader: loader)
-        return builder.build(for: Conversation())
+        return builder.build(for: Conversation(), toolNames: toolNames, model: model)
+    }
+
+    /// Build MCP server instructions as a `<system-reminder>` block.
+    /// Matches Claude Code's `wrapMessagesInSystemReminder` format from
+    /// `utils/messages.ts:4216-4231` — injected as conversation content,
+    /// not appended to the system prompt.
+    private func buildMcpSystemReminder(instructions: [String: String]) -> String? {
+        guard !instructions.isEmpty else { return nil }
+        var lines: [String] = [
+            "<system-reminder>",
+            "",
+            "# MCP Server Instructions",
+            "",
+            "The following MCP servers have provided instructions for how to use their tools and resources:",
+        ]
+        for (serverName, serverInstructions) in instructions.sorted(by: { $0.key < $1.key }) {
+            lines.append("")
+            lines.append("## \(serverName)")
+            lines.append(serverInstructions)
+        }
+        lines.append("")
+        lines.append("</system-reminder>")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Build deferred tools announcement as a `<system-reminder>` block.
+    /// Groups MCP tools by server and provides ready-to-use `select:` queries
+    /// so the model can load all tools from a server in one call.
+    /// Matches Claude Code's deferred tools delta injection.
+    private func buildDeferredToolsReminder(deferredNames: [String]) -> String? {
+        guard !deferredNames.isEmpty else { return nil }
+
+        let mcpPrefix = "mcp__"
+        var mcpByServer: [String: [String]] = [:]
+        var otherDeferred: [String] = []
+
+        for name in deferredNames.sorted() {
+            if name.hasPrefix(mcpPrefix) {
+                let rest = String(name.dropFirst(mcpPrefix.count))
+                let parts = rest.split(separator: "__", maxSplits: 1)
+                if let server = parts.first {
+                    mcpByServer[String(server), default: []].append(name)
+                } else {
+                    otherDeferred.append(name)
+                }
+            } else {
+                otherDeferred.append(name)
+            }
+        }
+
+        var lines: [String] = [
+            "<system-reminder>",
+            "The following deferred tools are available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail. Use ToolSearch to load tool schemas before calling them.",
+            "",
+            "Load ALL tools from a server at once by copying the select: query below:",
+            "",
+        ]
+
+        for (server, tools) in mcpByServer.sorted(by: { $0.key < $1.key }) {
+            // Sort for deterministic output, put "context" and "explore" first
+            let sorted = tools.sorted {
+                let aIsExplore = $0.hasSuffix("_explore") || $0.hasSuffix("_context")
+                let bIsExplore = $1.hasSuffix("_explore") || $1.hasSuffix("_context")
+                if aIsExplore != bIsExplore { return aIsExplore }
+                return $0 < $1
+            }
+            let query = sorted.joined(separator: ",")
+            lines.append("\(server): select:\(query)")
+        }
+
+        if !otherDeferred.isEmpty {
+            lines.append("")
+            lines.append("Other: select:\(otherDeferred.joined(separator: ","))")
+        }
+
+        lines.append("</system-reminder>")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Build CLAUDE.md + project memory + context as a `<system-reminder>` block.
+    /// Matches Claude Code's claudeMd + project-memory-context + currentDate injection.
+    /// This makes project instructions highly salient by delivering them as
+    /// conversation content rather than burying them in the system prompt.
+    private func buildClaudeMdReminder() -> String? {
+        let loader = ClaudeMdLoader()
+        let cwd = FileManager.default.currentDirectoryPath
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let memoryFiles = loader.loadAll(workingDirectory: cwd, homeDirectory: home)
+
+        guard !memoryFiles.isEmpty else { return nil }
+
+        var lines: [String] = [
+            "<system-reminder>",
+            "As you answer the user's questions, you can use the following context:",
+        ]
+
+        for file in memoryFiles {
+            let pathLabel: String
+            switch file.type {
+            case .user:
+                pathLabel = "Contents of \(file.path) (user's private global instructions for all projects)"
+            case .project:
+                pathLabel = "Contents of \(file.path) (project instructions, checked into the codebase)"
+            case .local:
+                pathLabel = "Contents of \(file.path) (user's private project instructions)"
+            case .managed:
+                pathLabel = "Contents of \(file.path) (enterprise managed policy)"
+            case .autoMem:
+                pathLabel = "Contents of \(file.path) (user's auto-memory, persists across conversations)"
+            }
+            lines.append("")
+            lines.append("# \(pathLabel)")
+            lines.append("")
+            lines.append(file.content)
+        }
+
+        // Add current date
+        let df = DateFormatter()
+        df.dateFormat = "yyyy/MM/dd"
+        lines.append("")
+        lines.append("# currentDate")
+        lines.append("Today's date is \(df.string(from: Date())).")
+        lines.append("")
+        lines.append("      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.")
+        lines.append("</system-reminder>")
+
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Tool execution

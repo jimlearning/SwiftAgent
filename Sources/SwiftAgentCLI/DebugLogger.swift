@@ -107,8 +107,9 @@ public final class DebugLogger: LLMDebugLogger, @unchecked Sendable {
                          cacheRead: Int, cacheCreation: Int,
                          cache1h: Int = 0, cache5m: Int = 0) {
         entryCount += 1
-        let cacheHitRate = inputTokens > 0
-            ? Double(cacheRead) / Double(inputTokens) * 100.0 : 0.0
+        let comparableInputTokens = inputTokens + cacheRead + cacheCreation
+        let cacheHitRate = comparableInputTokens > 0
+            ? Double(cacheRead) / Double(comparableInputTokens) * 100.0 : 0.0
         let entry: [String: Any] = [
             "seq": entryCount,
             "type": "usage",
@@ -117,6 +118,7 @@ public final class DebugLogger: LLMDebugLogger, @unchecked Sendable {
             "output_tokens": outputTokens,
             "cache_read_input_tokens": cacheRead,
             "cache_creation_input_tokens": cacheCreation,
+            "cache_comparable_input_tokens": comparableInputTokens,
             "cache_hit_rate_pct": String(format: "%.1f", cacheHitRate),
             "cache_creation_1h": cache1h,
             "cache_creation_5m": cache5m

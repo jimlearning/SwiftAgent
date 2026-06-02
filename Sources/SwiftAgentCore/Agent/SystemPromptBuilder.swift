@@ -57,6 +57,7 @@ public struct SystemPromptBuilder: Sendable {
         parts.append(actionsSection())
         parts.append(usingYourToolsSection(toolNames: toolNames))
         parts.append(toneAndStyleSection())
+        parts.append(textOutputSection())
         parts.append(outputEfficiencySection())
 
         // === Dynamic boundary ===
@@ -99,10 +100,10 @@ public struct SystemPromptBuilder: Sendable {
             inject: inject
         ))
 
-        // MCP server instructions (from connected MCP servers)
-        if let mcpSection = mcpInstructionsSection(inject: inject) {
-            parts.append(mcpSection)
-        }
+        // MCP server instructions are now delivered as <system-reminder>
+        // blocks in conversation messages (see ChatCommand.swift).
+        // This matches Claude Code's approach and makes instructions
+        // far more salient to the model than an appendix in the system prompt.
 
         // Summarize tool results instruction
         parts.append(summarizeToolResultsSection())
@@ -122,6 +123,7 @@ public struct SystemPromptBuilder: Sendable {
         parts.append(actionsSection())
         parts.append(usingYourToolsSection(toolNames: []))
         parts.append(toneAndStyleSection())
+        parts.append(textOutputSection())
         parts.append(outputEfficiencySection())
         return parts
             .filter { !$0.isEmpty }
@@ -141,6 +143,7 @@ public struct SystemPromptBuilder: Sendable {
             builder.actionsSection(),
             builder.usingYourToolsSection(toolNames: []),
             builder.toneAndStyleSection(),
+            builder.textOutputSection(),
             builder.outputEfficiencySection(),
         ]
     }
@@ -285,22 +288,32 @@ public struct SystemPromptBuilder: Sendable {
         return "# Tone and style\n" + items.map { " - \($0)" }.joined(separator: "\n")
     }
 
-    // MARK: - Static Section 7: Output Efficiency (matches CC getOutputEfficiencySection, non-ant)
+    // MARK: - Static Section 7: Text Output (matches CC getTextOutputSection)
+
+    private func textOutputSection() -> String {
+        """
+        # Text output (does not apply to tool calls)
+        Assume users can't see most tool calls or thinking — only your text output. Before your first tool call, state in one sentence what you're about to do. While working, give short updates at key moments: when you find something, when you change direction, or when you hit a blocker. Brief is good — silent is not. One sentence per update is almost always enough.
+
+        Don't narrate your internal deliberation. User-facing text should be relevant communication to the user, not a running commentary on your thought process. State results and decisions directly, and focus user-facing text on relevant updates for the user.
+
+        When you do write updates, write so the reader can pick up cold: complete sentences, no unexplained jargon or shorthand from earlier in the session. But keep it tight — a clear sentence is better than a clear paragraph.
+
+        End-of-turn summary: one or two sentences. What changed and what's next. Nothing else.
+
+        Match responses to the task: a simple question gets a direct answer, not headers and sections.
+
+        In code: default to writing no comments. Never write multi-paragraph docstrings or multi-line comment blocks — one short line max. Don't create planning, decision, or analysis documents unless the user asks for them — work from conversation context, not intermediate files.
+        """
+    }
+
+    // MARK: - Static Section 8: Output Efficiency (matches CC getOutputEfficiencySection)
 
     private func outputEfficiencySection() -> String {
         """
         # Output efficiency
 
         IMPORTANT: Go straight to the point. Try the simplest approach first without going in circles. Do not overdo it. Be extra concise.
-
-        Keep your text output brief and direct. Lead with the answer or action, not the reasoning. Skip filler words, preamble, and unnecessary transitions. Do not restate what the user said—just do it. When explaining, include only what is necessary for the user to understand.
-
-        Focus text output on:
-        - Decisions that need the user's input
-        - High-level status updates at natural milestones
-        - Errors or blockers that change the plan
-
-        If you can say it in one sentence, don't use three. Prefer short, direct sentences over long explanations. This does not apply to code or tool calls.
         """
     }
 
