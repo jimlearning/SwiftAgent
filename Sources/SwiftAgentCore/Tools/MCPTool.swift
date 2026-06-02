@@ -15,6 +15,7 @@ public struct MCPTool: Tool {
     public let isReadOnly = false
     public let isConcurrencySafe = false
     public let isMcp = true
+    public let shouldDefer = true
     public let mcpInfo: MCPToolInfo? = nil
 
     public let inputSchema: JSONSchema = {

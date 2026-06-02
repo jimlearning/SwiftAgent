@@ -1816,7 +1816,10 @@ private final class SessionState: @unchecked Sendable {
         registry.register(ConfigTool())
         registry.register(EnterWorktreeTool())
         registry.register(ExitWorktreeTool())
-        registry.register(MCPTool())
+        // NOTE: MCPTool (generic meta-tool) is intentionally NOT registered.
+        // DynamicMCPTool instances are created per-tool during MCP bootstrap above.
+        // Registering MCPTool would give the model a shortcut to bypass individual
+        // tool schemas, defeating deferred loading and proper tool selection.
         registry.register(McpAuthTool())
         registry.register(ListMcpResourcesTool())
         registry.register(ReadMcpResourceTool())

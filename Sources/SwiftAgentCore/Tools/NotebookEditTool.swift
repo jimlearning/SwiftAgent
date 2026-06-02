@@ -10,7 +10,6 @@ public struct NotebookEditTool: Tool {
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Edit Jupyter notebook cells (.ipynb)" }
     public let isReadOnly = false
     public let isConcurrencySafe = false
-    public var shouldDefer: Bool { true }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["notebookPath"] = JSONSchemaProperty(type: "string", description: "The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)")

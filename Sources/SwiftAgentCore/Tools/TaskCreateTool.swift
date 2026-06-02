@@ -8,7 +8,6 @@ public struct TaskCreateTool: Tool {
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Create a task in the task list for tracking work progress" }
     public let isReadOnly = false
     public let isConcurrencySafe = true
-    public var shouldDefer: Bool { true }
     public func isEnabled() -> Bool { FeatureFlags.isTodoV2Enabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])

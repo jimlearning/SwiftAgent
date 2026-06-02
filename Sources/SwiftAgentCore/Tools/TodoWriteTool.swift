@@ -45,7 +45,6 @@ public struct TodoWriteTool: Tool {
     public func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Update the todo list for the current session. To be used proactively and often to track progress and pending tasks. Make sure that at least one task is in_progress at all times. Always provide both content (imperative) and activeForm (present continuous) for each task." }
     public let isReadOnly = false
     public let isConcurrencySafe = false
-    public var shouldDefer: Bool { true }
     public func isEnabled() -> Bool { !FeatureFlags.isTodoV2Enabled() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])

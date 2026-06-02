@@ -35,7 +35,6 @@ public struct AskUserQuestionTool: Tool {
 
     public let isReadOnly = true
     public let isConcurrencySafe = false // Must run alone — cannot parallelize user interaction
-    public var shouldDefer: Bool { true }
     public func isEnabled() -> Bool { !FeatureFlags.isChannelsActive() }
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
