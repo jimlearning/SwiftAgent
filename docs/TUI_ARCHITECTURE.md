@@ -4,67 +4,143 @@
 
 SwiftAgent 的 TUI 是一个零外部依赖、纯 Swift 实现的终端 UI，直接基于 ANSI 转义序列和 raw-mode 终端 I/O 构建。它采用 Nanobot REPL 模式（Claude Code 亦用此模式）：持久化的 read-eval-print 循环，配合流式 LLM 响应、内联工具执行、spinner 状态指示、Markdown 渲染和弹出式补全。
 
-不使用任何外部 TUI 框架（ncurses、SwiftTerm、TermKit）。唯一的间接系统依赖是 Apple 的 `swift-argument-parser`，仅用于 CLI 入口点接线。所有渲染通过 `print()` 内嵌 ANSI 转义序列完成。
+不使用任何外部 TUI 框架（ncurses、SwiftTerm、TermKit）。唯一的间接系统依赖是 Apple 的 `swift-argument-parser`，仅用于 CLI 入口点接线。
+
+所有代码位于 `Sources/SwiftAgentCLI/`（约 22 个文件，~4000 行）。设计目标：Claude Code 行为层面的 1:1 对齐，但以 Swift 原生惯用方式实现，不盲从 TypeScript 模式。
 
 ---
 
 ## 架构分层
 
 ```
-EntryPoint (ArgumentParser)
-  └─ ChatCommand ── REPL 编排, 内联 agent 循环, 工具执行
-       ├─ LineEditor ── raw-mode 输入, 历史, popup 补全
-       │     └─ InlinePopup ── 内联补全菜单
-       ├─ TerminalRenderer ── ANSI 输出基元, spinner, panel
-       ├─ MarkdownRenderer ── Markdown → ANSI (含语法高亮)
-       ├─ StatusLine ── 底部状态栏
-       ├─ CurrentToolTracker ── 线程安全的 spinner 工具状态
-       ├─ ChatToolInputAccumulator ── 流式 JSON 组装
-       └─ ChatToolExecutionScheduler ── 并行/串行工具调度
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          ChatCommand.swift                               │
+│                       主 REPL 循环 + 内联 Agent 循环                     │
+│           初始化 · 斜杠命令 · 流式处理 · 工具执行 · 会话管理            │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
+│  │   LineEditor     │  │ TerminalRenderer  │  │   MarkdownRenderer    │  │
+│  │   raw-mode 输入  │  │   ANSI 输出渲染   │  │   Markdown → ANSI     │  │
+│  │                  │  │                   │  │   含语法高亮          │  │
+│  │ ┌──────────────┐ │  │ · renderBanner   │  │ · 代码块检测          │  │
+│  │ │ InlinePopup  │ │  │ · renderPanel    │  │ · 表格渲染            │  │
+│  │ │ @ / / 补全   │ │  │ · renderLeftBorder│ │ · 标题 + 内联格式    │  │
+│  │ │ PopupDataSrc │ │  │ · spinnerFrame   │  │ · TreeSitter 集成     │  │
+│  │ └──────────────┘ │  │ · cursor 控制    │  └───────────────────────┘  │
+│  └──────────────────┘  └───────┬──────────┘                             │
+│                                │                                         │
+│  ┌─────────────────────────────┴──────────────────────────────────────┐  │
+│  │                      基础设施层                                     │  │
+│  │  TerminalCapability  │  ColorTheme / ANSIColor  │  TerminalDisplay  │  │
+│  │  TTY · 颜色 · 尺寸   │  语义色 + 16/256/真彩色  │  Width (CJK/Emoji)│  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐ │
+│  │                      编排辅助                                        │ │
+│  │  CurrentToolTracker  │  ChatToolInputAccum.  │  ChatToolExecScheduler│ │
+│  │  CollapseDetector    │  CollapsedSummaryFmt  │  ToolResultCache      │ │
+│  │  StatusLine          │  DebugLogger          │                      │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Core/CLI 边界：
+  SwiftAgentCore (Types, Tools, Agent, LLM)  ← 纯逻辑，可复用
+  SwiftAgentCLI (ChatCommand, TerminalRenderer, LineEditor, …) ← 终端 I/O
+  CLI 依赖 Core，Core 不知 CLI 存在
 ```
+
+### 文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `ChatCommand.swift` | ~1799 | 主 REPL 循环 + 内联 Agent 循环 + 43 工具注册 + 斜杠命令分发 + Spinner/Escape 管理 |
+| `LineEditor.swift` | ~1288 | Raw-mode 行编辑器：历史 · 粘贴 · 转义序列 · 词边界 · Popup 集成 · Ghost text |
+| `MarkdownRenderer.swift` | ~780 | Markdown → ANSI：代码高亮 · 表格 · 标题 · 内联格式 · 左边界 · 自动代码块检测 |
+| `InlinePopup.swift` | ~330 | 内联补全弹出菜单：`/` 命令 + `@` 文件搜索 · 滚动 · 选中高亮 · 子菜单 |
+| `TerminalRenderer.swift` | ~232 | ANSI 基元：Banner · Panel · LeftBorder · Spinner · 光标控制 · TTY drain |
+| `PopupDataSource.swift` | ~500 | 四个数据源：CommandDataSource · FileDataSource · SessionDataSource · ArgumentDataSource |
+| `CollapseDetector.swift` | ~350 | 工具结果可折叠判定 + 分组合并 + 摘要生成 |
+| `TerminalCapability.swift` | ~62 | TTY 检测、色彩支持（TERM/COLORTERM）、终端尺寸（ioctl TIOCGWINSZ）、ANSI scrub |
+| `ColorTheme.swift` | ~116 | ANSI 颜色体系：16 色 + true color + ANIStyle + default/monochrome 双主题 |
+| `TerminalDisplayWidth.swift` | ~105 | Unicode 感知列宽 (CJK=2, 组合字符=0, Emoji=2) + cursor 定位 |
+| `DebugLogger.swift` | ~198 | JSONL 调试日志 (API 请求/响应/SE 事件)，API key 掩盖 |
+| `SyntaxHighlighter.swift` | ~400 | 双引擎 tokenizer：正则 (13 语言) + Tree-sitter |
+| `TokenANSIRenderer.swift` | ~100 | 语法 token → ANSI 颜色映射 |
+| `CodeTheme.swift` | ~80 | 代码高亮颜色预设 (Monokai, GitHub) |
+| `ToolResultCache.swift` | ~80 | 折叠工具结果缓存，供 `/expand` / `Ctrl+O` 展开 |
+| `CollapsedSummaryFormatter.swift` | ~150 | 折叠工具结果组 → 单行 ANSI 摘要 |
+| `FuzzyMatcher.swift` | ~100 | 四层评分：精确 → 前缀 → 子串 → 有序子序列 |
+| `FileSearchIndex.swift` | ~200 | 基于 git ls-files 的文件搜索索引 (内存操作) |
+| `StreamRenderer.swift` (Core) | ~100 | StreamEvent → 纯文本 (无 ANSI)，属于 Core 层 |
 
 ---
 
 ## 1. 入口点与 REPL 循环
 
-### `EntryPoint.swift`
+### 初始化流程 (`ChatCommand.run()`, L201-393)
 
-根 `AsyncParsableCommand`。注册 `chat` 为唯一子命令。直接调用 `swift-agent` 时打印横幅。
+```
+1. 保存终端 termios 状态 — 用于 AskUserQuestion 时恢复 cooked mode
+2. 解析 API key — 环境变量 / keychain / ~/.claude.json / --api-key
+3. 创建 TerminalCapability — 检测 TTY、色彩、尺寸
+4. 选择 ColorTheme — --no-color 则 .monochrome，否则 .default
+5. 创建 TerminalRenderer — 注入 capability + theme
+6. 创建 MarkdownRenderer — 注入 capability + theme + TreeSitterSyntaxHighlighter + CodeTheme
+7. 渲染 Banner — renderer.renderBanner(version:) 输出 Unicode 框线
+8. 创建 LLMClient + ToolRegistry + 注册 43 个内置工具
+9. MCP Bootstrap — 连接服务器，注册 MCP 工具，收集服务器指令
+10. 构建系统固化 System Prompt — 一次性构建，含 MCP 指令，利用 prompt caching
+11. 创建 LineEditor — 注入 / 命令和 @ 文件 popup 数据源
+12. 进入 REPL 循环
+```
 
-### `ChatCommand.swift` — 中央编排器
+### REPL 循环 (`while true`, L430)
 
-这是 TUI 的核心文件（~1799 行），`run()` 方法约 1200 行。它管理：
-
-**REPL 循环** (`while true`):
 1. `renderer.drainTTYInput()` — 清空生成期间堆积的键盘缓冲
 2. `editor.readLine(prompt: "You: ")` — raw mode 下阻塞等待输入
-3. 输入以 `/` 开头 → 分发到 slash command 处理器
+3. 输入以 `/` 开头 → 分发到 slash command 处理器（23+ 命令）
 4. 否则，将用户消息追加到 `conversationHistory`，进入**内联 agent 循环**
 
-**内联 Agent 循环**（无人工迭代上限，模型自主决定何时停止）：
-1. 启动 spinner Task（100ms 间隔，独立并发）
-2. 启动 ESC 监听 Task（raw mode 下 `poll()` + `read()` 监听裸 ESC）
-3. 通过 `LLMClient.send()` 流式获取 LLM 响应
-4. 分发 stream 事件：text/thinking delta、tool use block、message metadata
-5. 流结束后：
+### 内联 Agent 循环 (L655-898)
+
+无人工迭代上限，模型通过 `stop_reason == "end_turn"` 自主决定何时停止：
+
+1. 检查 ESC 取消标志 (`AtomicBool isCancelled`)
+2. 启动 spinner Task（100ms 间隔，独立并发 Task）
+3. 启动 ESC 监听 Task（raw mode 下 poll() + read() 监听裸 ESC）
+4. 通过 `LLMClient.send()` 流式获取 LLM 响应
+5. 分发 stream 事件：text/thinking delta、content block start/stop、message metadata
+6. 流结束后：
    - 存在 `tool_use` block → 执行工具，结果追加到对话历史，循环继续
-   - 无工具调用 → 模型结束 (stop_reason == "end_turn")，退出到 REPL
-   - `stop_reason == "max_tokens"` → 发送继续提示，循环继续
+   - 无工具调用 → 模型结束，退出到 REPL
+   - `stop_reason == "max_tokens"` → 截断恢复：执行已解析的工具调用，注入 `"[system] Continue from where you left off."` 继续提示
+7. Spinner Task 取消，ESC watcher 取消
+8. 渲染最终响应：MarkdownRenderer 或 renderLeftBorder
 
-**Spinner Task** (100ms 间隔):
-- 无工具运行时：显示 `⠋ Thinking...`
-- 工具活跃时：显示 `⠋ <工具命令>`
-- 思考文本到达时：切换到 dim 模式文本渲染，暂停 spinner
-- `SpinnerPauseFlag` — AskUserQuestion 交互期间暂停，避免 `\r\e[K` 清除用户输入
+### Spinner 子系统 (L612-640)
 
-**ESC 中断**:
-- 后台 Task 运行 `editor.interceptEscape()`
-- 在每次 LLM round 前和每个 stream 事件处理中检查 `AtomicBool isCancelled`
-- 用户提问交互前先 cancel watcher、恢复 cooked mode，完成后重启
+- 独立 `Task`，每 100ms 一帧
+- **无工具运行时**：`⠋ Thinking...`
+- **工具活跃时**：`⠋ <工具名> → <命令摘要>`（通过 `CurrentToolTracker.displayLine`）
+- **智能暂停**：
+  - `SpinnerPauseFlag` — AskUserQuestion 交互期间暂停，防止 `\r\e[K` 清除用户输入
+  - `currentTool.isThinking` — 思考文本到达时暂停，切换为 dim 模式文本渲染
+- **取消时**：输出 `\r\e[K` 清除当前行
 
-**Cooked-mode 切换**:
-- 启动前保存原始 `termios` (`ChatCommand.swift:205-207`)
-- Interactive user prompts 时恢复 cooked mode，避免 raw mode 窃取 stdin 输入
+### ESC 中断机制 (L574-605)
+
+- 后台 Task 运行 `editor.interceptEscape()`，独立 raw-mode poll 循环
+- 区分裸 ESC (50ms 超时无后续字节) 和转义序列
+- 在每次 LLM round 前和每个 stream 事件处理后检查 `AtomicBool isCancelled`
+- 用户提问交互前先 cancel watcher、等 150ms 让 poll() 退出、恢复 cooked mode；完成后重启
+- 取消时：spinner 和 watcher 被取消，当前轮次的对话历史回滚，显示 `"(cancelled — press ↑ to recall previous input)"`
+
+### Cooked-mode 切换 (L201-207)
+
+- 启动前保存原始 `termios`
+- Interactive user prompts (AskUserQuestion) 时恢复 cooked mode，避免 raw mode 窃取 stdin 字节
+- 用户回答完毕后恢复 raw mode
 
 ---
 
@@ -84,7 +160,7 @@ EntryPoint (ArgumentParser)
 - `color(_:color:style:)` — 色彩支持时包装 ANSI，否则原样返回。这是终端降级为纯文本的唯一控制点。
 - `scrubANSICodes(_:)` — 非 TTY 输出时正则去除所有 ANSI 转义序列。
 
-此外提供测试用构造函数 `init(isTTY:supportsColor:columns:rows:)` 允许注入伪造值。
+提供测试用构造函数 `init(isTTY:supportsColor:columns:rows:)` 允许注入伪造值。
 
 ### `ColorTheme.swift`
 
@@ -103,9 +179,9 @@ ColorTheme.default
 
 `ColorTheme.monochrome` 将所有颜色映射为 white/brightBlack，通过 `--no-color` 标志激活。
 
-`ANSIColor` 枚举：16 标准色（30-37）+ 16 高亮色（90-97）+ `trueColor(r:g:b:)`（24-bit True Color）。
+`ANSIColor` 枚举：8 标准色（30-37）+ 8 高亮色（90-97）+ `trueColor(r:g:b:)`（24-bit True Color）。
 
-`ANIStyle` 枚举：reset(0)、bold(1)、dim(2)、italic(3)、underline(4)、blink(5)、reverse(7)。
+`ANIStyle` 枚举：reset(0)、bold(1)、dim(2)、italic(3)、underline(4)、blink(5)。
 
 顶层 `ansi()` 函数：用 color/style 前缀 + `\033[0m` 重置包装文本。
 
@@ -138,15 +214,15 @@ Unicode 感知的列宽测量。对正确的光标定位至关重要：
 |------|------|
 | Left/Right | 字符级光标移动 |
 | Up/Down | 多行内行间移动；在首/尾行边界切到历史导航 |
-| Alt+Left/Alt+Right | 按字母数字边界跳词 |
+| Alt+Left/Alt+Right | 按字母数字边界跳词 (wordBoundaryBefore/After) |
 | Home/End | 行首 / 行尾 |
-| Ctrl+A / Ctrl+E | 行首 / 行尾 |
+| Ctrl+A / Ctrl+E | 行首 / 行尾 (Emacs 风格) |
 | Ctrl+U | 清空整行 |
 | Ctrl+K | 删除至行尾 |
 | Ctrl+W | 删除前一个词（空格边界） |
 | Alt+Backspace | Bash 风格 backward-kill-word（字母数字边界） |
 | Alt+Enter | 插入字面换行符 |
-| Shift+Enter | 插入字面换行符（HID `CGEventSource.flagsState` 检测 Shift 修饰键） |
+| Shift+Enter | 插入字面换行符（通过 `CGEventSource.flagsState(.hidSystemState)` 的 HID Shift 检测） |
 | Tab | Popup 模式确认选中 / 正常模式插入 4 空格 |
 | Ctrl+C | 取消 Popup；无 Popup 时返回 nil (EOF) |
 | Ctrl+D | 空行时 EOF |
@@ -154,16 +230,19 @@ Unicode 感知的列宽测量。对正确的光标定位至关重要：
 | Escape | Popup 内取消 / 中断 LLM 生成 |
 
 **Escape 序列解析器** (L667-799):
-- 超时消歧：收到 `\033` 后等约 5ms 判断是裸 ESC 还是 CSI/SS3 序列开头
+- 超时消歧：收到 `\033` 后等约 50ms 判断是裸 ESC 还是 CSI/SS3 序列开头
 - 支持标准 CSI 方向键、Home/End（H/F 变体）
 - 支持 SS3（tmux 风格 `ESC O ...`）方向键
-- Kitty keyboard protocol (`CSI ... u`) 支持 Shift+Enter、Alt+Backspace
+- Kitty keyboard protocol (`CSI <key>;<mods> u`) 支持 Shift+Enter、Alt+Backspace
 - xterm modified keys (`CSI <key>;<mods> <letter>`) 支持 Alt+方向键
 - Bracketed paste：读取 `\033[200~ ... \033[201~` 分隔的内容
+- Alt/Option+字符：ESC + b (word left)、ESC + f (word right)、ESC + DEL (delete word)
 
 **Paste 处理** (L520-608):
 - Burst 检测：50ms 内连续到达的字符视为同一粘贴操作
+- 单行粘贴：直接插入
 - 多行粘贴：显示 `[Pasted text #N +M lines]` 占位符，提交时展开为原始内容
+- Bracketed paste 优先，非 bracket 终端用 poll() fallback
 - 保留原始换行以便后续编辑
 
 **历史系统** (L836-928):
@@ -176,14 +255,18 @@ Unicode 感知的列宽测量。对正确的光标定位至关重要：
 **重绘策略** (`redrawLine()`, L992-1074):
 1. 光标移到输入区域起始行 (`\033[lastCursorRowA`)
 2. 从光标处清至屏尾 (`\r\033[J`)
-3. 渲染 prompt + 第一行输入
+3. 渲染 prompt（蓝色 `\033[1;34m`）+ 第一行输入
 4. 渲染续行（padding 对齐 prompt 宽度）
-5. 若 active 则渲染 popup
-6. 将光标定位到正确的插入位置
+5. 若 active 则渲染 popup（在输入区域下方）
+6. 若存在 ghost text，在光标后以 dim 样式渲染
+7. 将光标精确定位到插入位置
 
-**关键设计选择：使用 cursor-up 移动而非 save/restore**。`\033[s`/`\033[u` 在不同终端模拟器中表现不一致，显式光标定位是确定性的。代价是 LineEditor 必须自行追踪 `drawnLines` 和 `lastCursorRow`。
+**关键设计**：使用 cursor-up 显式移动而非 save/restore（`\033[s`/`\033[u` 在不同终端模拟器中表现不一致）。代价是 LineEditor 必须自行追踪 `drawnLines` 和 `lastCursorRow`——跟踪前一次重绘占用的终端行数，确保下一次重绘前正确清除旧内容。
 
-**Ghost Text** — 从 popup 选中命令后，参数提示以 dim 样式显示在光标后。用户输入时自动清除。
+**Ghost Text** (L1029-1042):
+- 从 popup 选中命令后，参数提示以 dim (`\033[90m`) 样式显示在光标后
+- 例：选择 `/model` 后显示 `[model-name]` 的 ghost text
+- 用户输入时自动清除
 
 ### `InlinePopup.swift` — 内联补全弹出菜单
 
@@ -204,7 +287,7 @@ Unicode 感知的列宽测量。对正确的光标定位至关重要：
 ```
 InlinePopup
 ├── dataSource: PopupDataSource   # 搜索后端
-├── config: PopupConfig           # 视觉参数
+├── config: PopupConfig           # 视觉参数 (maxHeight=12, maxWidth=66)
 ├── items: [PopupItem]            # 当前匹配项
 ├── selectedIndex: Int            # 当前选中 (0-based)
 ├── scrollOffset: Int             # 虚拟滚动偏移
@@ -213,31 +296,39 @@ InlinePopup
 
 **核心逻辑**：
 - **搜索**：输入追加到 query，`dataSource.search(query:)` 实时过滤，selectedIndex 重置为 0
-- **导航**：↑ ↓ 移动 `selectedIndex`，`updateScroll()` 维护虚拟滚动窗口
+- **导航**：↑ ↓ 移动 `selectedIndex`，`updateScroll()` 维护虚拟滚动窗口（确保选中项在可见区域内）
 - **选中高亮**：黄色加粗标记匹配位置，反转视频标记选中行，`▸ ` 指示器
-- **帮助列**：右侧 `item.help` 列，宽度自适应（最多 popup 宽度的 1/3）
+- **帮助列**：右侧 `item.help` 列显示命令/文件描述，宽度自适应（最多 popup 宽度的 1/3）
 - **截断**：`fit(_:to:)` 正确处理 CJK 宽字符并追加 `…`
-- **无匹配行为**：输入无匹配项时自动 dismiss popup 但保留 buffer 文本
+- **无匹配行为**：输入无匹配项时自动 dismiss popup 但保留 buffer 文本（`dismissPopupKeepBuffer()`）
 
-**嵌套 Sub-menu 支持** — 选中项具有 `subOptions`（如 `/model` → `["default", "deepseek-v4-flash", ...]`）或 `subDataSource`（如 `/resume` → `SessionDataSource`）时，自动打开二级 popup。`isSubMenu` 标志使取消行为变为仅关闭子菜单而不修改已提交的命令。
+**嵌套 Sub-menu 支持** — 选中项具有：
+- `subOptions`（如 `/model` → `["default", "deepseek-v4-flash", ...]`）：自动打开 `ArgumentDataSource` 二级 popup
+- `subDataSource`（如 `/resume` → `SessionDataSource`）：打开动态子菜单，列出已保存会话
+- `isSubMenu` 标志：子菜单取消时仅关闭 popup，不删除已提交的命令文本
+- `submitOnSelect`：选中即自动提交（如 /resume 选会话后直接加载，无需第二次 Enter）
 
-**已知问题**：ANSI 硬编码（`"\u{001B}[36m"`）而非使用 `ColorTheme`/`ANSIColor`。
+**已知问题**：ANSI 硬编码（`"\u{001B}[36m"`）而非使用 `ColorTheme`/`ANSIColor`，与 Theme 系统脱节。
 
 ### `PopupDataSource.swift` — 补全数据源
 
-**`CommandDataSource`** (`/` 触发):
-- 预置 28+ 内置命令
-- 动态加载 `SkillFileLoader` 的 skills
-- 对命令名和别名进行模糊匹配
-- 支持 `argumentHints`（参数提示 ghost text）、`subOptions`（参数值子菜单）、`sessionDataSource`（/resume 二级菜单）
+`PopupDataSource` 协议：`search(query:) -> [PopupItem]`。四个实现：
 
-**`FileDataSource`** (`@` 触发):
-- 双搜索模式：
-  - 目录范围（query 含路径分隔符）：在特定目录内搜索
-  - 递归（query 无分隔符）：遍历整个工作树
-- 隐藏 dot-files 除非 query 以 `.` 开头
-- 排除 VCS 目录
-- 文件夹优先，以 `/` 结尾
+| 数据源 | 触发 | 数据 | 特点 |
+|--------|------|------|------|
+| `CommandDataSource` | `/` | 28+ 内置命令 + skills | 模糊匹配命令名和别名；argumentHints 提供幽灵参数提示；subOptions 驱动子菜单；/resume 委托给 SessionDataSource |
+| `FileDataSource` | `@` | 工作目录文件树 | 基于 git ls-files 的 FileSearchIndex（一次构建，内存查询）；支持目录作用域搜索；隐藏文件仅在 query 以 `.` 开头时显示；VCS 目录排除；目录条目以 `/` 结尾 |
+| `SessionDataSource` | 嵌套 | 已保存会话 | 从 SessionStore 加载最近 20 个会话；显示 ID、日期、消息数；submitOnSelect |
+| `ArgumentDataSource` | 子菜单 | 静态选项列表 | 简单字符串匹配；用于模型名、权限模式等参数值选择 |
+
+**`PopupItem`** 结构：
+- `display` — 列表显示的文本
+- `insertText` — 选中后插入 buffer 的文本（含触发字符）
+- `argumentHint` — 提交后显示的幽灵占位文本
+- `subOptions` — 参数值子菜单的选项数组
+- `subDataSource` — 动态子菜单的数据源
+- `submitOnSelect` — 选中后是否自动提交整行
+- `score` + `matchPositions` — 模糊搜索评分和匹配位置（用于高亮）
 
 ### `FuzzyMatcher.swift`
 
@@ -288,7 +379,7 @@ InlinePopup
 | H2 | 文本 + `───` 下划线 |
 | H3 | 加粗 + 着色 |
 | H4+ | 纯加粗 |
-| 代码围栏 | 带 `┌── lang ──┐` 头的框线，语法高亮 |
+| 代码围栏 | 带 `┌── lang ──┐` 头的框线，语法高亮（fence 深度跟踪支持嵌套） |
 | 表格 | 解析列，居中加粗表头，`├───┼───┤` 分隔符 |
 | 引用块 | `▎` 前缀，dim 样式 |
 | 水平分隔线 | 全宽 `───` |
@@ -300,15 +391,9 @@ InlinePopup
 - `*italic*` → ANSI italic
 - `[text](url)` → 加下划线，主题色
 
-代码块通过 `RegexSyntaxHighlighter` → `TokenANSIRenderer` → `CodeTheme` 进行语言特定的语法着色。
+自动代码块检测 (`autoDetectCodeBlocks`)：通过关键词密度和缩进模式识别无围栏标记的代码块。
 
-### `StatusLine.swift`
-
-渲染底部反向视频状态栏：
-1. 从 `AppStateStore` 获取快照
-2. 将光标移到底部行 (`\033[NB`)
-3. 写入全宽反向视频行
-4. 恢复光标位置
+代码块通过语法高亮引擎进行着色：`RegexSyntaxHighlighter`（13 语言）或 `TreeSitterSyntaxHighlighter` → `TokenANSIRenderer` → `CodeTheme`。
 
 ### `StreamRenderer.swift` (Core 层)
 
@@ -326,7 +411,15 @@ InlinePopup
 | `.messageDelta(usage:)` | `"\n[Tokens: ↓n ↑m]"` |
 | `.error(msg)` | `"\n❌ Error: {msg}\n"` |
 
-**边界设计**：`StreamRenderer` 只负责语义格式化（事件 → 人类可读行），视觉渲染（dim、spinner、cursor 移动）由 CLI 层内联处理。这确保 Core 层可复用到非终端场景（Web UI、IDE 插件等）。
+**边界设计**：`StreamRenderer` 只负责语义格式化（事件 → 人类可读行）。视觉渲染（dim、spinner、cursor 移动）由 CLI 层内联处理。这确保 Core 层可复用到非终端场景（Web UI、IDE 插件等）。
+
+### `StatusLine.swift`
+
+渲染底部反向视频状态栏：
+1. 从 `AppStateStore` 获取快照
+2. 将光标移到底部行 (`\033[NB`)
+3. 写入全宽反向视频行（`\033[7m ... \033[0m`）
+4. 恢复光标位置
 
 ---
 
@@ -345,7 +438,7 @@ InlinePopup
 
 支持 13 种语言：Swift、Python、JavaScript、TypeScript、Bash、JSON、Go、Rust、C、C++、Ruby、SQL、YAML、Markdown。
 
-另含 `TreeSitterSyntaxHighlighter`（`SyntaxHighlighter.swift:297`），通过 tree-sitter 提供更高精度的语法高亮。
+另含 `TreeSitterSyntaxHighlighter`，通过 tree-sitter 提供更高精度的语法高亮。
 
 ### `TokenANSIRenderer.swift`
 
@@ -367,21 +460,21 @@ Monokai 和 GitHub 两套预设。将 tree-sitter 风格的捕获名映射到 `A
 
 线程安全（`NSLock` 保护）的活跃工具执行追踪器。支持 spinner 显示：
 
-- `start(id:name:)` — 注册运行中的工具
+- `start(id:name:displayCmd:)` — 注册运行中的工具，带可选的命令摘要
 - `update(id:status:)` — 更新进度消息（由 AgentTool、TaskOutput 使用）
 - `finish(id:)` — 移除已完成的工具
 - `displayLine` — 状态行计算属性：
-  - 1 个工具：`Running <name>...` 或自定义状态
-  - 2-3 个工具：`<name> running; <name> running`
-  - 4+ 个工具：`N tools running | ...; ... +M more`
-- `isThinking` — 用于暂停 spinner 显示思考文本
+  - 1 个工具：`Running <name> → <command>` 或自定义状态
+  - 2-3 个工具：`<N> tools running | <name> running; <name> running`
+  - 4+ 个工具：`<N> tools running | ...; ... +M more`
+- `isThinking` — 用于暂停 spinner 显示 thinking 文本
 
 注意：`SendUserMessage` 类工具名称从 spinner 中被抑制——它们是透明的消息传递机制，不是用户可见的工具。
 
 ### `ChatToolInputAccumulator`
 
 从流式 `inputJSONDelta` 事件增量构建工具输入 JSON：
-1. `startTool(name:id:)` — 开始为新 tool call 累积
+1. `startTool(name:id:)` — 开始为新 tool call 累积 JSON
 2. `appendInputJSONDelta(_:)` — 追加 JSON 片段
 3. `stopCurrentBlock()` — 解析累积的 JSON 为 `[String: JSONValue]`
 4. `finish(stopReason:)` — 处理 `max_tokens` 截断
@@ -393,9 +486,30 @@ Monokai 和 GitHub 两套预设。将 tree-sitter 风格的捕获名映射到 `A
 ### `ChatToolExecutionScheduler`
 
 乐观并行工具执行：
-- 并发安全工具被批量放入 `TaskGroup` 并行执行
+- 并发安全工具放在 `TaskGroup` 中并行执行
 - 非安全工具按顺序依次执行
 - 在对话历史中保持原始调用顺序
+
+### 工具结果折叠系统
+
+类似 Claude Code 的 `collapseReadSearch`：
+
+```
+ChatToolExecutionScheduler (执行结果)
+  │
+  ▼
+emitCollapsedResults()
+  ├── CollapseDetector.isCollapsible() → 判定工具类型（Read、Glob、Grep、搜索类 Bash 命令）
+  ├── 分组：连续可折叠工具合并为一个 CollapsedGroup
+  ├── CollapsedSummaryFormatter → ANSI 彩色单行摘要 + 内容预览（前 3 行、200 字宽）
+  └── ToolResultCache.store() → 保存完整输出
+```
+
+展开/折叠控制：
+- `Ctrl+O` → 纯切换：若已展开则折叠，否则展开最后一个 group
+- `/expand last` 或 `/expand N` → 展开指定索引的 group
+- 展开通过 ANSI `\033[nA\033[0J`（上移 + 清至屏尾）实现内联替换
+- `ExpandState` 跟踪当前展开的 group 索引和行数，供折叠时精确清除
 
 ---
 
@@ -478,7 +592,7 @@ Monokai 和 GitHub 两套预设。将 tree-sitter 风格的捕获名映射到 `A
      │                 │                │                  │                  │
      │                 │ .contentBlockStart(toolUse)       │                  │
      │                 │────────────────┼───── ChatToolInputAccumulator ──>│
-     │                 │                │       .startTool()                │
+     │                 │       .startTool()                │                  │
      │                 │                │                  │                  │
      │                 │ .inputJSONDelta│                  │                  │
      │                 │────────────────┼─ .appendJSON() ─>│                  │
@@ -590,8 +704,9 @@ Monokai 和 GitHub 两套预设。将 tree-sitter 风格的捕获名映射到 `A
               │  2. \r\033[J                │ 清至屏尾
               │  3. prompt + buffer[0]      │ 绘制第一行
               │  4. pad + buffer[1..]       │ 绘制续行
-              │  5. popup.render()          │ 若有 popup 则绘制
-              │  6. cursor 定位到插入点     │ 定位光标
+              │  5. ghost text (dim)        │ 若有 ghost 则绘制
+              │  6. popup.render()          │ 若有 popup 则绘制
+              │  7. cursor 定位到插入点     │ 定位光标
               └─────────────────────────────┘
 ```
 
@@ -608,8 +723,8 @@ Monokai 和 GitHub 两套预设。将 tree-sitter 风格的捕获名映射到 `A
 │ CurrentToolTracker   │────>│ displayLine      │
 │ (NSLock 保护)        │     │ 计算属性          │
 │                      │     └────────┬─────────┘
-│ .name (thinking)     │              │
-│ .entries (tools)     │     ┌────────▼─────────┐
+│ .isThinking          │              │
+│ .active tools        │     ┌────────▼─────────┐
 └──────────────────────┘     │ 1 个工具:          │
                              │   "Running X..."  │
                              │ 2-3 个工具:        │
@@ -630,37 +745,21 @@ Monokai 和 GitHub 两套预设。将 tree-sitter 风格的捕获名映射到 `A
 
 ## 9. 设计决策与原理
 
-### 为何选择零依赖 ANSI 而非 ncurses/TermKit？
-
-1. **可移植性**：ANSI 转义序列是通用终端语言。无需 C 库链接，无平台特定构建。
-2. **控制力**：直接 ANSI 提供对部分更新、光标定位和流式输出的精确控制——对于 spinner/thinking/内联工具结果模式至关重要。
-3. **CC 对齐**：Claude Code 本身使用直接 ANSI 码，而非 TUI 框架。
-
-### 为何使用 cursor-up 移动而非 save/restore？
-
-`\033[s`（保存）/ `\033[u`（恢复）行为在不同终端模拟器中表现不一，尤其在滚动区域中。显式 `\033[N A` 是确定性的。代价是 `LineEditor` 必须自行追踪 `drawnLines` 和 `lastCursorRow` 计数。
-
-### 为何使用独立的 spinner Task？
-
-Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即使在 stream 事件突发到达时。Spinner 读取 `CurrentToolTracker` 状态来适配其显示。该 Task 在以下情况智能暂停：
-- `SpinnerPauseFlag`：用户交互提示期间（AskUserQuestion）
-- `currentTool.isThinking`：思考文本渲染期间
-
-### 为何使用 bracket paste 检测？
-
-没有它，粘贴的多行文本会被解释为多次 `readLine()` 返回。Bracket paste 协议 (`\033[200~...\033[201~`) 使编辑器能够将整个粘贴作为单次操作捕获。
-
-### 为何使用 null-byte 历史分隔符？
-
-换行分隔的历史无法存储多行条目（粘贴的代码块会变成 N 个独立的历史条目）。Null byte 不出现在用户输入中，是安全的分隔符。
-
-### 为何使用 ESC 超时消歧？
-
-裸 `\033`（ESC 键）和以 `\033[` 开头的 CSI 序列都以 `\033` 开始。没有超时的话，编辑器无法区分"用户按了 ESC"和"用户按了左方向键 (`\033[D`)"。`\033` 后约 5ms 的读取超时处理了这个问题：若有更多字节到达则是序列；若没有则是裸 ESC。
-
-### Panel vs LeftBorder 为何分离？
-
-`renderPanel` 渲染完整四边框，用于静态内容（帮助页、diff 输出）。`renderLeftBorder` 仅渲染左侧竖线，用于 AI 响应的流式输出——避免全边框重绘带来的闪烁。
+| 决策 | 说明 |
+|------|------|
+| **零依赖 ANSI 而非 ncurses/TermKit** | 可移植性（无 C 库链接）、精确控制（部分更新、光标定位、流式输出）、CC 对齐（Claude Code 本身使用直接 ANSI） |
+| **cursor-up 显式移动而非 save/restore** | `\033[s`/`\033[u` 在不同终端模拟器中表现不一致，尤其在滚动区域中。显式 `\033[N A` 是确定性的。代价：LineEditor 自行追踪 `drawnLines` 和 `lastCursorRow` |
+| **独立 spinner Task** | 以 100ms 间隔独立于 async stream 运行，保持动画流畅。智能暂停：用户交互提示时、thinking 文本渲染时 |
+| **Bracket paste 检测** | 无此则粘贴的多行文本会被解释为多次 `readLine()` 返回。Bracket paste 协议 (`\033[200~...\033[201~`) 使编辑器将整个粘贴作为单次操作捕获 |
+| **Null-byte 历史分隔符** | 换行分隔的历史无法存储多行条目（粘贴的代码块会变成 N 个独立条目）。Null byte 不出现在用户输入中，是安全的分隔符 |
+| **ESC 超时消歧** | 裸 `\033` (ESC 键) 和以 `\033[` 开头的 CSI 序列都以 `\033` 开始。~50ms 超时决定：有后续字节 → 序列，无 → 裸 ESC |
+| **Panel vs LeftBorder 分离** | `renderPanel` 渲染完整四边框（静态内容），`renderLeftBorder` 仅左侧竖线（AI 响应流式输出），避免全边框重绘闪烁 |
+| **Core/CLI 边界严格** | `StreamRenderer` 在 Core 层（纯文本转换），`TerminalRenderer` 在 CLI 层（ANSI 颜色/布局）。Core 可在非终端场景中复用 |
+| **手动 JSON 累积** | `ChatToolInputAccumulator` 从增量流式片段手动累积和解析工具输入 JSON，而非使用流式 JSON 解析器 |
+| **Actor-free 并发** | 使用 manual `Task` + `@unchecked Sendable` + `NSLock` 保护共享状态，而非 Swift Actor |
+| **Kitty protocol 前向兼容** | 已实现 kitty keyboard protocol 解析 (`CSI key;mods u`)，尽管当前主要依赖传统 escape codes |
+| **写时渲染无缓冲** | 文本 delta 直接 `print()` + `fflush(stdout)`，不经过渲染缓冲层。Markdown 后处理在完整响应文本积累后执行 |
+| **双路输出** | `emitBlock()` 统一块输出（自动规范化换行），`writeToStdout()` 直接 `Darwin.write()` 输出原始 ANSI 控制序列 |
 
 ---
 
@@ -704,6 +803,7 @@ Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即
 | `ChatToolExecutionScheduler.swift` | 并行/串行工具调度 |
 | `CurrentToolTracker`（内嵌类） | 线程安全工具状态供 spinner 使用 |
 | `CollapseDetector.swift` | 工具输出折叠检测 |
+| `CollapsedSummaryFormatter.swift` | 折叠组 → 单行 ANSI 摘要 |
 | `ToolResultCache.swift` | 折叠工具结果缓存与展开 |
 
 ### 基础设施
@@ -757,19 +857,24 @@ Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即
 | InlinePopup ANSI 硬编码 | 使用内联 `"\u{001B}[36m"` 而非 `ColorTheme`/`ANSIColor`，与 Theme 系统脱节 |
 | LineEditor prompt 色彩硬编码 | `"\u{001B}[1;34m"` 应通过 `TerminalRenderer` 或 `ColorTheme` |
 | StreamRenderer 的 `highlightCodeBlocks` 未使用 | 语法高亮集成待完善 |
+| 无终端 resize 信号处理 | `LineEditor.terminalColumns` 每次重绘时实时查询，但 popup 宽度和已渲染内容不会动态更新 |
+| `showThinking` 逻辑分散 | 思考文本渲染逻辑分布在 3 处 switch case 中，应集中为 `ThinkingRenderer` |
 
 ### P2 — 改善
 
 | 问题 | 说明 |
 |------|------|
-| `showThinking` 逻辑分散 | 思考文本渲染逻辑分布在 3 处 switch case 中，应集中为 `ThinkingRenderer` |
-| 无 SIGWINCH 响应 | popup/line 不响应终端 resize |
 | Unicode 宽度覆盖不全 | `TerminalDisplayWidth` 使用硬编码范围检测 CJK/emoji，不覆盖所有 Unicode 版本 |
+| 无线程安全的终端重绘 | `writeToStdout` 跨并发 Task 共享，没有互斥锁。若两个 Task 同时写入，可能交错 ANSI 序列 |
+| 无 Vim 模式 | LineEditor 仅支持 Emacs 风格键位 |
+| Markdown 渲染器不流式传输 | 等待完整响应后再调用 `markdown.render()`，CC 可实现逐块流式渲染 |
+| Popup 仅 / 和 @ | CC 还在错误行旁边显示内联诊断、命令别名建议等。SwiftAgent 仅触发单词边界上的 `/` 和 `@` |
+| 无终端能力协商 | 没有 terminfo 或 CSI u/DA 查询。假设支持 256 色 + UTF-8，无回退机制 |
 
 ### 通用挑战
 
 1. **终端模拟器差异**：并非所有终端都支持 TrueColor、italic 或 bracket paste。`TerminalCapability` 降级路径可优雅处理缺失功能，但边界情况仍然存在。
-2. **ESC 消歧可靠性**：基于超时的消歧（~5ms）在本地终端上有效，但在高延迟连接（SSH、tmux）下可能失效。
+2. **ESC 消歧可靠性**：基于超时的消歧（~50ms）在本地终端上有效，但在高延迟连接（SSH、tmux）下可能失效。
 3. **流式输出与缓冲**：Swift 的 `print()` 默认使用行缓冲；thinking delta 后需手动调用 `fflush(stdout)` 实现行中更新。
 4. **线程安全**：`CurrentToolTracker` 和 `SessionState` 在 spinner Task 和主 agent 循环之间使用 `NSLock` 保护。`AppState` 使用 Actor 隔离。
 
@@ -782,9 +887,9 @@ Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即
 | | Claude Code | Codex CLI | SwiftAgent |
 |---|---|---|---|
 | **语言** | TypeScript (Node.js) | Rust (native binary) | Swift (native) |
-| **TUI 方法** | 保留模式 React | 保留模式 (ratatui widgets) | 即时模式直接 ANSI |
+| **TUI 方法** | 保留模式 React (Ink fork) | 保留模式 (ratatui widgets) | 即时模式直接 ANSI |
 | **框架** | 定制 Ink fork (~90 文件) | 定制 ratatui 0.29 fork + crossterm 0.28 fork | 无 (从零构建) |
-| **布局引擎** | Yoga Flexbox (WASM) | ratatui Constraint-based Rect (无 Flexbox) | 无 (手动定位) |
+| **布局引擎** | Yoga Flexbox (WASM) | ratatui Constraint-based Rect | 无 (手动定位) |
 | **渲染管线** | Reconciler → DOM → Screen → Diff → ANSI | Widgets → `Buffer` → `diff_buffers()` → `DrawCommand` → ANSI | String → `print()` |
 | **更新策略** | 单元格级 diff + 损伤区域 | 单元格级 diff（prev/next `Buffer` 对比），`ClearToEnd` 优化 | 每帧全量重绘 |
 
@@ -794,9 +899,9 @@ Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即
 |---|---|---|---|
 | **渲染模型** | 双缓冲 Screen（2D 字符网格） | 双缓冲 `ratatui::Buffer`（2D 字符网格） | 单遍字符串输出 |
 | **帧率** | ~60fps 节流 | 事件驱动，动画 32ms 帧调度 | 事件驱动（无帧概念） |
-| **Diff 算法** | LogUpdate: prev/next screen diff, 8 项优化规则, DECSTBM 硬件滚动 | 自定义 `diff_buffers()`: 逐单元格对比，输出 `Put`（变化单元格）+ `ClearToEnd`（行尾优化） | 无 |
+| **Diff 算法** | LogUpdate: prev/next screen diff, 8 项优化规则, DECSTBM 硬件滚动 | 自定义 `diff_buffers()`: 逐单元格对比，输出 `Put` + `ClearToEnd` | 无 |
 | **Markdown** | React 组件 (`Box`/`Text`) | pulldown-cmark 0.10 → 自定义 `markdown_render.rs` → ratatui `Line`/`Span` | 自定义 ANSI 字符串渲染器 |
-| **代码块** | React + Shikiji (tree-sitter) | syntect 5 + two-face 0.5 (~250 种语言, ~32 个主题) | 自定义正则 + ANSI 框线 |
+| **代码块** | React + Shikiji (tree-sitter) | syntect 5 + two-face 0.5 (~250 种语言, ~32 个主题) | 自定义正则 + TreeSitter + ANSI 框线 |
 | **语法主题** | Shikiji 主题系统 | two-face 主题系统（syntect 兼容，32 个主题） | `CodeTheme`（monokai, github） |
 | **流式输出** | React 状态更新 → diff → ANSI 补丁 | `StreamCore` 双区域 (stable + tail)，`MarkdownStreamCollector`，提交动画队列，表格暂缓 | `print()` + `fflush()` 逐 delta |
 
@@ -805,9 +910,9 @@ Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即
 | | Claude Code | Codex CLI | SwiftAgent |
 |---|---|---|---|
 | **Raw mode** | Node.js stdin raw mode | crossterm 事件流（定制 fork） | POSIX `termios` + `tcsetattr` |
-| **键盘解析器** | 自定义: kitty protocol, SGR mouse, xterm modifyOtherKeys, 终端响应, bracketed paste | crossterm 事件流 + 自定义 `keymap.rs` (95K 行) 含大量键绑定配置 | 自定义: CSI, SS3, kitty protocol, xterm modified, bracketed paste |
+| **键盘解析器** | 自定义: kitty protocol, SGR mouse, xterm modifyOtherKeys, 终端响应, bracketed paste | crossterm 事件流 + 自定义 `keymap.rs` (95K 行) | 自定义: CSI, SS3, kitty protocol, xterm modified, bracketed paste |
 | **Mouse 支持** | SGR mouse, X10 mouse | SGR mouse (via crossterm) | 无 |
-| **ESC 消歧** | 不需要 (Ink 事件系统) | crossterm 事件流处理 | 超时方案 (~5ms poll) |
+| **ESC 消歧** | 不需要 (Ink 事件系统) | crossterm 事件流处理 | 超时方案 (~50ms poll) |
 | **Paste 检测** | Bracketed paste + 自定义 burst 逻辑 | Bracketed paste (via crossterm) | Bracketed paste + 50ms burst timer |
 
 ### 组件模型
@@ -816,7 +921,7 @@ Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即
 |---|---|---|---|
 | **组件系统** | React 函数组件 | ratatui `WidgetRef` trait + 自定义 `Renderable` trait，函数式组合 | 过程式函数 |
 | **状态管理** | React hooks + Zustand stores | ratatui 有状态 widget + tokio channels + `AppEventSender` | 手动 + `CurrentToolTracker` (NSLock) |
-| **Popup/dialog** | React 组件（fuzzy picker, select, dialog） | 自定义 ratatui widgets（resume_picker 210K, pager_overlay, theme_picker） | `InlinePopup`（ANSI 框线） |
+| **Popup/dialog** | React 组件（fuzzy picker, select, dialog） | 自定义 ratatui widgets（resume_picker, pager_overlay, theme_picker） | `InlinePopup`（ANSI 框线） |
 | **状态栏** | React `StatusLine` 组件 | 自定义 ratatui `StatusIndicatorWidget` + shimmer 动画 + 经过时间计时器 | `StatusLine`（ANSI reverse video） |
 | **Spinner** | React `Spinner` 组件 | `StatusIndicatorWidget`: shimmer_text 动画、`Instant` 计时器、32ms 帧调度、`ReducedMotionIndicator` | 后台 Swift Task + ANSI 覆盖 |
 | **Composer/Input** | React `Composer` 组件层级 | 自定义 ratatui widget + keymap 系统 (95K `keymap.rs` + 65K `keymap_setup.rs`)、`mention_codec`、`slash_command` | `LineEditor`（raw-mode 过程式） |
@@ -844,29 +949,3 @@ Spinner 以 100ms 间隔独立于 async stream 运行。这保持动画流畅即
 | **SSH/tmux 兼容性** | 好 — ANSI 输出标准；鼠标需 SGR 支持 | 好 — ANSI 输出 via crossterm；鼠标需 SGR 支持 | 好 — 纯 ANSI、无鼠标、无高级协议 |
 
 ---
-
-## 组件依赖图
-
-```
-ChatCommand.run()
-  ├── TerminalRenderer ────────── TerminalCapability, ColorTheme
-  ├── MarkdownRenderer ────────── TerminalCapability, SyntaxHighlighter, CodeTheme
-  │     └── SyntaxHighlighter ─── LanguageRegistry
-  │     └── TokenANSIRenderer ─── CodeTheme
-  ├── StatusLine ──────────────── TerminalRenderer
-  ├── LineEditor
-  │     ├── TerminalDisplayWidth
-  │     ├── InlinePopup ───────── TerminalDisplayWidth
-  │     │     └── PopupDataSource (protocol)
-  │     │           ├── CommandDataSource
-  │     │           ├── FileDataSource → FileSearchIndex
-  │     │           ├── SessionDataSource
-  │     │           └── ArgumentDataSource
-  │     └── (raw termios / Darwin)
-  ├── StreamRenderer (Core)
-  ├── CurrentToolTracker (NSLock)
-  ├── ChatToolInputAccumulator
-  ├── ChatToolExecutionScheduler ── ToolExecutor (Core)
-  ├── CollapseDetector ─────────── ToolResultCache
-  └── DebugLogger
-```
