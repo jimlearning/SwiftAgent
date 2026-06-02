@@ -20,14 +20,14 @@ public final class LineEditor: @unchecked Sendable {
     // MARK: - Persistence
 
     private let historyFile: URL
-    private var entries: [String] = []
-    private var historyIndex: Int = 0
-    private var stashedBuffer: String?
+    internal var entries: [String] = []
+    internal var historyIndex: Int = 0
+    internal var stashedBuffer: String?
     private let isTTY: Bool
 
     // MARK: - Subsystems
 
-    private let terminal: TerminalInput
+    private let terminal: any TerminalRawReader
     private var composer: ComposerState
     private var pasteDetector = PasteBurstDetector()
 
@@ -45,6 +45,22 @@ public final class LineEditor: @unchecked Sendable {
         self.terminal = TerminalInput()
         self.composer = ComposerState()
         load()
+    }
+
+    /// Test-only init: inject a `TerminalRawReader` so unit tests can drive
+    /// the read loop without a real PTY. Bypasses the `isatty` guard when
+    /// `isTTY: true` is passed.
+    internal init(terminal: any TerminalRawReader,
+                  isTTY: Bool = true,
+                  historyDir: URL? = nil) {
+        let dir = historyDir ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-agent-test-history-\(UUID().uuidString)",
+                                    isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        self.historyFile = dir.appendingPathComponent("cli_history")
+        self.isTTY = isTTY
+        self.terminal = terminal
+        self.composer = ComposerState()
     }
 
     deinit {
@@ -136,7 +152,7 @@ public final class LineEditor: @unchecked Sendable {
         terminal.enterRawMode()
         defer {
             terminal.restore()
-            writeToStdout("\r\n")
+            if isTTY { writeToStdout("\r\n") }
         }
 
         var buffer = TextBuffer()
@@ -169,14 +185,19 @@ public final class LineEditor: @unchecked Sendable {
                 }
 
                 if composer.mode.isPopup {
-                    let shouldSubmit = composer.handlePopupEnter(buffer: &buffer)
-                    if shouldSubmit {
+                    let outcome = composer.handlePopupEnter(buffer: &buffer)
+                    switch outcome {
+                    case .resolved:
+                        // Popup committed and closed — flush the line.
+                        writeToStdout("\r\n")
                         let line = pasteDetector.expandPlaceholders(in: buffer.content)
                             .trimmingCharacters(in: .newlines)
                         if !line.isEmpty { addEntry(line) }
                         return line
+                    case .subMenuOpened:
+                        // Sub-menu is active — keep editing.
+                        redraw(renderer: &renderer, buffer: &buffer, promptWidth: promptWidth)
                     }
-                    redraw(renderer: &renderer, buffer: &buffer, promptWidth: promptWidth)
                 } else {
                     var fds = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
                     if poll(&fds, 1, 0) > 0 {
@@ -204,7 +225,13 @@ public final class LineEditor: @unchecked Sendable {
 
             case 9:  // Tab
                 if composer.mode.isPopup {
-                    composer.handlePopupTab(buffer: &buffer)
+                    let outcome = composer.handlePopupTab(buffer: &buffer)
+                    if case .resolved = outcome {
+                        // Tab on a popup with no sub-menu — keep editing
+                        // (don't flush). The current behavior was to
+                        // commit-and-stay-on-input-line, which is the same
+                        // as Space.
+                    }
                     redraw(renderer: &renderer, buffer: &buffer, promptWidth: promptWidth)
                 } else {
                     buffer.insert("    ")
@@ -257,7 +284,18 @@ public final class LineEditor: @unchecked Sendable {
             default:
                 if let (char, _) = terminal.decodeUTF8Char(leadByte: byte!) {
                     if composer.mode.isPopup {
-                        composer.handlePopupChar(char: char, buffer: &buffer)
+                        let outcome = composer.handlePopupChar(char: char, buffer: &buffer)
+                        if case .resolved = outcome, !composer.mode.isPopup {
+                            // Space committed a popup with no sub-menu.
+                            // Flush the line so the next readLine call
+                            // gets a fresh buffer instead of appending
+                            // subsequent input to the committed text.
+                            writeToStdout("\r\n")
+                            let line = pasteDetector.expandPlaceholders(in: buffer.content)
+                                .trimmingCharacters(in: .newlines)
+                            if !line.isEmpty { addEntry(line) }
+                            return line
+                        }
                         redraw(renderer: &renderer, buffer: &buffer, promptWidth: promptWidth)
                     } else if composer.shouldTriggerPopup(char: char, buffer: buffer) {
                         stashedBuffer = nil
@@ -292,9 +330,9 @@ public final class LineEditor: @unchecked Sendable {
     // MARK: - Escape sequence handling (normal mode)
 
     private func handleNormalEscape(
-        seq: TerminalInput.EscapeSequence,
+        seq: EscapeSequence,
         buffer: inout TextBuffer
-        
+
     ) -> Bool {
         switch seq {
         case .up:
@@ -352,7 +390,7 @@ public final class LineEditor: @unchecked Sendable {
 
     // MARK: - History navigation
 
-    private func navigateHistory(direction: Int, buffer: inout TextBuffer) {
+    internal func navigateHistory(direction: Int, buffer: inout TextBuffer) {
         // Multi-line: try vertical cursor movement first
         if buffer.isMultiline {
             let prefix = buffer.content.prefix(buffer.cursor)

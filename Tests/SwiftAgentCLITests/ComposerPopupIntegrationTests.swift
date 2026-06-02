@@ -176,9 +176,90 @@ struct ComposerSlashPopupIntegrationTests {
         composer.openPopup(trigger: "/", triggerPos: 0, buffer: &buffer)
 
         // Press Enter to commit the first (and only) item.
-        let shouldSubmit = composer.handlePopupEnter(buffer: &buffer)
-        #expect(shouldSubmit == false, "/help should not auto-submit")
+        let outcome = composer.handlePopupEnter(buffer: &buffer)
+        #expect(outcome == .resolved, "/help should resolve the popup")
         #expect(!composer.mode.isPopup, "Popup should be closed after commit")
         #expect(buffer.content == "/help ", "Buffer should contain committed command with trailing space")
+    }
+
+    @Test
+    func committingItemWithSubOptionsOpensSubMenu() {
+        // /model with sub-options ["deepseek-v4-flash", "deepseek-v4-pro", ...]
+        let dataSource = CommandDataSource(
+            commands: [("/model", "Switch the active model")],
+            argumentHints: ["model": "[model-name]"],
+            subOptions: ["model": ["deepseek-v4-flash", "deepseek-v4-pro", "gpt-4o", "claude-sonnet-4-6"]]
+        )
+        var composer = ComposerState(slashDataSource: dataSource)
+        var buffer = TextBuffer()
+        buffer.insert("/")
+        composer.openPopup(trigger: "/", triggerPos: 0, buffer: &buffer)
+        #expect(composer.mode.isPopup)
+
+        // Commit /model — should NOT close popup, should open sub-menu.
+        let outcome = composer.handlePopupEnter(buffer: &buffer)
+        #expect(outcome == .subMenuOpened, "/model alone should open a sub-menu")
+        #expect(composer.mode.isPopup, "Sub-menu should be open after committing /model")
+        #expect(buffer.content == "/model ", "Buffer should have /model with trailing space")
+        #expect(buffer.ghostText == nil, "Ghost text should be cleared while sub-menu is active")
+
+        // Render sub-menu — should list model names.
+        var rendered = ""
+        let height = composer.renderPopup(to: { rendered += $0 }, terminalWidth: 80)
+        let plain = stripANSI(rendered)
+        #expect(height > 0, "Sub-menu should render")
+        #expect(plain.contains("deepseek-v4-flash"), "Sub-menu should list model names")
+        #expect(plain.contains("claude-sonnet-4-6"))
+    }
+
+    @Test
+    func escapingSubMenuKeepsBufferIntact() {
+        let dataSource = CommandDataSource(
+            commands: [("/model", "Switch model")],
+            subOptions: ["model": ["x", "y"]]
+        )
+        var composer = ComposerState(slashDataSource: dataSource)
+        var buffer = TextBuffer()
+        buffer.insert("/")
+        composer.openPopup(trigger: "/", triggerPos: 0, buffer: &buffer)
+        composer.handlePopupEnter(buffer: &buffer)
+        #expect(composer.mode.isPopup, "Sub-menu active")
+        #expect(buffer.content == "/model ")
+
+        // ESC on sub-menu should close it but KEEP "/model " in buffer.
+        composer.cancelPopup(buffer: &buffer)
+        #expect(!composer.mode.isPopup, "Sub-menu should close on ESC")
+        #expect(buffer.content == "/model ", "Buffer should keep the committed /model text")
+    }
+
+    @Test
+    func selectingFromSubMenuReplacesTriggerRegionWithChoice() {
+        let dataSource = CommandDataSource(
+            commands: [("/model", "Switch model")],
+            subOptions: ["model": ["deepseek-v4-pro", "gpt-4o"]]
+        )
+        var composer = ComposerState(slashDataSource: dataSource)
+        var buffer = TextBuffer()
+        buffer.insert("/")
+        composer.openPopup(trigger: "/", triggerPos: 0, buffer: &buffer)
+        composer.handlePopupEnter(buffer: &buffer)
+        #expect(composer.mode.isPopup, "Sub-menu active")
+        #expect(buffer.content == "/model ")
+
+        // Type "pro" in sub-menu to filter.
+        composer.handlePopupChar(char: "p", buffer: &buffer)
+        composer.handlePopupChar(char: "r", buffer: &buffer)
+        composer.handlePopupChar(char: "o", buffer: &buffer)
+        #expect(composer.mode.isPopup, "Sub-menu still active after filtering")
+
+        // Select the first match.
+        let outcome = composer.handlePopupEnter(buffer: &buffer)
+        #expect(outcome == .resolved || outcome == .subMenuOpened, "Selecting a model from sub-menu should resolve")
+        #expect(!composer.mode.isPopup, "Sub-menu should close after selection")
+        // The sub-menu replaces triggerPos..cursor with the choice + space.
+        // triggerPos is the cursor after "/model " (i.e. 7), so:
+        //   "pro" is replaced with "deepseek-v4-pro "
+        #expect(buffer.content == "/model deepseek-v4-pro ",
+                "Buffer should be /model <choice>, got: \(buffer.content)")
     }
 }

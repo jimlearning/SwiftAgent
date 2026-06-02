@@ -104,18 +104,27 @@ public struct ComposerState {
     }
 
     /// Handle a character typed while the popup is active.
-    /// Returns the new ghost text (or nil) to be set on the buffer.
-    public mutating func handlePopupChar(char: Character, buffer: inout TextBuffer) {
-        guard case .popup(var state) = mode else { return }
+    /// Returns the commit outcome for the " " (space) case so callers can
+    /// decide whether to flush the line. For non-space characters, returns
+    /// `.resolved` (the popup either continues with new query or is dismissed
+    /// in-place — neither requires line flushing).
+    @discardableResult
+    public mutating func handlePopupChar(char: Character, buffer: inout TextBuffer) -> CommitOutcome {
+        guard case .popup(var state) = mode else { return .resolved }
 
         if char == " " {
             if let item = selectedItem {
-                commitPopupSelection(item: item, state: state, buffer: &buffer)
+                let outcome = commitPopupSelection(item: item, state: state, buffer: &buffer)
+                if item.submitOnSelect, case .subMenuOpened = outcome {
+                    mode = .normal
+                    return .resolved
+                }
+                return outcome
             } else {
                 cancelPopup(buffer: &buffer)
                 buffer.insert(" ")
+                return .resolved
             }
-            return
         }
 
         buffer.insert(char)
@@ -126,20 +135,31 @@ public struct ComposerState {
         } else {
             mode = .popup(state)
         }
+        return .resolved
     }
 
     /// Handle Enter in popup mode: commit selection.
-    /// Returns true if the line should be auto-submitted (submitOnSelect).
-    public mutating func handlePopupEnter(buffer: inout TextBuffer) -> Bool {
-        guard case .popup(let state) = mode, let item = selectedItem else { return false }
-        commitPopupSelection(item: item, state: state, buffer: &buffer)
-        return item.submitOnSelect
+    /// Returns the commit outcome. If `.subMenuOpened`, the caller should
+    /// keep editing. If `.resolved`, the caller should flush the line.
+    /// The `submitOnSelect` flag on the item still drives auto-submit
+    /// behavior — we encode that by also returning a submit hint.
+    @discardableResult
+    public mutating func handlePopupEnter(buffer: inout TextBuffer) -> CommitOutcome {
+        guard case .popup(let state) = mode, let item = selectedItem else { return .resolved }
+        let outcome = commitPopupSelection(item: item, state: state, buffer: &buffer)
+        // submitOnSelect forces immediate submit even if a sub-menu was opened.
+        if item.submitOnSelect, case .subMenuOpened = outcome {
+            mode = .normal
+            return .resolved
+        }
+        return outcome
     }
 
-    /// Handle Tab in popup mode: commit selection (same as Enter but doesn't auto-submit).
-    public mutating func handlePopupTab(buffer: inout TextBuffer) {
-        guard case .popup(let state) = mode, let item = selectedItem else { return }
-        commitPopupSelection(item: item, state: state, buffer: &buffer)
+    /// Handle Tab in popup mode: commit selection. Tab never auto-submits.
+    @discardableResult
+    public mutating func handlePopupTab(buffer: inout TextBuffer) -> CommitOutcome {
+        guard case .popup(let state) = mode, let item = selectedItem else { return .resolved }
+        return commitPopupSelection(item: item, state: state, buffer: &buffer)
     }
 
     /// Handle Backspace in popup mode.
@@ -181,12 +201,73 @@ public struct ComposerState {
 
     // MARK: - Commit / Cancel
 
+    /// Result of committing a popup selection: did we open a sub-menu
+    /// (continue editing) or fully resolve the popup (caller should flush
+    /// the line back to the user)?
+    public enum CommitOutcome {
+        /// A sub-menu is now active. Caller should NOT flush the line —
+        /// the user is still composing.
+        case subMenuOpened
+        /// Popup is closed. Caller should flush the buffer as a completed
+        /// line back to the caller of readLine.
+        case resolved
+    }
+
     /// Replace trigger..cursor range in buffer with the selected item's insertText + space.
-    private mutating func commitPopupSelection(item: PopupItem, state: PopupState, buffer: inout TextBuffer) {
+    /// If the item carries sub-options or a sub-data-source, open a follow-up
+    /// sub-menu (e.g. /model → list of model names) instead of closing the popup.
+    @discardableResult
+    private mutating func commitPopupSelection(item: PopupItem, state: PopupState, buffer: inout TextBuffer) -> CommitOutcome {
         let replacement = item.insertText + " "
         buffer.replace(subrangeFrom: state.triggerPos, to: buffer.cursor, with: replacement)
+
+        // 1. Sub-options: wrap in an ArgumentDataSource and open as a sub-menu.
+        if let subOptions = item.subOptions, !subOptions.isEmpty {
+            let subDS = ArgumentDataSource(choices: subOptions)
+            var subPopup = InlinePopup(dataSource: subDS)
+            subPopup.refresh()
+            let subState = PopupState(
+                trigger: state.trigger,
+                triggerPos: buffer.cursor,
+                popup: subPopup,
+                isSubMenu: true
+            )
+            mode = .popup(subState)
+            buffer.ghostText = nil
+            return .subMenuOpened
+        }
+
+        // 2. Sub-data-source (e.g. /resume → session list).
+        if let subDS = item.subDataSource {
+            var subPopup = InlinePopup(dataSource: subDS)
+            subPopup.refresh()
+            let subState = PopupState(
+                trigger: state.trigger,
+                triggerPos: buffer.cursor,
+                popup: subPopup,
+                isSubMenu: true
+            )
+            mode = .popup(subState)
+            buffer.ghostText = nil
+            return .subMenuOpened
+        }
+
+        // 3. Plain commit: show argument hint as ghost text. The popup is
+        //    fully resolved — caller should flush the line.
         mode = .normal
         buffer.ghostText = item.argumentHint
+        return .resolved
+    }
+
+    /// Helper: commit a popup selection and return the outcome.
+    /// Used by callers (Enter, Tab, Space) that need to know whether to
+    /// continue editing (sub-menu) or flush the line.
+    @discardableResult
+    public mutating func commitSelection(buffer: inout TextBuffer) -> CommitOutcome {
+        guard case .popup(let state) = mode, let item = selectedItem else {
+            return .resolved
+        }
+        return commitPopupSelection(item: item, state: state, buffer: &buffer)
     }
 
     /// Cancel popup: remove trigger + query from buffer.

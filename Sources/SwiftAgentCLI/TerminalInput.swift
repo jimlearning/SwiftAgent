@@ -14,6 +14,26 @@ public protocol TerminalRawReader: AnyObject, Sendable {
 
     /// Decode a UTF-8 character starting from a lead byte.
     func decodeUTF8Char(leadByte: UInt8) -> (Character, Int)?
+
+    /// Enter raw terminal mode. No-op for non-TTY tests.
+    func enterRawMode()
+
+    /// Restore terminal settings. No-op for non-TTY tests.
+    func restore()
+
+    /// Read and decode an escape sequence (call after consuming the leading ESC byte).
+    func readEscapeSequence() -> EscapeSequence
+}
+
+/// Escape sequence types recognized by the parser.
+public enum EscapeSequence {
+    case up, down, left, right
+    case home, end
+    case deleteWord          // Alt+Backspace
+    case wordLeft, wordRight // Alt+Left/Right
+    case newline             // Alt+Enter / Shift+Enter (kitty)
+    case paste(String)       // Bracketed paste content
+    case none                // Unknown / bare ESC
 }
 
 // MARK: - TerminalInput
@@ -122,17 +142,6 @@ public final class TerminalInput: TerminalRawReader, @unchecked Sendable {
     }
 
     // MARK: - Escape sequences
-
-    /// Known escape sequence types recognized by the parser.
-    public enum EscapeSequence {
-        case up, down, left, right
-        case home, end
-        case deleteWord          // Alt+Backspace
-        case wordLeft, wordRight // Alt+Left/Right
-        case newline             // Alt+Enter / Shift+Enter (kitty)
-        case paste(String)       // Bracketed paste content
-        case none                // Unknown / bare ESC
-    }
 
     /// Read and decode an escape sequence (call after consuming the leading ESC byte).
     public func readEscapeSequence() -> EscapeSequence {
