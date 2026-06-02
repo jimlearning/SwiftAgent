@@ -270,8 +270,8 @@ struct CacheControlPlacementTests {
         let client = LLMClient(apiKey: "test")
         let prompt = "STATIC\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\nDYNAMIC"
         let tools = [
-            ToolDefinition(name: "Read", description: "Read files", inputSchema: JSONSchema()),
-            ToolDefinition(name: "Write", description: "Write files", inputSchema: JSONSchema())
+            ToolDefinition(name: "Read", description: "Read files", inputSchema: JSONSchema(type: "object")),
+            ToolDefinition(name: "Write", description: "Write files", inputSchema: JSONSchema(type: "object"))
         ]
         let messages = [Message(type: .user, content: [.text("hello")])]
 
@@ -425,7 +425,7 @@ struct ToolRegistryCachingTests {
 
 private struct ReadCacheTestTool: Tool {
     let name = "Read"
-    let inputSchema = JSONSchema()
+    let inputSchema = JSONSchema(type: "object")
     func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
         "read"
     }
@@ -442,7 +442,7 @@ private struct ReadCacheTestTool: Tool {
 
 private struct WriteCacheTestTool: Tool {
     let name = "Write"
-    let inputSchema = JSONSchema()
+    let inputSchema = JSONSchema(type: "object")
     func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String {
         "write"
     }

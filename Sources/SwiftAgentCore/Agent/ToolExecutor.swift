@@ -191,12 +191,9 @@ public final class ToolRegistry: @unchecked Sendable {
         tools toolList: [any Tool],
         permissionContext: ToolPermissionContext
     ) async -> ToolDefinition {
-        lock.lock()
-        if let cached = schemaCache[tool.name] {
-            lock.unlock()
+        if let cached = cachedToolDefinition(named: tool.name) {
             return cached
         }
-        lock.unlock()
 
         let desc = await tool.prompt(
             getToolPermissionContext: { permissionContext },
@@ -211,10 +208,20 @@ public final class ToolRegistry: @unchecked Sendable {
             deferLoading: false
         )
 
-        lock.lock()
-        schemaCache[tool.name] = base
-        lock.unlock()
+        storeCachedToolDefinition(base, named: tool.name)
         return base
+    }
+
+    private func cachedToolDefinition(named name: String) -> ToolDefinition? {
+        lock.lock()
+        defer { lock.unlock() }
+        return schemaCache[name]
+    }
+
+    private func storeCachedToolDefinition(_ definition: ToolDefinition, named name: String) {
+        lock.lock()
+        schemaCache[name] = definition
+        lock.unlock()
     }
 
     /// Filter tools by deny rules — remove tools that match blanket deny patterns.
