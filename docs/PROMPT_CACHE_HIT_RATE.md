@@ -18,6 +18,112 @@ SwiftAgent 的目标不是“打开 prompt caching”这么简单，而是让发
 
 不要把命中率问题直接归因于 `deepseek-v4-pro`。本次排查已证明，模型相同的情况下，请求结构差异足以造成明显命中差异。
 
+## 基础知识
+
+### Prompt cache 缓存的是什么
+
+Prompt cache 缓存的是一次请求中可复用的输入前缀，不是模型输出，也不是整个会话对象。对聊天式 coding agent 来说，这个输入前缀通常包含：
+
+- system prompt blocks
+- tool definitions
+- conversation history 中较早的 messages
+- 被 `cache_control` 标记覆盖到的 content blocks
+
+服务端第一次看到某个可缓存前缀时，会把它写入缓存；后续请求如果发送了相同或等价的前缀，就可以从缓存读取这部分 token，减少重新处理成本和延迟。
+
+### Cache marker 是什么
+
+`cache_control` marker 是告诉 API “到这个位置为止可以作为缓存断点”的标记。它不是一个独立的缓存开关，而是嵌在 system、message content block 或 tool definition 上的结构字段。
+
+例如：
+
+```json
+{
+  "type": "text",
+  "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+  "cache_control": { "type": "ephemeral" }
+}
+```
+
+关键点：
+
+- marker 的位置决定缓存前缀的边界。
+- marker 的字段也参与 request shape；`{ "type": "ephemeral" }` 和 `{ "type": "ephemeral", "scope": "global" }` 不是同一个形态。
+- marker 多不一定更好。多余 marker 会改变请求形状，也可能与 Claude Code 的策略不一致。
+- `ephemeral` 表示缓存有短期生命周期；不要把它理解成永久缓存。
+
+### Cache key 为什么容易失效
+
+Prompt cache 不是按“看起来差不多”匹配，而是依赖服务端对请求前缀的结构化匹配。下面这些变化都可能让缓存无法命中或只能命中更短的前缀：
+
+- system blocks 拆分方式变化
+- text 前后多一个换行、空格或动态时间戳
+- tools 排序变化
+- tool schema、description、`defer_loading` 字段变化
+- message content block 顺序变化
+- `cache_control` 数量、位置、字段变化
+- body 顶层字段变化，例如多出 `temperature` 或 `tool_choice`
+- beta 放在 header 还是 body
+
+所以“同一个模型”不等于“同一个 cache key”。缓存命中率首先是 request shape 和 prefix 稳定性问题，其次才是模型配置问题。
+
+### First request、cache creation、cache read
+
+一个新会话通常不会在第一轮就有高 `cache_read_input_tokens`，因为服务端还没有见过当前请求前缀。更常见的过程是：
+
+1. 第一轮发送长 system prompt 和 tools，服务端创建缓存。
+2. 第二轮及后续请求复用相同 system/tools/历史前缀，开始出现 `cache_read_input_tokens`。
+3. 会话越长，可复用历史前缀越大，`cache_read_input_tokens` 通常越高。
+
+因此，不能用一个很短的 SwiftAgent 两三轮日志直接对比 Claude Code 151 条 messages 的长会话 capture。
+
+### Usage 字段怎么读
+
+常见字段：
+
+| Field | 含义 |
+|---|---|
+| `input_tokens` | 本次仍需要正常处理的输入 token |
+| `cache_creation_input_tokens` | 本次写入缓存的输入 token |
+| `cache_read_input_tokens` | 本次从缓存读取的输入 token |
+| `output_tokens` | 模型输出 token |
+
+一个容易犯的错误是用：
+
+```text
+cache_read_input_tokens / input_tokens
+```
+
+这不是可比命中率，因为 `input_tokens` 不包含已经从缓存读取的部分。更合理的输入侧可比口径是：
+
+```text
+cache_read_input_tokens / (input_tokens + cache_read_input_tokens + cache_creation_input_tokens)
+```
+
+这个口径衡量的是“本次输入总量里有多少来自缓存”。它仍然不是服务端内部真实 cache key 诊断，只是比 `cache_read / input` 更适合跨工具比较。
+
+### Agent 为什么特别依赖 prompt cache
+
+Coding agent 每轮请求都会重复携带大量稳定内容：
+
+- 长 system prompt
+- 安全规则和工具使用规范
+- 数十个 tool schemas
+- 项目 memory / system reminders
+- 多轮对话历史
+
+如果这些稳定前缀不能命中缓存，每轮都会重新处理大量 token，表现为成本高、延迟高、长会话越来越慢。Claude Code 的 cache 效果好，不只是因为启用了 cache，而是因为它的 request shape、工具 schema、message normalization 和 cache marker 策略共同保持了稳定前缀。
+
+### 这份文档的判断原则
+
+本项目的判断顺序是：
+
+1. 先确认 SwiftAgent 与 Claude Code 的请求结构是否 cache-equivalent。
+2. 再看 system/tools/messages 哪一段前缀不稳定。
+3. 最后才评估模型、网关或 provider 差异。
+
+只要模型和网关相同，就不要把低命中率先归因于 `deepseek-v4-pro`。更高概率的问题是 SwiftAgent 发送的请求和 Claude Code 不同。
+
 ## 实测基线
 
 对比来源：
@@ -340,4 +446,3 @@ swift test --disable-sandbox --no-parallel
 4. 检查 message normalization 是否导致历史消息重排或 content block 变化。
 5. 检查 debug logger 是否改变展示形态，但不要把 logger 展开后的 JSON object 误判为 wire body。
 6. 再与最新 Claude Code prompt-gateway capture 对比，不要依赖旧印象。
-
