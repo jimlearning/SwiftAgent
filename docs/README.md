@@ -7,6 +7,7 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Module boundaries, design decisions, detailed layout | You need to understand how modules fit together or where code should live |
 | [ROADMAP.md](ROADMAP.md) | Phase progress, next priorities, blockers | You need to know what's done and what to work on next |
 | [AI_HANDOFF.md](AI_HANDOFF.md) | Comprehensive CC-alignment snapshot | You're a new AI/developer onboarding, or need the full gap analysis |
+| [PROMPT_CACHE_HIT_RATE.md](PROMPT_CACHE_HIT_RATE.md) | Prompt cache request-shape parity, measurements, and pitfalls | You're changing LLM request formatting or investigating cache hit rate |
 | [../specs/](../specs/) | Executable feature specifications | You're implementing a specific feature and need acceptance criteria |
 
 ## Quick Start

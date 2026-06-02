@@ -178,8 +178,9 @@ public final class DebugLogger: LLMDebugLogger, @unchecked Sendable {
 
     private func maskSensitiveHeaders(_ headers: [String: String]) -> [String: String] {
         var safe = headers
-        for key in ["x-api-key", "authorization", "api-key"] {
-            if let value = safe[key], value.count > 8 {
+        for (key, value) in headers {
+            let normalized = key.lowercased()
+            if ["x-api-key", "authorization", "api-key"].contains(normalized), value.count > 8 {
                 safe[key] = String(value.prefix(8)) + "..." + String(value.suffix(4))
             }
         }

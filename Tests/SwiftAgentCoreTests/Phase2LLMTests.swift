@@ -232,41 +232,49 @@ struct SystemPromptCachingTests {
 
 struct CacheControlPlacementTests {
     @Test
-    func systemPromptBoundaryCreatesGlobalStaticCacheBlock() {
+    func systemPromptBoundaryCreatesClaudeCodeSystemBlocks() {
         let client = LLMClient(apiKey: "test")
         let prompt = "STATIC\n\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\n\nDYNAMIC"
         let formatted = client.apiFormattedSystem(prompt, enablePromptCaching: true)
-        guard let blocks = formatted as? [[String: Any]], blocks.count == 2 else {
-            Issue.record("Expected split system prompt blocks")
+        guard let blocks = formatted as? [[String: Any]], blocks.count == 3 else {
+            Issue.record("Expected Claude Code system prompt blocks")
             return
         }
 
         #expect(blocks[0]["type"] as? String == "text")
-        #expect(blocks[0]["text"] as? String == "STATIC")
-        let cacheControl = blocks[0]["cache_control"] as? [String: String]
-        #expect(cacheControl?["type"] == "ephemeral")
-        #expect(cacheControl?["scope"] == "global")
-        #expect(blocks[1]["text"] as? String == "DYNAMIC")
-        #expect(blocks[1]["cache_control"] == nil)
+        #expect((blocks[0]["text"] as? String)?.hasPrefix("x-anthropic-billing-header:") == true)
+        #expect(blocks[0]["cache_control"] == nil)
+
+        #expect(blocks[1]["text"] as? String == "You are Claude Code, Anthropic's official CLI for Claude.")
+        let identityCacheControl = blocks[1]["cache_control"] as? [String: String]
+        #expect(identityCacheControl?["type"] == "ephemeral")
+        #expect(identityCacheControl?["scope"] == nil)
+
+        #expect(blocks[2]["text"] as? String == "\nSTATIC\n\nDYNAMIC")
+        let promptCacheControl = blocks[2]["cache_control"] as? [String: String]
+        #expect(promptCacheControl?["type"] == "ephemeral")
+        #expect(promptCacheControl?["scope"] == nil)
     }
 
     @Test
-    func systemPromptWithoutBoundaryUsesLegacySingleCacheBlock() {
+    func systemPromptWithoutBoundaryUsesClaudeCodeSystemBlocks() {
         let client = LLMClient(apiKey: "test")
         let formatted = client.apiFormattedSystem("STATIC ONLY", enablePromptCaching: true)
-        guard let blocks = formatted as? [[String: Any]], blocks.count == 1 else {
-            Issue.record("Expected one system prompt block")
+        guard let blocks = formatted as? [[String: Any]], blocks.count == 3 else {
+            Issue.record("Expected Claude Code system prompt blocks")
             return
         }
 
-        let cacheControl = blocks[0]["cache_control"] as? [String: String]
-        #expect(blocks[0]["text"] as? String == "STATIC ONLY")
+        #expect(blocks[0]["cache_control"] == nil)
+        #expect(blocks[1]["cache_control"] != nil)
+        #expect(blocks[2]["text"] as? String == "STATIC ONLY")
+        let cacheControl = blocks[2]["cache_control"] as? [String: String]
         #expect(cacheControl?["type"] == "ephemeral")
         #expect(cacheControl?["scope"] == nil)
     }
 
     @Test
-    func requestBodyUsesSystemGlobalCacheInsteadOfToolCache() {
+    func requestBodyMatchesClaudeCodeCacheControlShape() {
         let client = LLMClient(apiKey: "test")
         let prompt = "STATIC\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\nDYNAMIC"
         let tools = [
@@ -294,12 +302,69 @@ struct CacheControlPlacementTests {
             enablePromptCaching: true
         )
 
+        #expect(streaming["thinking"] == nil)
+        #expect(streaming["context_management"] == nil)
+        #expect(streaming["output_config"] == nil)
+        #expect(streaming["metadata"] == nil)
+        #expect(streaming["temperature"] == nil)
+        #expect(streaming["tool_choice"] == nil)
         #expect(countCacheControl(in: streaming["messages"]) == 1)
-        #expect(countCacheControl(in: streaming["system"]) == 1)
+        #expect(countCacheControl(in: streaming["system"]) == 2)
         #expect(countCacheControl(in: streaming["tools"]) == 0)
         #expect(countCacheControl(in: nonStreaming["messages"]) == 1)
-        #expect(countCacheControl(in: nonStreaming["system"]) == 1)
+        #expect(countCacheControl(in: nonStreaming["system"]) == 2)
         #expect(countCacheControl(in: nonStreaming["tools"]) == 0)
+    }
+
+    @Test
+    func sentRequestBodyMatchesClaudeCodeTopLevelShape() {
+        let client = LLMClient(apiKey: "test", sessionID: "session-123")
+        var body = client.buildMessagesRequestBody(
+            messages: [Message(type: .user, content: [.text("hello")])],
+            model: "deepseek-v4-pro",
+            stream: true,
+            systemPrompt: "STATIC\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\nDYNAMIC",
+            maxTokens: 32000,
+            tools: [
+                ToolDefinition(name: "Read", description: "Read files", inputSchema: JSONSchema(type: "object"))
+            ],
+            enablePromptCaching: true
+        )
+
+        client.applyClaudeCodeRequestShapeForTesting(to: &body, thinking: .adaptive, maxTokens: 32000)
+
+        let keys = Set(body.keys)
+        #expect(keys == [
+            "context_management",
+            "max_tokens",
+            "messages",
+            "metadata",
+            "model",
+            "output_config",
+            "stream",
+            "system",
+            "thinking",
+            "tools",
+        ])
+        #expect(body["max_tokens"] as? Int == 32000)
+        #expect(body["temperature"] == nil)
+        #expect(body["tool_choice"] == nil)
+        #expect(body["anthropic_beta"] == nil)
+
+        let thinking = body["thinking"] as? [String: String]
+        #expect(thinking?["type"] == "adaptive")
+
+        let contextManagement = body["context_management"] as? [String: Any]
+        let edits = contextManagement?["edits"] as? [[String: String]]
+        #expect(edits?.first?["type"] == "clear_thinking_20251015")
+        #expect(edits?.first?["keep"] == "all")
+
+        let outputConfig = body["output_config"] as? [String: String]
+        #expect(outputConfig?["effort"] == "high")
+
+        let metadata = body["metadata"] as? [String: String]
+        #expect(metadata?["user_id"]?.contains("\"session_id\":\"session-123\"") == true)
+        #expect(countCacheControl(in: body) == 3)
     }
 
     @Test

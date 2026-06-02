@@ -7,12 +7,13 @@ import Foundation
 /// Fully aligned with Claude Code's `getSystemPrompt()` in constants/prompts.ts.
 ///
 /// Architecture:
-/// - Static prefix (cacheable with cacheScope:'global'): identity, system rules,
+/// - Static prefix: identity, system rules,
 ///   doing tasks, actions, using tools, tone/style, output efficiency.
-/// - Dynamic suffix (per-session, cache-busting): session guidance, memory,
+/// - Dynamic suffix: session guidance, memory,
 ///   environment, language, MCP instructions, scratchpad, summarize-tool-results.
 ///
-/// The boundary between static and dynamic sections is `SYSTEM_PROMPT_DYNAMIC_BOUNDARY`.
+/// The boundary is retained for prompt composition, but the wire request follows
+/// Claude Code's current three system block shape with plain ephemeral markers.
 public struct SystemPromptBuilder: Sendable {
     public let workingDirectory: String
     public let claudeMdLoader: ClaudeMdLoader?
@@ -113,8 +114,8 @@ public struct SystemPromptBuilder: Sendable {
             .joined(separator: "\n\n")
     }
 
-    /// Return only the static prefix (cacheable), terminating at the boundary.
-    /// Matches CC's `splitSysPromptPrefix()` used for API cacheScope:'global'.
+    /// Return only the static prefix, terminating at the boundary.
+    /// Kept for tests and prompt composition helpers.
     public func staticPrefixOnly() -> String {
         var parts: [String] = []
         parts.append(simpleIntroSection())
@@ -547,9 +548,9 @@ public struct SystemPromptBuilder: Sendable {
 
 // MARK: - Boundary Marker
 
-/// The boundary marker separating static (cacheable) from dynamic (session-specific)
-/// system prompt content. Matches CC's SYSTEM_PROMPT_DYNAMIC_BOUNDARY.
+/// The boundary marker separating reusable static content from dynamic
+/// session-specific system prompt content.
 ///
-/// Everything BEFORE this marker can use cacheScope:'global'.
-/// Everything AFTER contains user/session-specific content and should not be cached.
+/// The wire request currently recombines both sides into Claude Code's
+/// three-block system shape with plain ephemeral markers.
 public let SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"

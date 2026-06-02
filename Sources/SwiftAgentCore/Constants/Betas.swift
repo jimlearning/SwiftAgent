@@ -82,4 +82,18 @@ public enum Betas {
             advisor,
         ] + [summarizeConnectorText, afkMode, cliInternal].filter { !$0.isEmpty }
     }
+
+    /// Betas observed in Claude Code prompt-gateway requests for coding chat.
+    public static var claudeCodeRequestHeaders: [String] {
+        [
+            claudeCode20250219,
+            interleavedThinking,
+            redactThinking,
+            contextManagement,
+            promptCachingScope,
+            advisor,
+            toolSearch1P,
+            effort,
+        ]
+    }
 }

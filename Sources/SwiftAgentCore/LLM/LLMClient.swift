@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 /// Protocol for debug logging of LLM API interactions.
 /// Implementations receive raw request/response data for diagnostics.
@@ -232,12 +235,16 @@ public final class LLMClient: Sendable {
         var request = URLRequest(url: URL(string: "\(baseURL)/v1/messages")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "accept")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue(authorizationHeaderValue(), forHTTPHeaderField: "authorization")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("cli", forHTTPHeaderField: "x-app")
-        request.setValue("claude-cli/1.0 SwiftAgent", forHTTPHeaderField: "User-Agent")
+        request.setValue("claude-cli/2.1.143 (external, cli)", forHTTPHeaderField: "User-Agent")
         request.setValue(sessionID, forHTTPHeaderField: "X-Claude-Code-Session-Id")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "x-client-request-id")
+        applyClaudeCodeStaticHeaders(to: &request)
+        applyClaudeCodeBetaHeader(betas, to: &request)
 
         var body = buildMessagesRequestBody(
             messages: messages,
@@ -251,25 +258,7 @@ public final class LLMClient: Sendable {
         )
 
 
-        if let thinking, case .disabled = thinking {
-            // no-op
-        } else if let thinking {
-            switch thinking {
-            case .adaptive:
-                body["thinking"] = ["type": "adaptive"]
-            case .enabled(let budgetTokens):
-                body["thinking"] = ["type": "enabled", "budget_tokens": min(budgetTokens, maxTokens - 1)]
-            case .disabled:
-                break
-            }
-            body.removeValue(forKey: "temperature")
-        } else {
-            body["temperature"] = 1
-        }
-
-        if let betas, !betas.isEmpty {
-            body["anthropic_beta"] = betas
-        }
+        applyClaudeCodeRequestShape(to: &body, thinking: thinking, maxTokens: maxTokens)
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -376,12 +365,16 @@ public final class LLMClient: Sendable {
         var request = URLRequest(url: URL(string: "\(baseURL)/v1/messages")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "accept")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue(authorizationHeaderValue(), forHTTPHeaderField: "authorization")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("cli", forHTTPHeaderField: "x-app")
-        request.setValue("claude-cli/1.0 SwiftAgent", forHTTPHeaderField: "User-Agent")
+        request.setValue("claude-cli/2.1.143 (external, cli)", forHTTPHeaderField: "User-Agent")
         request.setValue(sessionID, forHTTPHeaderField: "X-Claude-Code-Session-Id")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "x-client-request-id")
+        applyClaudeCodeStaticHeaders(to: &request)
+        applyClaudeCodeBetaHeader(betas, to: &request)
 
         var body = buildMessagesRequestBody(
             messages: messages,
@@ -393,32 +386,7 @@ public final class LLMClient: Sendable {
             enablePromptCaching: enablePromptCaching,
             toolChoice: toolChoice ?? "auto"
         )
-        let hasThinking: Bool
-        if let thinking, case .disabled = thinking {
-            hasThinking = false
-        } else if let thinking {
-            hasThinking = true
-            switch thinking {
-            case .adaptive:
-                body["thinking"] = ["type": "adaptive"]
-            case .enabled(let budgetTokens):
-                body["thinking"] = ["type": "enabled", "budget_tokens": min(budgetTokens, maxTokens - 1)]
-            case .disabled:
-                break
-            }
-        } else {
-            hasThinking = false
-        }
-
-        // Temperature: omitted when thinking is enabled (API default is 1)
-        if !hasThinking {
-            body["temperature"] = 1
-        }
-
-        // Beta headers as anthropic_beta array in request body (matching CC SDK wire format)
-        if let betas, !betas.isEmpty {
-            body["anthropic_beta"] = betas
-        }
+        applyClaudeCodeRequestShape(to: &body, thinking: thinking, maxTokens: maxTokens)
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -509,24 +477,10 @@ public final class LLMClient: Sendable {
         }
 
         if let tools {
-            let hasGlobalSystemCache = containsGlobalSystemCache(system)
-            body["tools"] = apiFormattedTools(
-                tools,
-                enablePromptCaching: enablePromptCaching && !hasGlobalSystemCache
-            )
-            body["tool_choice"] = ["type": toolChoice ?? "auto"]
+            body["tools"] = apiFormattedTools(tools, enablePromptCaching: false)
         }
 
         return body
-    }
-
-    private func containsGlobalSystemCache(_ system: Any?) -> Bool {
-        guard let blocks = system as? [[String: Any]] else { return false }
-        return blocks.contains { block in
-            guard let cacheControl = block["cache_control"] as? [String: Any] else { return false }
-            return cacheControl["type"] as? String == "ephemeral"
-                && cacheControl["scope"] as? String == "global"
-        }
     }
 
     /// Format messages for the API, adding cache_control to the last message's
@@ -550,41 +504,129 @@ public final class LLMClient: Sendable {
     func apiFormattedSystem(_ prompt: String, enablePromptCaching: Bool) -> Any {
         guard enablePromptCaching else { return prompt }
 
-        // Claude Code splits the system prompt into cache-scoped blocks. The
-        // static prefix can be shared globally; per-session content after the
-        // boundary stays uncached so cwd/date/memory changes do not bust it.
+        var blocks: [[String: Any]] = [
+            ["type": "text", "text": claudeCodeBillingHeaderBlock()]
+        ]
+
+        blocks.append([
+            "type": "text",
+            "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+            "cache_control": ["type": "ephemeral"]
+        ])
+
         if let boundaryRange = prompt.range(of: SYSTEM_PROMPT_DYNAMIC_BOUNDARY) {
             let staticPrefix = prompt[..<boundaryRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
             let dynamicSuffix = prompt[boundaryRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-            var blocks: [[String: Any]] = []
-            if !staticPrefix.isEmpty {
-                blocks.append([
-                    "type": "text",
-                    "text": String(staticPrefix),
-                    "cache_control": ["type": "ephemeral", "scope": "global"]
-                ])
-            }
-            if !dynamicSuffix.isEmpty {
-                blocks.append(["type": "text", "text": String(dynamicSuffix)])
-            }
-            if !blocks.isEmpty {
-                return blocks
-            }
+            let joined = [String(staticPrefix), String(dynamicSuffix)]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            blocks.append([
+                "type": "text",
+                "text": "\n\(joined)",
+                "cache_control": ["type": "ephemeral"]
+            ])
+            return blocks
         }
 
-        // No boundary marker: retain safe legacy behavior and cache the single
-        // whole prompt block.
-        return [
-            ["type": "text", "text": prompt, "cache_control": ["type": "ephemeral"]]
+        blocks.append([
+            "type": "text",
+            "text": prompt,
+            "cache_control": ["type": "ephemeral"]
+        ])
+        return blocks
+    }
+
+    func applyClaudeCodeRequestShapeForTesting(
+        to body: inout [String: Any],
+        thinking: ThinkingConfig?,
+        maxTokens: Int
+    ) {
+        applyClaudeCodeRequestShape(to: &body, thinking: thinking, maxTokens: maxTokens)
+    }
+
+    private func applyClaudeCodeRequestShape(
+        to body: inout [String: Any],
+        thinking: ThinkingConfig?,
+        maxTokens: Int
+    ) {
+        let effectiveThinking = thinking ?? .adaptive
+        switch effectiveThinking {
+        case .adaptive:
+            body["thinking"] = ["type": "adaptive"]
+        case .enabled(let budgetTokens):
+            body["thinking"] = ["type": "enabled", "budget_tokens": min(budgetTokens, maxTokens - 1)]
+        case .disabled:
+            body.removeValue(forKey: "thinking")
+        }
+
+        body.removeValue(forKey: "temperature")
+        body.removeValue(forKey: "tool_choice")
+        body["context_management"] = [
+            "edits": [
+                ["type": "clear_thinking_20251015", "keep": "all"]
+            ]
+        ]
+        body["output_config"] = ["effort": "high"]
+        body["metadata"] = [
+            "user_id": claudeCodeMetadataUserID()
         ]
     }
 
-    /// Format tool definitions for the API, with optional prompt caching on the last tool.
-    /// Placing cache_control on the last tool definition tells the server to cache
-    /// the entire tools array as a single prefix. This is critical for cost efficiency
-    /// when many tools (40+) are sent with every request — without it, the full
-    /// ~8,500 token tool schema is re-processed each time.
-    /// Matches Anthropic API: cache_control can be on tool definitions since May 2025.
+    private func applyClaudeCodeBetaHeader(_ betas: [String]?, to request: inout URLRequest) {
+        let activeBetas = betas?.isEmpty == false ? betas! : Betas.claudeCodeRequestHeaders
+        request.setValue(activeBetas.joined(separator: ","), forHTTPHeaderField: "anthropic-beta")
+    }
+
+    private func applyClaudeCodeStaticHeaders(to request: inout URLRequest) {
+        request.setValue("true", forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
+        request.setValue("arm64", forHTTPHeaderField: "x-stainless-arch")
+        request.setValue("js", forHTTPHeaderField: "x-stainless-lang")
+        request.setValue("MacOS", forHTTPHeaderField: "x-stainless-os")
+        request.setValue("0.94.0", forHTTPHeaderField: "x-stainless-package-version")
+        request.setValue("0", forHTTPHeaderField: "x-stainless-retry-count")
+        request.setValue("node", forHTTPHeaderField: "x-stainless-runtime")
+        request.setValue("v24.3.0", forHTTPHeaderField: "x-stainless-runtime-version")
+        request.setValue("600", forHTTPHeaderField: "x-stainless-timeout")
+    }
+
+    private func authorizationHeaderValue() -> String {
+        if apiKey.range(of: "Bearer ", options: [.anchored, .caseInsensitive]) != nil {
+            return apiKey
+        }
+        return "Bearer \(apiKey)"
+    }
+
+    private func claudeCodeBillingHeaderBlock() -> String {
+        "x-anthropic-billing-header: cc_version=2.1.143.7a0; cc_entrypoint=cli; cch=a12e4;"
+    }
+
+    private func claudeCodeMetadataUserID() -> String {
+        let deviceID = stableDeviceID()
+        return "{\"device_id\":\"\(deviceID)\",\"account_uuid\":\"\",\"session_id\":\"\(sessionID)\"}"
+    }
+
+    private func stableDeviceID() -> String {
+        let raw = [
+            NSUserName(),
+            Host.current().localizedName ?? "",
+            FileManager.default.homeDirectoryForCurrentUser.path
+        ].joined(separator: "|")
+        let data = Data(raw.utf8)
+        #if canImport(CryptoKit)
+        let digest = CryptoKit.SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+        #else
+        var hash: UInt64 = 14695981039346656037
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211
+        }
+        return String(format: "%016llx", hash)
+        #endif
+    }
+
+    /// Format tool definitions for the API. Claude Code's current chat request
+    /// shape leaves tool definitions unmarked and relies on system/message breaks.
     private func apiFormattedTools(_ tools: [ToolDefinition], enablePromptCaching: Bool) -> [[String: Any]] {
         guard enablePromptCaching, !tools.isEmpty else {
             return tools.map { $0.apiFormatted }

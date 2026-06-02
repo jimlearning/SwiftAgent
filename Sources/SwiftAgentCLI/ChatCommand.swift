@@ -513,15 +513,16 @@ struct ChatCommand: AsyncParsableCommand {
                     let adjustedToolDefs = filterDeferredTools(toolDefs, discovered: discovered)
                     // Build betas: include advanced-tool-use when deferred tools exist.
                     // CC: "required for defer_loading to be accepted" (claude.ts:1174)
-                    var betas = [Betas.promptCachingScope, Betas.interleavedThinking]
+                    var betas = Betas.claudeCodeRequestHeaders
                     let hasDeferred = adjustedToolDefs.contains { $0.deferLoading }
-                    if hasDeferred { betas.append(Betas.toolSearch1P) }
+                    if hasDeferred, !betas.contains(Betas.toolSearch1P) { betas.append(Betas.toolSearch1P) }
                     let stream = client.send(
                         messages: conversationHistory,
                         model: sharedModel.current,
                         systemPrompt: sysPrompt,
-                        maxTokens: 16384,
+                        maxTokens: 32000,
                         tools: adjustedToolDefs,
+                        thinking: .adaptive,
                         betas: betas
                     )
 
