@@ -646,7 +646,10 @@ struct ChatCommand: AsyncParsableCommand {
                             let resultBlocks = results.map { result in
                                 ContentBlock.toolResult(toolUseID: result.call.id, content: .string(result.output), isError: result.output.hasPrefix("Error:"))
                             }
-                            conversationHistory.append(Message(type: .user, content: resultBlocks))
+                            conversationHistory.append(Message(
+                                type: .user,
+                                content: appendToolResultCacheBreakpointReminder(to: resultBlocks)
+                            ))
                         } else if !thinkingText.isEmpty || !turnText.isEmpty {
                             var blocks: [ContentBlock] = []
                             if !thinkingText.isEmpty { blocks.append(.thinking(thinkingText)) }
@@ -736,7 +739,10 @@ struct ChatCommand: AsyncParsableCommand {
                     }
 
                     // Send tool results as a user message with tool_result blocks
-                    conversationHistory.append(Message(type: .user, content: resultBlocks))
+                    conversationHistory.append(Message(
+                        type: .user,
+                        content: appendToolResultCacheBreakpointReminder(to: resultBlocks)
+                    ))
                     if sentUserMessage { break }
                 }
 

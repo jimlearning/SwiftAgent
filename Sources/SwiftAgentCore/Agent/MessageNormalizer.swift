@@ -470,7 +470,10 @@ public func normalizeToolInput(
 /// CC detects `<system-reminder>` tags and merges them into adjacent
 /// tool_result content blocks during normalization.
 public func isSystemReminderText(_ text: String) -> Bool {
-    text.contains("<system-reminder>") || text.contains("</system-reminder>")
+    if isToolResultCacheBreakpointReminder(text) {
+        return false
+    }
+    return text.contains("<system-reminder>") || text.contains("</system-reminder>")
 }
 
 /// Smoosh system-reminder text blocks into adjacent tool_result content.

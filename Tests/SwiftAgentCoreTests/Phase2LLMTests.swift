@@ -368,6 +368,49 @@ struct CacheControlPlacementTests {
     }
 
     @Test
+    func sentRequestBodyKeepsThreeMarkersForToolResultTurns() {
+        let client = LLMClient(apiKey: "test", sessionID: "session-123")
+        let toolResultBlocks = appendToolResultCacheBreakpointReminder(to: [
+            .toolResult(toolUseID: "t1", content: .string("result1"), isError: false)
+        ])
+        var body = client.buildMessagesRequestBody(
+            messages: [
+                Message(type: .assistant, content: [
+                    .thinking("thinking"),
+                    .toolUse(id: "t1", name: "Read", input: .object([:]))
+                ]),
+                Message(type: .user, content: toolResultBlocks)
+            ],
+            model: "deepseek-v4-pro",
+            stream: true,
+            systemPrompt: "STATIC\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\nDYNAMIC",
+            maxTokens: 32000,
+            tools: [
+                ToolDefinition(name: "Read", description: "Read files", inputSchema: JSONSchema(type: "object"))
+            ],
+            enablePromptCaching: true
+        )
+
+        client.applyClaudeCodeRequestShapeForTesting(to: &body, thinking: .adaptive, maxTokens: 32000)
+
+        #expect(countCacheControl(in: body["system"]) == 2)
+        #expect(countCacheControl(in: body["tools"]) == 0)
+        #expect(countCacheControl(in: body["messages"]) == 1)
+        #expect(countCacheControl(in: body) == 3)
+
+        let messages = body["messages"] as? [[String: Any]]
+        let lastContent = messages?.last?["content"] as? [[String: Any]]
+        guard let blocks = lastContent, blocks.count == 2 else {
+            Issue.record("Expected tool_result plus reminder text")
+            return
+        }
+        #expect(blocks[0]["type"] as? String == "tool_result")
+        #expect(blocks[0]["cache_control"] == nil)
+        #expect(blocks[1]["type"] as? String == "text")
+        #expect(blocks[1]["cache_control"] != nil)
+    }
+
+    @Test
     func cacheControlOnLastTextBlock() {
         let msg = Message(type: .user, content: [.text("Hello")])
         let formatted = msg.apiFormattedWithCache
@@ -382,7 +425,7 @@ struct CacheControlPlacementTests {
     }
 
     @Test
-    func cacheControlOnLastToolResult() {
+    func noCacheControlOnToolResultOnlyMessage() {
         let msg = Message(type: .user, content: [
             .toolResult(toolUseID: "t1", content: .string("result1"), isError: false),
             .toolResult(toolUseID: "t2", content: .string("result2"), isError: false)
@@ -393,11 +436,49 @@ struct CacheControlPlacementTests {
             Issue.record("Expected 2 content blocks")
             return
         }
-        // First block: no cache_control
         #expect(blocks[0]["cache_control"] == nil)
-        // Last block: has cache_control
-        let cc = blocks[1]["cache_control"] as? [String: String]
-        #expect(cc?["type"] == "ephemeral", "cache_control should be on last tool_result block")
+        #expect(blocks[1]["cache_control"] == nil, "tool_result-only messages should not get message-level cache_control")
+    }
+
+    @Test
+    func cacheControlPrefersTrailingTextAfterToolResults() {
+        let msg = Message(type: .user, content: [
+            .toolResult(toolUseID: "t1", content: .string("result1"), isError: false),
+            .toolResult(toolUseID: "t2", content: .string("result2"), isError: false),
+            .text("<system-reminder>PostToolUse context</system-reminder>")
+        ])
+        let formatted = msg.apiFormattedWithCache
+        let content = formatted["content"] as? [[String: Any]]
+        guard let blocks = content, blocks.count == 3 else {
+            Issue.record("Expected 3 content blocks")
+            return
+        }
+        #expect(blocks[0]["cache_control"] == nil)
+        #expect(blocks[1]["cache_control"] == nil)
+        let cc = blocks[2]["cache_control"] as? [String: String]
+        #expect(blocks[2]["type"] as? String == "text")
+        #expect(cc?["type"] == "ephemeral", "cache_control should be on trailing text, not tool_result")
+    }
+
+    @Test
+    func toolResultCacheBreakpointReminderCreatesTrailingTextMarker() {
+        let blocks = appendToolResultCacheBreakpointReminder(to: [
+            .toolResult(toolUseID: "t1", content: .string("result1"), isError: false)
+        ])
+        let msg = Message(type: .user, content: blocks)
+        let formatted = msg.apiFormattedWithCache
+        let content = formatted["content"] as? [[String: Any]]
+        guard let apiBlocks = content, apiBlocks.count == 2 else {
+            Issue.record("Expected tool_result plus trailing text reminder")
+            return
+        }
+
+        #expect(apiBlocks[0]["type"] as? String == "tool_result")
+        #expect(apiBlocks[0]["cache_control"] == nil)
+        #expect(apiBlocks[1]["type"] as? String == "text")
+        #expect((apiBlocks[1]["text"] as? String)?.contains("PostToolUse context") == true)
+        let cc = apiBlocks[1]["cache_control"] as? [String: String]
+        #expect(cc?["type"] == "ephemeral")
     }
 
     @Test

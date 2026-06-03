@@ -425,7 +425,10 @@ public struct QueryEngine: Sendable {
                 ))
 
                 // Assemble tool result message
-                let toolResultMsg = Message(type: .user, content: toolResultBlocks)
+                let toolResultMsg = Message(
+                    type: .user,
+                    content: appendToolResultCacheBreakpointReminder(to: toolResultBlocks)
+                )
                 messages.append(toolResultMsg)
 
                 // Yield turn completion to caller for UI updates.

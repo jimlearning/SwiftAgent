@@ -806,18 +806,18 @@ extension Message {
         ]
     }
 
-    /// Walks backwards from the last content block to find the first block that can
-    /// carry a cache_control marker. Thinking and redactedThinking blocks are skipped
-    /// because the API ignores cache_control on them.
+    /// Walks backwards from the last content block to find the text block that
+    /// should carry the message-level cache_control marker. Claude Code places
+    /// the latest-message breakpoint on trailing text/system-reminder blocks, not
+    /// on tool_result blocks. If a message has no text at all, it is left
+    /// unmarked rather than creating a non-CC-equivalent breakpoint.
     private func lastCacheableBlockIndex() -> Int? {
         var idx = content.count - 1
         while idx >= 0 {
-            switch content[idx] {
-            case .thinking, .redactedThinking:
-                idx -= 1
-            default:
+            if case .text = content[idx] {
                 return idx
             }
+            idx -= 1
         }
         return nil
     }

@@ -222,9 +222,10 @@ Headers 基线：
 
 当前保留 exactly one latest-message marker：
 
-- 每次请求只在最后一条 message 的最后一个可缓存 content block 上添加 `cache_control`。
-- `thinking` 和 `redacted_thinking` 不承载 cache marker。
-- 这与 Claude Code 的 latest-message breakpoint 行为一致。
+- 每次请求优先在最后一条 message 的最后一个 `text` content block 上添加 `cache_control`。
+- `thinking`、`redacted_thinking` 和 `tool_result` 不承载 message-level cache marker。
+- tool-result 回合会追加一个稳定的 trailing `<system-reminder>` text block，使 breakpoint 落在 text 上。
+- 这与 Claude Code 的 latest-message breakpoint 行为一致：tool result 后面通常跟 hook/system-reminder text，marker 落在最后一个 text block。
 
 ### Tool cache marker
 
@@ -284,7 +285,25 @@ Headers 基线：
 
 不一定。Claude Code 当前 chat request 没有 tool-level marker。SwiftAgent 要优先保持 request shape parity，而不是凭直觉增加 marker。
 
-### 误区 5：`cache_read / input_tokens` 是可比命中率
+### 误区 5：message marker 放在 `tool_result` 上也等价
+
+错误。后续复查 `debug-20260603-004847.jsonl` 时发现，SwiftAgent 虽然总 marker 数为 3，但大量请求的唯一 message-level marker 落在最后一个 `tool_result` block 上。
+
+Claude Code capture 中，同类请求的最后一条 user message 通常是：
+
+```text
+tool_result, text, text, ...
+```
+
+其中 `cache_control` 落在最后一个 `text` block，通常是 `PreToolUse` / `PostToolUse` / task reminder 等 `<system-reminder>`。因此“总 marker 数一样”仍不够，marker 的 content block 类型也必须对齐。
+
+修正后的 SwiftAgent 规则：
+
+- message-level marker 只放在 `text` block。
+- tool-result-only message 不加 marker。
+- SwiftAgent 在 tool-result user message 后追加稳定 trailing reminder text，让 marker 落点恢复为 `text`。
+
+### 误区 6：`cache_read / input_tokens` 是可比命中率
 
 错误。API raw `input_tokens` 不包含已 cache read 的 tokens。可比口径应使用：
 
@@ -370,15 +389,15 @@ jq -r '
 
 `debug-20260603-004847.jsonl` 显示：
 
-- request shape 已基本达到 Claude Code parity。
+- request body 顶层字段已基本达到 Claude Code parity。
 - 每次请求都是 `systemLen=3`。
 - cache marker 总数固定为 3。
 - system marker 为 2，tool marker 为 0，message marker 为 1。
 - `max_tokens=32000`。
 - body 中不再出现 `temperature`, `tool_choice`, `anthropic_beta`。
-- `cache_read_input_tokens` 从 0 增长到 7296/7808，最后一条 usage 到 22400。
+- `cache_read_input_tokens` 从 0 增长到 7296/7808，部分 usage 到 22400，但长工具回合后仍明显偏低。
 
-这说明结构修复已生效，但短会话不能直接对比 Claude Code 长 capture 中 124800 到 128000 的 `cache_read_input_tokens`。Claude Code 那份 capture 有 151 条 messages，SwiftAgent 这份日志最多 13 条 messages，可复用 prefix 规模不同。
+进一步复查发现关键差异：SwiftAgent 的 tool-result 请求中，message-level marker 经常落在 `tool_result` block；Claude Code 同类请求落在 trailing `<system-reminder>` text block。因此原先“marker 数量已对齐”的判断不完整。修正后应重新跑一轮 debug 日志，重点看 tool-result 后续请求的 `cache_read_input_tokens` 是否随历史增长，而不是长期卡在约 7296。
 
 ## 仍需跟踪的差异
 
@@ -416,9 +435,11 @@ Claude Code capture 中部分工具有 `defer_loading:true`，如 MCP codegraph 
 3. 不要把 beta 放回 body 的 `anthropic_beta`。
 4. 不要在 adaptive thinking chat request 中发送 `temperature`。
 5. 不要发送 `tool_choice`，除非 Claude Code capture 出现该字段。
-6. 修改 `LLMClient` request shape 后，必须更新 `CacheControlPlacementTests`。
-7. 对比命中率时必须同时看 raw fields 和 comparable denominator。
-8. debug logs 中任何 auth header 必须 case-insensitive 脱敏。
+6. 不要把 message-level `cache_control` 放在 `tool_result` block。
+7. tool-result user message 必须有 trailing text/system-reminder breakpoint，除非新的 Claude Code capture 证明策略变化。
+8. 修改 `LLMClient` request shape 后，必须更新 `CacheControlPlacementTests`。
+9. 对比命中率时必须同时看 raw fields 和 comparable denominator。
+10. debug logs 中任何 auth header 必须 case-insensitive 脱敏。
 
 ## 回归测试
 

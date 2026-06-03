@@ -111,6 +111,42 @@ struct MessageNormalizerTests {
             Issue.record("Expected trailing thinking to be stripped while preserving tool_use")
         }
     }
+
+    @Test
+    func normalizeKeepsToolResultCacheBreakpointReminderAsTrailingText() {
+        let toolResultBlocks = appendToolResultCacheBreakpointReminder(to: [
+            .toolResult(toolUseID: "toolu_1", content: .string("Sources/main.swift"), isError: false),
+        ])
+        let messages = [
+            Message(type: .user, content: [.text("Search")]),
+            Message(type: .assistant, content: [
+                .toolUse(
+                    id: "toolu_1",
+                    name: "Glob",
+                    input: .object(["pattern": .string("**/*.swift")])
+                ),
+            ]),
+            Message(type: .user, content: toolResultBlocks),
+        ]
+
+        let normalized = normalizeMessagesForAPI(messages, tools: ["Glob"])
+        guard let last = normalized.last, last.type == .user else {
+            Issue.record("Expected final user tool result message")
+            return
+        }
+
+        #expect(last.content.count == 2)
+        if case .toolResult = last.content[0] {
+            // expected
+        } else {
+            Issue.record("Expected first block to remain tool_result")
+        }
+        if case .text(let text) = last.content[1] {
+            #expect(text == TOOL_RESULT_CACHE_BREAKPOINT_REMINDER)
+        } else {
+            Issue.record("Expected cache breakpoint reminder to remain trailing text")
+        }
+    }
 }
 
 struct SystemPromptBuilderTests {
