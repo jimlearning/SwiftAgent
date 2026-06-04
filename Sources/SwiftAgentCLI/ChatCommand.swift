@@ -33,6 +33,9 @@ struct ChatCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Show model thinking content in dim text")
     var showThinking: Bool = false
 
+    @Option(name: .long, help: "Send a single prompt and exit (non-interactive, automated mode)")
+    var prompt: String?
+
     /// Tracks Ctrl+O expand/collapse toggle state across the session.
     var expandState = ExpandState()
 
@@ -273,10 +276,20 @@ struct ChatCommand: AsyncParsableCommand {
             // Drain any keystrokes typed while the model was generating
             renderer.drainTTYInput()
 
-            guard let line = editor.readLine(prompt: "You: ") else { break }
+            // In non-interactive mode (--prompt), use the provided string.
+            // Otherwise read from the terminal editor.
+            let inputLine: String
+            if let promptArg = self.prompt {
+                inputLine = promptArg
+                // Echo the prompt so the user sees what was sent
+                print("You: \(promptArg)")
+            } else {
+                guard let l = editor.readLine(prompt: "You: ") else { break }
+                inputLine = l
+            }
 
             // Ctrl+O toggles expand/collapse of last group
-            if editor.ctrlOTriggered {
+            if self.prompt == nil, editor.ctrlOTriggered {
                 editor.ctrlOTriggered = false
                 let didSomething = await handleCtrlO(cache: toolResultCache, capability: capability)
                 if !didSomething {
@@ -287,7 +300,7 @@ struct ChatCommand: AsyncParsableCommand {
                 continue
             }
 
-            let input = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let input = inputLine.trimmingCharacters(in: .whitespacesAndNewlines)
             if input.isEmpty { continue }
 
             // Handle slash commands
@@ -813,6 +826,11 @@ struct ChatCommand: AsyncParsableCommand {
                     cacheCreation: cumulativeCacheCreation
                 )
             }
+
+            // In non-interactive mode (--prompt), exit after the first turn.
+            // This enables automated cache testing: feed a prompt, let the
+            // full agent loop execute, then parse the debug log for metrics.
+            if self.prompt != nil { break }
         }
 
         // Save session before exiting so /resume can find it

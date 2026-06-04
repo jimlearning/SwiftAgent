@@ -470,6 +470,7 @@ public struct SystemPromptBuilder: Sendable {
         "When working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later."
     }
 
+    // MARK: - Cache Padding (temporary — enriches system prompt to meet proxy cache-creation threshold)
     // MARK: - Helpers: Item Formatting (matches CC prependBullets)
 
     /// Formats a heterogeneous list of items (strings and nested arrays) into bullet-prefixed lines.

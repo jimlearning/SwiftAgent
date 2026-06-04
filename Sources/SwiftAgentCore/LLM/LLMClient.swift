@@ -260,7 +260,7 @@ public final class LLMClient: Sendable {
 
         applyClaudeCodeRequestShape(to: &body, thinking: thinking, maxTokens: maxTokens)
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try stableJSONData(from: body)
 
         let timeout = timeoutMs.map { $0 / 1000.0 } ?? (DEFAULT_NONSTREAMING_FALLBACK_TIMEOUT_MS / 1000.0)
         let config = URLSessionConfiguration.default
@@ -388,7 +388,7 @@ public final class LLMClient: Sendable {
         )
         applyClaudeCodeRequestShape(to: &body, thinking: thinking, maxTokens: maxTokens)
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try stableJSONData(from: body)
 
         // Debug: log outgoing request
         if let logger = debugLogger {
@@ -527,28 +527,18 @@ public final class LLMClient: Sendable {
             let staticPrefix = prompt[..<boundaryRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
             let dynamicSuffix = prompt[boundaryRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Block 2: Static content — cacheable, stable across turns.
-            // Matches CC's non-global mode where static content gets cache_control (org scope).
+            // CC non-global mode: ALL content after identity block goes into a
+            // single cached "rest" block. Both static and dynamic parts are merged
+            // so the cached prefix is maximally contiguous — no gap that could
+            // cause a proxy cache-boundary reset.
+            let joined = [String(staticPrefix), String(dynamicSuffix)]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
             blocks.append([
                 "type": "text",
-                "text": staticPrefix,
+                "text": "\n\(joined)",
                 "cache_control": ["type": "ephemeral"]
             ])
-
-            // Block 3: Dynamic content ALSO gets cache_control in non-global/proxy mode.
-            // Without it, the proxy/provider resets the cache boundary, preventing
-            // tools and messages after this block from ever being cached.
-            // CC's non-global mode (org scope) puts ALL content (static+dynamic) into
-            // a single cached "rest" block — we split them for clarity but both get
-            // cache_control so the contiguous chain is maintained.
-            if !dynamicSuffix.isEmpty {
-                blocks.append([
-                    "type": "text",
-                    "text": String(dynamicSuffix),
-                    "cache_control": ["type": "ephemeral"]
-                ])
-            }
-
             return blocks
         }
 
@@ -704,6 +694,23 @@ public final class LLMClient: Sendable {
 
         // Unknown model — return as-is
         return model
+    }
+
+    // MARK: - Stable JSON serialization
+
+    /// Serialize a JSON body with deterministically sorted dictionary keys.
+    /// Swift's `[String: Any]` + `JSONSerialization` does NOT guarantee stable
+    /// key ordering between calls — the internal hash table layout can vary,
+    /// producing different byte sequences for semantically identical content.
+    /// Since DeepSeek's KV-cache uses the raw tokenized request as the cache
+    /// key, inconsistent key ordering breaks prefix reuse across turns.
+    ///
+    /// Using `JSONEncoder` with `.sortedKeys` guarantees that every request
+    /// with the same content produces byte-identical JSON.
+    private func stableJSONData(from body: [String: Any]) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(SortedJSON(body))
     }
 }
 
