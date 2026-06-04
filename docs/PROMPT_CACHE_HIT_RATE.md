@@ -455,7 +455,7 @@ swift test --disable-sandbox --no-parallel --filter CacheControlPlacementTests
 swift test --disable-sandbox --no-parallel
 ```
 
-已知环境风险：如果用户全局 `/Users/jim/.claude/CLAUDE.md` 存在，`ClaudeMdLoaderTests.loadAllReturnsEmptyForEmptyDirectory` 可能被全局 memory 污染而失败。这不是 prompt cache request shape 的回归。
+`ClaudeMdLoaderTests` 使用隔离的 fake home/managed 目录，避免真实 `~/.claude/CLAUDE.md` 或 `/etc/claude-code/CLAUDE.md` 污染测试；运行时默认加载路径仍保持 Claude Code 对齐。
 
 ## 下一步排查路线
 

@@ -18,7 +18,7 @@
 | 11 | Sub-Agent & Tasks | Done | SubAgentManager, TaskManager (actor), WorktreeManager |
 | 12+ | Advanced Features | Done | HookSystem, PluginManager, FeatureFlags |
 
-Build: 0 errors, 0 warnings. Tests: 232 tests, 57 suites, all passing (1 pre-existing failure: `loadAllReturnsEmptyForEmptyDirectory` finds `~/.claude/CLAUDE.md`).
+Build: 0 errors. Tests: all passing. `ClaudeMdLoaderTests` use isolated fake home/managed directories so real `~/.claude/CLAUDE.md` remains loaded at runtime without polluting tests.
 
 ## MVP Scope (Complete)
 

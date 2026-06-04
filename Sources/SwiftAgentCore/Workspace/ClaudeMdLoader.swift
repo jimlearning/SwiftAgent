@@ -66,7 +66,11 @@ public struct ClaudeMdLoader: Sendable {
         "md", "txt", "markdown", "mdown", "mkdn", "mkd", "rst"
     ]
 
-    public init() {}
+    private let managedDirectory: String
+
+    public init(managedDirectory: String = "/etc/claude-code") {
+        self.managedDirectory = managedDirectory
+    }
 
     // MARK: - Public API
 
@@ -101,7 +105,7 @@ public struct ClaudeMdLoader: Sendable {
 
     private func loadManaged(homeDirectory: String) -> [MemoryFileInfo] {
         var results: [MemoryFileInfo] = []
-        let managedPath = "/etc/claude-code/CLAUDE.md"
+        let managedPath = (managedDirectory as NSString).appendingPathComponent("CLAUDE.md")
         if let content = readFileSafely(managedPath) {
             results.append(MemoryFileInfo(path: managedPath, type: .managed, content: content))
         }

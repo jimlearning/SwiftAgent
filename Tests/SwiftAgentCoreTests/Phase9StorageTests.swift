@@ -65,28 +65,37 @@ struct SessionStoreTests {
 }
 
 struct ClaudeMdLoaderTests {
+    private func makeIsolatedLoaderRoot(_ name: String) throws -> (root: URL, work: URL, home: URL, managed: URL) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(name)-\(UUID())")
+        let work = root.appendingPathComponent("work")
+        let home = root.appendingPathComponent("home")
+        let managed = root.appendingPathComponent("managed")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+        return (root, work, home, managed)
+    }
+
     @Test
     func loadAllReturnsEmptyForEmptyDirectory() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test-empty-\(UUID())")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let dirs = try makeIsolatedLoaderRoot("test-empty")
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
 
-        let loader = ClaudeMdLoader()
-        let files = loader.loadAll(workingDirectory: dir.path)
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let files = loader.loadAll(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
         #expect(files.isEmpty)
     }
 
     @Test
     func loadAllFindsProjectCLAUDE() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test-project-\(UUID())")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let dirs = try makeIsolatedLoaderRoot("test-project")
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
 
-        let mdPath = dir.appendingPathComponent("CLAUDE.md")
+        let mdPath = dirs.work.appendingPathComponent("CLAUDE.md")
         try "# Project instructions".write(to: mdPath, atomically: true, encoding: .utf8)
 
-        let loader = ClaudeMdLoader()
-        let files = loader.loadAll(workingDirectory: dir.path)
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let files = loader.loadAll(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
 
         let projectFiles = files.filter { $0.type == .project }
         #expect(projectFiles.count >= 1)
@@ -95,16 +104,16 @@ struct ClaudeMdLoaderTests {
 
     @Test
     func loadAllFindsDotClaudeMD() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test-dotclaude-\(UUID())")
-        let dotClaudeDir = dir.appendingPathComponent(".claude")
+        let dirs = try makeIsolatedLoaderRoot("test-dotclaude")
+        let dotClaudeDir = dirs.work.appendingPathComponent(".claude")
         try FileManager.default.createDirectory(at: dotClaudeDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
 
         let mdPath = dotClaudeDir.appendingPathComponent("CLAUDE.md")
         try "# DotClaude instructions".write(to: mdPath, atomically: true, encoding: .utf8)
 
-        let loader = ClaudeMdLoader()
-        let files = loader.loadAll(workingDirectory: dir.path)
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let files = loader.loadAll(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
 
         let projectFiles = files.filter { $0.type == .project }
         #expect(projectFiles.contains(where: { $0.content.contains("DotClaude instructions") }))
@@ -112,15 +121,14 @@ struct ClaudeMdLoaderTests {
 
     @Test
     func loadAllFindsLocalCLAUDE() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test-local-\(UUID())")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let dirs = try makeIsolatedLoaderRoot("test-local")
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
 
-        let localPath = dir.appendingPathComponent("CLAUDE.local.md")
+        let localPath = dirs.work.appendingPathComponent("CLAUDE.local.md")
         try "# Local overrides".write(to: localPath, atomically: true, encoding: .utf8)
 
-        let loader = ClaudeMdLoader()
-        let files = loader.loadAll(workingDirectory: dir.path)
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let files = loader.loadAll(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
 
         let localFiles = files.filter { $0.type == .local }
         #expect(localFiles.count >= 1)
@@ -129,15 +137,18 @@ struct ClaudeMdLoaderTests {
 
     @Test
     func loadOrderManagedBeforeUserBeforeProject() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test-order-\(UUID())")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let dirs = try makeIsolatedLoaderRoot("test-order")
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
 
-        let mdPath = dir.appendingPathComponent("CLAUDE.md")
+        let mdPath = dirs.work.appendingPathComponent("CLAUDE.md")
         try "# Project".write(to: mdPath, atomically: true, encoding: .utf8)
+        let userDir = dirs.home.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: userDir, withIntermediateDirectories: true)
+        try "# User".write(to: userDir.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
+        try "# Managed".write(to: dirs.managed.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
 
-        let loader = ClaudeMdLoader()
-        let files = loader.loadAll(workingDirectory: dir.path)
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let files = loader.loadAll(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
 
         // Verify ordering: each file's type should be >= previous
         var lastPriority = -1
@@ -150,15 +161,14 @@ struct ClaudeMdLoaderTests {
 
     @Test
     func loadMergedCombinesContent() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test-merged-\(UUID())")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let dirs = try makeIsolatedLoaderRoot("test-merged")
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
 
-        try "# File A".write(to: dir.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
-        try "# File B".write(to: dir.appendingPathComponent("CLAUDE.local.md"), atomically: true, encoding: .utf8)
+        try "# File A".write(to: dirs.work.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
+        try "# File B".write(to: dirs.work.appendingPathComponent("CLAUDE.local.md"), atomically: true, encoding: .utf8)
 
-        let loader = ClaudeMdLoader()
-        let merged = loader.loadMerged(workingDirectory: dir.path)
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let merged = loader.loadMerged(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
 
         #expect(merged.contains("File A"))
         #expect(merged.contains("File B"))
@@ -217,20 +227,37 @@ struct ClaudeMdLoaderTests {
 
     @Test
     func loadRulesDirectoryFindsMdFiles() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test-rules-\(UUID())")
-        let rulesDir = dir.appendingPathComponent(".claude/rules")
+        let dirs = try makeIsolatedLoaderRoot("test-rules")
+        let rulesDir = dirs.work.appendingPathComponent(".claude/rules")
         try FileManager.default.createDirectory(at: rulesDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
 
         try "# Rule 1".write(to: rulesDir.appendingPathComponent("rule1.md"), atomically: true, encoding: .utf8)
         try "# Rule 2".write(to: rulesDir.appendingPathComponent("rule2.md"), atomically: true, encoding: .utf8)
 
-        let loader = ClaudeMdLoader()
-        let files = loader.loadAll(workingDirectory: dir.path)
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let files = loader.loadAll(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
 
         let projectFiles = files.filter { $0.type == .project }
         #expect(projectFiles.contains(where: { $0.content.contains("Rule 1") }))
         #expect(projectFiles.contains(where: { $0.content.contains("Rule 2") }))
+    }
+
+    @Test
+    func loadAllFindsUserClaudeFromExplicitHomeDirectory() throws {
+        let dirs = try makeIsolatedLoaderRoot("test-user")
+        let userDir = dirs.home.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: userDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dirs.root) }
+
+        try "# User instructions".write(to: userDir.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
+
+        let loader = ClaudeMdLoader(managedDirectory: dirs.managed.path)
+        let files = loader.loadAll(workingDirectory: dirs.work.path, homeDirectory: dirs.home.path)
+
+        let userFiles = files.filter { $0.type == .user }
+        #expect(userFiles.count == 1)
+        #expect(userFiles.first?.content.contains("User instructions") == true)
     }
 }
 
