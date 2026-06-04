@@ -61,7 +61,7 @@ Tests/ — 232 tests, 57 suites
 4. ToolExecutor.execute() for all 43 tools
 5. Assistant messages include thinking blocks (API requirement)
 6. Tool results sent as toolResult content blocks keyed by toolUseID
-7. Max 25 iterations per turn, auto-completion detection
+7. No artificial iteration limit — model decides when to stop via end_turn. User can ESC to cancel. **Do not re-add MAX_TOOL_ITERATIONS or any hard iteration cap.**
 
 ## Debug Logging
 
