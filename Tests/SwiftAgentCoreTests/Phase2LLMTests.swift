@@ -236,8 +236,8 @@ struct CacheControlPlacementTests {
         let client = LLMClient(apiKey: "test")
         let prompt = "STATIC\n\n\(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)\n\nDYNAMIC"
         let formatted = client.apiFormattedSystem(prompt, enablePromptCaching: true)
-        guard let blocks = formatted as? [[String: Any]], blocks.count == 3 else {
-            Issue.record("Expected Claude Code system prompt blocks")
+        guard let blocks = formatted as? [[String: Any]], blocks.count == 4 else {
+            Issue.record("Expected 4 Claude Code system prompt blocks (billing, identity, static, dynamic)")
             return
         }
 
@@ -250,10 +250,19 @@ struct CacheControlPlacementTests {
         #expect(identityCacheControl?["type"] == "ephemeral")
         #expect(identityCacheControl?["scope"] == nil)
 
-        #expect(blocks[2]["text"] as? String == "\nSTATIC\n\nDYNAMIC")
-        let promptCacheControl = blocks[2]["cache_control"] as? [String: String]
-        #expect(promptCacheControl?["type"] == "ephemeral")
-        #expect(promptCacheControl?["scope"] == nil)
+        // Static block has cache_control (cached across turns)
+        #expect(blocks[2]["text"] as? String == "STATIC")
+        let staticCacheControl = blocks[2]["cache_control"] as? [String: String]
+        #expect(staticCacheControl?["type"] == "ephemeral")
+        #expect(staticCacheControl?["scope"] == nil)
+
+        // Dynamic block ALSO gets cache_control to maintain contiguous cache chain.
+        // Without it, the proxy/provider resets the cache boundary, preventing
+        // tools and messages after this block from ever being cached.
+        #expect(blocks[3]["text"] as? String == "DYNAMIC")
+        let dynamicCacheControl = blocks[3]["cache_control"] as? [String: String]
+        #expect(dynamicCacheControl?["type"] == "ephemeral")
+        #expect(dynamicCacheControl?["scope"] == nil)
     }
 
     @Test
@@ -309,10 +318,10 @@ struct CacheControlPlacementTests {
         #expect(streaming["temperature"] == nil)
         #expect(streaming["tool_choice"] == nil)
         #expect(countCacheControl(in: streaming["messages"]) == 1)
-        #expect(countCacheControl(in: streaming["system"]) == 2)
+        #expect(countCacheControl(in: streaming["system"]) == 3)
         #expect(countCacheControl(in: streaming["tools"]) == 0)
         #expect(countCacheControl(in: nonStreaming["messages"]) == 1)
-        #expect(countCacheControl(in: nonStreaming["system"]) == 2)
+        #expect(countCacheControl(in: nonStreaming["system"]) == 3)
         #expect(countCacheControl(in: nonStreaming["tools"]) == 0)
     }
 
@@ -364,7 +373,7 @@ struct CacheControlPlacementTests {
 
         let metadata = body["metadata"] as? [String: String]
         #expect(metadata?["user_id"]?.contains("\"session_id\":\"session-123\"") == true)
-        #expect(countCacheControl(in: body) == 3)
+        #expect(countCacheControl(in: body) == 4)
     }
 
     @Test
@@ -393,10 +402,10 @@ struct CacheControlPlacementTests {
 
         client.applyClaudeCodeRequestShapeForTesting(to: &body, thinking: .adaptive, maxTokens: 32000)
 
-        #expect(countCacheControl(in: body["system"]) == 2)
+        #expect(countCacheControl(in: body["system"]) == 3)
         #expect(countCacheControl(in: body["tools"]) == 0)
         #expect(countCacheControl(in: body["messages"]) == 1)
-        #expect(countCacheControl(in: body) == 3)
+        #expect(countCacheControl(in: body) == 4)
 
         let messages = body["messages"] as? [[String: Any]]
         let lastContent = messages?.last?["content"] as? [[String: Any]]

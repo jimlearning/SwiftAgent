@@ -526,14 +526,29 @@ public final class LLMClient: Sendable {
         if let boundaryRange = prompt.range(of: SYSTEM_PROMPT_DYNAMIC_BOUNDARY) {
             let staticPrefix = prompt[..<boundaryRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
             let dynamicSuffix = prompt[boundaryRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-            let joined = [String(staticPrefix), String(dynamicSuffix)]
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n\n")
+
+            // Block 2: Static content — cacheable, stable across turns.
+            // Matches CC's non-global mode where static content gets cache_control (org scope).
             blocks.append([
                 "type": "text",
-                "text": "\n\(joined)",
+                "text": staticPrefix,
                 "cache_control": ["type": "ephemeral"]
             ])
+
+            // Block 3: Dynamic content ALSO gets cache_control in non-global/proxy mode.
+            // Without it, the proxy/provider resets the cache boundary, preventing
+            // tools and messages after this block from ever being cached.
+            // CC's non-global mode (org scope) puts ALL content (static+dynamic) into
+            // a single cached "rest" block — we split them for clarity but both get
+            // cache_control so the contiguous chain is maintained.
+            if !dynamicSuffix.isEmpty {
+                blocks.append([
+                    "type": "text",
+                    "text": String(dynamicSuffix),
+                    "cache_control": ["type": "ephemeral"]
+                ])
+            }
+
             return blocks
         }
 
