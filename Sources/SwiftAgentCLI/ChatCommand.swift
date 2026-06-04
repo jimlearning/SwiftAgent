@@ -488,15 +488,43 @@ struct ChatCommand: AsyncParsableCommand {
             var cumulativeInputTokens = 0
             let turnStart = Date()
 
+            // Track the last assistant text for max-iterations termination
+            var lastAssistantText = ""
+
             do {
                 // --- Inline agent loop ---
-                // No artificial iteration limit — the model decides when to stop
-                // by returning text without tool calls (stop_reason: "end_turn").
-                // The user can always ESC to cancel.
+                // Limit tool-calling iterations (matching Claude Code's
+                // MAX_REQUESTS_PER_TURN = 25) to prevent non-Claude models
+                // from looping indefinitely without producing a final answer.
+                let MAX_TOOL_ITERATIONS = 25
+                var toolIterationCount = 0
 
                 while true {
                     // Check for ESC cancellation before each LLM round
                     if isCancelled.value { wasCancelled = true; break }
+
+                    toolIterationCount += 1
+
+                    // ── Max-iterations guard ──
+                    if toolIterationCount > MAX_TOOL_ITERATIONS {
+                        if !lastAssistantText.isEmpty {
+                            conversationHistory.append(Message(type: .assistant, content: [.text(lastAssistantText)]))
+                            responseText = lastAssistantText
+                        } else {
+                            responseText = "(The assistant did not complete the task within the maximum number of iterations.)"
+                        }
+                        break
+                    }
+
+                    // On the last allowed iteration, inject a wrap-up hint
+                    // so the model knows to produce a final answer instead of
+                    // continuing to call tools.
+                    if toolIterationCount == MAX_TOOL_ITERATIONS {
+                        conversationHistory.append(Message(
+                            type: .user,
+                            content: [.text("[system] You have reached the maximum number of tool-calling iterations. Please provide your final answer now without calling any further tools.")]
+                        ))
+                    }
 
                     var turnText = ""
                     var thinkingText = ""
@@ -672,6 +700,7 @@ struct ChatCommand: AsyncParsableCommand {
                             conversationHistory.append(Message(type: .assistant, content: [.text("[OK]")]))
                         }
                         responseText = turnText
+                        lastAssistantText = turnText
                         break
                     }
 
