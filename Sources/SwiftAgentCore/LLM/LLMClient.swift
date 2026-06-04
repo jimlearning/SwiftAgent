@@ -434,6 +434,10 @@ public final class LLMClient: Sendable {
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
             let jsonStr = String(line.dropFirst(6))
+
+            // Handle [DONE] sentinel (used by some providers as stream termination)
+            if jsonStr.trimmingCharacters(in: .whitespaces) == "[DONE]" { break }
+
             guard let data = jsonStr.data(using: .utf8) else { continue }
 
             // Debug: log raw SSE event
@@ -443,6 +447,11 @@ public final class LLMClient: Sendable {
 
             if let event = parser.parse(data: data) {
                 continuation.yield(event)
+                // message_stop signals the end of the SSE stream. Break out
+                // immediately instead of waiting for the connection to close.
+                // Some providers (DeepSeek) may keep the connection alive after
+                // the final event, causing bytes.lines to block indefinitely.
+                if case .messageStop = event { break }
             }
         }
     }
