@@ -1,16 +1,20 @@
 # SwiftAgent
 
 <p align="center">
-  <strong>AI coding agent CLI — pure Swift implementation of Claude Code</strong>
+  <strong>AI coding agent — pure Swift CLI + macOS Desktop App (DeepSeek)</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0-F05138?logo=swift" alt="Swift 6.0">
   <img src="https://img.shields.io/badge/macOS-14+-lightgrey?logo=apple" alt="macOS 14+">
-  <img src="https://img.shields.io/badge/tests-171%20passing-brightgreen" alt="171 tests">
+  <img src="https://img.shields.io/badge/tests-258%20passing-brightgreen" alt="258 tests">
+  <img src="https://img.shields.io/badge/build-0%20errors%2C%200%20warnings-success" alt="Build">
 </p>
 
-SwiftAgent is a Swift-native coding agent CLI modeled after Claude Code. It provides the full agentic coding experience: read, write, edit, search, shell, git, permission control, MCP integration, multi-agent delegation, and more.
+SwiftAgent is a Swift-native coding agent modeled after Claude Code. It ships as **two products**:
+
+1. **CLI** (`swift-agent`) — Full agentic coding CLI with 43 tools, TUI, streaming
+2. **macOS App** (`SwiftAgentApp`) — Native SwiftUI desktop app with DeepSeek models, multi-tab workspace, screen capture (Appshots), and Skills/MCP integration
 
 ---
 
@@ -86,6 +90,29 @@ Run `swift-agent --help` for details.
 | `/help` | Show available commands |
 | `/clear` | Clear the screen |
 | `/exit`, `/quit` | Exit the session |
+
+### macOS App
+
+```bash
+# Build the macOS app
+swift build --disable-sandbox -c debug
+
+# Or via Xcode
+xcodebuild -scheme SwiftAgentApp -destination 'platform=macOS' build
+```
+
+The macOS app requires macOS 15+ and supports Dark/Light themes, 27+ keyboard shortcuts, a full Settings window (4 categories × 13 tabs), and 16 handled error states.
+
+**Key features:**
+- Three-pane layout (Sidebar / Conversation / Multi-tab workspace)
+- DeepSeek integration (V3, R1, V3-0324, Coder-V2) with streaming
+- Multi-project, multi-thread with SQLite persistence
+- Right multi-tab workspace (Review, Terminal, Browser, Files, Side chat)
+- Skills library + MCP server management
+- Worktree isolation (git worktree automation)
+- Appshots — Cmd+Cmd screen capture for visual context
+- 4-tier sandbox permissions
+- Accessibility: VoiceOver labels, High Contrast, Reduce Motion, Dynamic Type
 
 ---
 
@@ -164,7 +191,7 @@ SwiftAgent/
 │   ├── SwiftAgentCore/         # Reusable agent runtime library
 │   │   ├── Types/              # Domain types (Conversation, Tool, Permission, etc.)
 │   │   ├── State/              # AppState (actor) + AppStateStore
-│   │   ├── LLM/                # Anthropic API client, SSE stream parser, retry
+│   │   ├── LLM/                # LLM client, SSE stream parser, retry
 │   │   ├── Agent/              # QueryEngine, prompt builder, context, tool executor
 │   │   ├── Tools/              # Read, Write, Edit, Bash, Glob, Grep
 │   │   ├── Safety/             # PermissionEngine, SafetyChecker, PermissionStore
@@ -175,20 +202,34 @@ SwiftAgent/
 │   │   ├── Hooks/              # HookSystem (lifecycle events)
 │   │   ├── Plugins/            # PluginManager (manifest validation)
 │   │   └── Features/           # FeatureFlags (compile-time + runtime)
-│   └── SwiftAgentCLI/          # CLI executable (ArgumentParser)
-│       ├── EntryPoint.swift
-│       ├── ChatCommand.swift    # Inline agent loop + all 43 tool registrations
-│       ├── TerminalRenderer.swift # ANSI rendering, panel/left-border/banner
-│       ├── TerminalCapability.swift
-│       ├── LineEditor.swift     # Raw-mode line editor with history, bracketed paste, multi-line
-│       ├── MarkdownRenderer.swift # ANSI markdown rendering (headings, code blocks, tables)
-│       ├── TerminalDisplayWidth.swift # CJK/emoji-aware terminal width helpers
-│       ├── DebugLogger.swift    # JSONL debug log for API interactions
-│       ├── ColorTheme.swift
-│       └── StreamRenderer.swift # SSE stream event rendering
+│   ├── SwiftAgentCLI/          # CLI executable (ArgumentParser)
+│   │   ├── EntryPoint.swift
+│   │   ├── ChatCommand.swift   # Inline agent loop + all 43 tools
+│   │   ├── TerminalRenderer.swift # ANSI rendering
+│   │   ├── LineEditor.swift    # Raw-mode line editor
+│   │   └── ...
+│   └── SwiftAgentApp/          # macOS SwiftUI App (DeepSeek-powered)
+│       ├── EntryPoint.swift    # @main App entry, windows, commands
+│       ├── Window/             # NavigationSplitView layout
+│       ├── Sidebar/            # Projects, threads, settings
+│       ├── Content/            # Chat view, composer, messages
+│       ├── RightTabs/          # Multi-tab right workspace
+│       ├── DeepSeek/           # API client, models, Keychain
+│       ├── Storage/            # SQLite persistence
+│       ├── Settings/           # Independent settings window
+│       │   ├── personal/       # General, Appearance, Config, Personalization, Shortcuts
+│       │   ├── integrations/   # Appshots, MCP, Browser, Computer Use
+│       │   ├── coding/         # Hooks, Connections, Git, Environments, Worktrees
+│       │   └── archived/       # Archived chats
+│       ├── Animations/         # Duration tokens, easing, transitions
+│       ├── Errors/             # 16 error states (banner/toast/modal)
+│       ├── Accessibility/      # a11y labels, contrast, reduce-motion
+│       └── Shortcuts/          # 27+ keyboard shortcuts registry
 ├── Tests/
-│   ├── SwiftAgentCoreTests/
-│   └── SwiftAgentCLITests/     # terminal rendering and input regression tests
+│   ├── SwiftAgentCoreTests/    # Core library tests (16 suites)
+│   ├── SwiftAgentCLITests/     # Terminal rendering / input tests
+│   ├── SwiftAgentAppTests/     # App unit tests (8 suites)
+│   └── SwiftAgentAppUITests/   # XCUITest suites (5 suites)
 ├── specs/                      # Phase specifications
 ├── docs/                       # Architecture & roadmap docs
 └── scripts/                    # Build & test scripts

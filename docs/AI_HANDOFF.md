@@ -266,4 +266,74 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 
 ---
 
+---
+
+## SwiftAgentApp — macOS App (Phases 1-5 Complete, v0.5.0)
+
+> **As of 2026-06-16**, the SwiftAgentApp macOS target ships a fully-polished product.
+
+### Architecture
+
+The macOS app uses **MVVM** with SwiftUI, backed by SQLite persistence:
+
+- **AppViewModel** — Root state (projects, threads, API key, LLM provider)
+- **ThreadViewModel** — Per-thread state, message send/stream lifecycle
+- **ProjectViewModel** — Per-project state
+
+Data: Storage (SQLite) → AppViewModel → SwiftUI views via `@Published` / `@EnvironmentObject`.
+
+### Key Modules
+
+| Module | Description | Files |
+|--------|-------------|-------|
+| **Settings** | Independent window (4 categories × 13 tabs) | 18 files |
+| **RightTabs** | Multi-tab workspace (Review/Terminal/Browser/Files/Side chat) | 10 files |
+| **Storage** | SQLite persistence (Projects, Threads, Messages) | 6 files |
+| **DeepSeek** | Streaming Chat Completions, Keychain API key | 4 files |
+| **Skills** | Skills library + creator wizard | 4 files |
+| **MCP** | MCP server config + management | 4 files |
+| **Appshots** | Cmd+Cmd screen capture via Accessibility API | 4 files |
+| **Errors** | 16 error states with Banner/Toast/Modal presentation | 4 files |
+| **Animations** | Duration tokens, easing, reduce-motion support | 1 file |
+| **Accessibility** | a11y labels, high contrast, dynamic type, VoiceOver | 1 file |
+| **Shortcuts** | 27+ shortcuts registry (single source of truth) | 1 file |
+| **DesignSystem** | Color, Typography, Spacing, Radius, StatusDot | 5 files |
+
+### Settings Categories
+
+- **Personal** (5 tabs): General, Appearance, Configuration, Personalization, Keyboard shortcuts
+- **Integrations** (4 tabs): Appshots, MCP Servers, Browser, Computer Use (placeholder)
+- **Coding** (5 tabs): Hooks, Connections, Git, Environments, Worktrees
+- **Archived** (1 tab): Archived chats (Restore / Delete permanently)
+
+### Keyboard Shortcuts (27+)
+
+15 shortcuts are bound via `.commands` modifier in the app Scene. The full table (27+ entries) is displayed in Settings → Keyboard shortcuts. Categories: Thread Management (7), Navigation (7), Right Tabs (10), Panels (3), Environment (1), Global (5).
+
+### Error States (16)
+
+All 16 from the spec covered: Sandbox denied, Network reconnection, 429 rate limit, 5xx model error, Worktree conflict, 401 invalid key, 402 low balance, Appshot permission, Appshot capture failed, MCP disconnected, Skill load failed, Diff merge failed, /goal persistence failed, Project switch data loss, Thread list >1000, Network proxy.
+
+### Accessibility
+
+- All interactive elements labelled
+- Reduce Motion detected + animations shortened
+- High Contrast mode honored
+- Dynamic Type supported
+- Semantic colors (no pure-color-only signaling)
+
+### Tests
+
+- **258 unit tests** across 61 suites (Core, CLI, App) — all passing
+- **5 XCUITest suites** (LaunchAndSeeLayout, NewThreadSendsMessage, SwitchPanel, SettingsOpens, ThemeSwitch)
+
+### Build
+
+```bash
+swift build --disable-sandbox    # 0 errors, 0 warnings
+swift test --disable-sandbox --no-parallel  # 258 passed, 0 failed
+```
+
+---
+
 ## 如果继续开发，建议的优先级

@@ -193,11 +193,141 @@ Sources/SwiftAgentCLI/
 ├── ChatToolInputAccumulator.swift    # Streaming tool input JSON accumulator
 └── ToolResultCache.swift     # Tool result caching for collapse/expand
 
+Sources/SwiftAgentApp/            # macOS SwiftUI App (DeepSeek-powered)
+├── EntryPoint.swift              # @main App entry, windows, commands, error overlay
+├── Window/
+│   └── MainContentView.swift     # NavigationSplitView three-pane layout
+├── Sidebar/
+│   ├── SidebarView.swift         # Projects, threads, settings link
+│   ├── ProjectRowView.swift      # Project expandable rows
+│   └── ThreadRowView.swift       # Thread selectable rows
+├── Content/
+│   ├── ContentView.swift         # Center pane: toolbar + messages + composer
+│   ├── ComposerView.swift        # Message input (text, send, slash commands)
+│   ├── MessageListView.swift     # Scrollable message list
+│   ├── MessageBubbleView.swift   # Individual message bubbles
+│   └── ToolCallCard.swift        # Tool call inline cards
+├── RightTabs/
+│   ├── RightTabsView.swift       # Multi-tab right workspace container
+│   ├── RightTabsStore.swift      # Tab state management
+│   ├── TabBarView.swift          # Horizontal tab bar
+│   ├── TabLabel.swift            # Individual tab labels
+│   ├── TabContentView.swift      # Active tab content switch
+│   ├── RightTab.swift            # Tab data model
+│   ├── RightTabType.swift        # Tab type enum (review/terminal/browser/files/sideChat)
+│   ├── AddTabMenu.swift          # + button popover
+│   ├── EmptyTabPlaceholder.swift # Empty state
+│   └── panels/
+│       └── ReviewPanelView.swift # Diff review panel
+├── DeepSeek/
+│   ├── DeepSeekClient.swift      # Streaming Chat Completions (SSE)
+│   ├── DeepSeekConfig.swift      # API URL, models, key config
+│   ├── DeepSeekModel.swift       # Model enum (V3, R1, CoderV2)
+│   └── KeychainStore.swift       # Secure API key storage
+├── LLM/
+│   └── AppLLMProvider.swift      # LLM provider wrapper
+├── Storage/
+│   ├── StorageManager.swift      # Database lifecycle
+│   ├── Database.swift            # SQLite connection
+│   ├── Migrations.swift          # Schema migrations
+│   ├── Models.swift              # Persisted data models
+│   ├── ProjectRepository.swift   # Project CRUD
+│   ├── ThreadRepository.swift    # Thread CRUD
+│   └── MessageRepository.swift   # Message CRUD
+├── ViewModels/
+│   ├── AppViewModel.swift        # Root app state (projects, threads, API key)
+│   ├── ThreadViewModel.swift     # Thread state + message sending
+│   ├── ProjectViewModel.swift    # Project state
+│   └── ComposerViewModel.swift   # Composer input state
+├── Skills/
+│   ├── SkillsView.swift          # Skills library browser
+│   ├── SkillCard.swift           # Individual skill card
+│   ├── SkillCreatorSheet.swift   # Skill creation wizard
+│   └── SkillScope.swift          # Skill scope enum (user/project/system)
+├── MCP/
+│   ├── MCPConfigView.swift       # MCP servers management
+│   ├── MCPConfigStore.swift      # MCP config persistence
+│   ├── MCPServerCard.swift       # Server card with status
+│   └── AddMCPServerSheet.swift   # Add server form
+├── Worktree/
+│   ├── WorktreeManager.swift     # Git worktree operations
+│   └── WorktreePickerSheet.swift # Worktree picker UI
+├── Appshots/
+│   ├── GlobalHotkey.swift        # Cmd+Cmd listener + toast state
+│   ├── AppshotCapture.swift      # Screen capture via Accessibility API
+│   ├── AppshotToastView.swift    # Capture success/failure toast
+│   └── AXTextExtractor.swift     # AX text extraction
+├── Modals/
+│   ├── PermissionModal.swift     # Sandbox permission modal
+│   ├── PermissionPicker.swift    # Permission level picker
+│   ├── NewProjectSheet.swift     # New project creation
+│   ├── ModelPicker.swift         # Model selection sheet
+│   ├── SlashCommandPalette.swift # Slash command picker
+│   ├── RenameSheet.swift         # Rename thread/project
+│   ├── RenameTarget.swift        # Rename target enum
+│   ├── AddMenu.swift             # Composer + menu
+│   └── PluginsSubmenu.swift      # Plugins submenu
+├── URLHandling/
+│   └── URLRouter.swift           # swiftagent:// URL routing
+├── Settings/                     # Independent Settings window
+│   ├── SettingsWindow.swift      # Window with sidebar + content
+│   ├── personal/
+│   │   ├── GeneralSettings.swift
+│   │   ├── AppearanceSettings.swift
+│   │   ├── ConfigurationSettings.swift
+│   │   ├── PersonalizationSettings.swift
+│   │   └── KeyboardShortcutsSettings.swift
+│   ├── integrations/
+│   │   ├── AppshotsSettings.swift
+│   │   ├── MCPServersSettings.swift
+│   │   ├── BrowserSettings.swift
+│   │   └── ComputerUseSettings.swift
+│   ├── coding/
+│   │   ├── HooksSettings.swift
+│   │   ├── ConnectionsSettings.swift
+│   │   ├── GitSettings.swift
+│   │   ├── EnvironmentsSettings.swift
+│   │   └── WorktreesSettings.swift
+│   └── archived/
+│       └── ArchivedChatsSettings.swift
+├── Animations/
+│   ├── AnimationTokens.swift     # Duration/easing token definitions
+│   └── ViewExtensions.swift      # Transition helpers
+├── Errors/
+│   ├── ErrorPresenter.swift      # 16 error states, severity classification
+│   ├── ErrorBannerView.swift     # Top banner (retryable errors)
+│   ├── ErrorToastView.swift      # Bottom toast (warnings)
+│   └── ErrorModalView.swift      # Modal overlay (fatal errors)
+├── Accessibility/
+│   └── A11yExtensions.swift      # a11y labels, contrast, reduce-motion
+├── Shortcuts/
+│   └── ShortcutRegistry.swift    # 27+ shortcuts, single source of truth
+└── DesignSystem/
+    ├── Color.swift               # Design token colors (dark mode)
+    ├── Typography.swift          # Font definitions
+    ├── Spacing.swift             # Spacing scale
+    ├── Radius.swift              # Corner radius tokens
+    └── StatusDot.swift           # Status indicator component
+
 Tests/
-├── SwiftAgentCoreTests/      # Core library tests
-└── SwiftAgentCLITests/       # Terminal rendering and input regression tests
-    └── 171 tests, 47 suites total
+├── SwiftAgentCoreTests/      # Core library tests (16 suites)
+├── SwiftAgentCLITests/       # Terminal rendering and input regression tests
+├── SwiftAgentAppTests/       # App unit tests (8 suites)
+└── SwiftAgentAppUITests/     # XCUITest suites (5 suites)
 ```
+
+## App Architecture — SwiftAgentApp
+
+The macOS app uses **MVVM** with SwiftUI, backed by SQLite persistence:
+
+- **AppViewModel** — Root view model, owns all state (projects, threads, API key, LLM provider)
+- **ThreadViewModel** — Per-thread state, message list, send/stream lifecycle
+- **ProjectViewModel** — Per-project state (name, path, threads)
+- **ComposerViewModel** — Input buffer state, slash command parsing
+
+Data flows from Storage (SQLite) → AppViewModel → SwiftUI views via `@Published` / `@EnvironmentObject`.
+
+The Settings window is an **independent NSWindow** (not in-app popup, per §17 #23), opened via `⌘,` or sidebar ⚙ link using URL scheme `swiftagent-settings://`.
 
 ## Reference Materials
 

@@ -1960,3 +1960,22 @@ ATTEMPTED - 01-skeleton.md - iter=2 - Mon Jun 15 23:46:21 CST 2026
 ATTEMPTED - 01-skeleton.md - iter=3 - Mon Jun 15 23:48:33 CST 2026
 DONE - 01-skeleton.md - Mon Jun 15 23:53:39 CST 2026
 ATTEMPTED - 02-deepseek.md - iter=5 - Mon Jun 15 23:55:26 CST 2026
+DONE - 02-deepseek.md - Tue Jun 16 00:09:34 CST 2026
+DONE - 03-threads-persistence.md - Tue Jun 16 00:22:32 CST 2026
+
+[2026-06-16 00:34] Phase 4 implementation complete
+- Skills: SkillsView, SkillCard, SkillCreatorSheet, SkillScope — loads from user/project/system scopes
+- MCP: MCPConfigView, MCPServerCard, AddMCPServerSheet, MCPConfigStore — TOML config, 5s polling
+- Worktree: AppWorktreeManager (wraps Core), WorktreePickerSheet, merge strategies, Apply to main
+- Appshots: AppshotCapture (ScreenCaptureKit), GlobalHotkey (NSEvent Cmd+Cmd), AXTextExtractor, AppshotToastView
+- Composer + menu: full 6-item AddMenu with all callbacks wired
+- Permission: PermissionModal with 4 tiers
+- Content: ToolCallCard, EditSummaryCard, thread toolbar with worktree indicators
+- RightTabs: ReviewPanelView wired to tab content
+- Sidebar: Plugins entry → Skills/MCP sheet, worktree icon on ThreadRowView
+- EntryPoint: GlobalHotkey monitoring, appshot injection into active thread
+- Tests: SkillRoutingTests (4), WorktreeTests (5), PermissionFlowTests (5) — all pass
+- Build: clean, zero warnings, 258 tests pass
+
+DONE - 04-advanced-features.md - Tue Jun 16 00:35:12 CST 2026
+DONE - 05-polish.md - Tue Jun 16 00:45:30 CST 2026

@@ -3,8 +3,14 @@
 ## Build & Test
 
 ```bash
+# Build all targets
 swift build --disable-sandbox
+
+# Run all tests (no parallelism for shared state)
 swift test --disable-sandbox --no-parallel
+
+# Xcode build (macOS app)
+xcodebuild -scheme SwiftAgentApp -destination 'platform=macOS' build
 ```
 
 Always `--disable-sandbox` (file system tests). Always `--no-parallel` (shared state).
@@ -20,29 +26,48 @@ Sources/
 │   ├── LLM/                  # LLMClient, LLMStreamParser, ModelRegistry, RetryPolicy
 │   ├── Safety/               # PermissionEngine, SafetyChecker
 │   └── MCP/ Config/ State/ Hooks/ Plugins/ Storage/ Commands/
-└── SwiftAgentCLI/            # CLI entry point
-    ├── ChatCommand.swift     # Orchestrator: run() + ArgumentParser struct
-    ├── ChatCommand+Types.swift, ChatCommand+SystemPrompt.swift,
-    │   ChatCommand+ToolDisplay.swift, ChatCommand+SessionPicker.swift,
-    │   ChatCommand+UserPrompt.swift  # Decoupled extensions
-    ├── LineEditor.swift      # Thin orchestrator for raw-mode editing
-    ├── TextBuffer.swift      # Value-type text/cursor buffer
-    ├── TerminalInput.swift   # Raw terminal I/O + escape sequence parser
-    ├── EditorRenderer.swift  # Buffer-to-terminal drawing
-    ├── ComposerState.swift   # Popup mode state machine
-    ├── PasteBurstDetector.swift # Paste detection + placeholder substitution
-    ├── TerminalRenderer.swift # ANSI rendering (banner, left-border, panel, spinner)
-    ├── MarkdownRenderer.swift # Markdown → ANSI
-    ├── TerminalCapability.swift # TTY/color/size detection
-    ├── TerminalDisplayWidth.swift # CJK-aware display width
-    ├── InlinePopup.swift     # Popup UI rendering
-    ├── PopupDataSource.swift # Command + file data sources for popups
-    ├── StatusLine.swift      # Bottom-line overlay
-    ├── ColorTheme.swift      # ANSI color theme
-    ├── DebugLogger.swift     # JSONL debug logging
-    └── ...                   # CollapseDetector, ToolResultCache, FileSearchIndex,
-                                FuzzyMatcher, TokenANSIRenderer, CodeTheme
-Tests/ — 232 tests, 57 suites
+├── SwiftAgentCLI/            # CLI entry point
+│   ├── ChatCommand.swift     # Orchestrator: run() + ArgumentParser struct
+│   ├── ChatCommand+Types.swift, +SystemPrompt.swift, +ToolDisplay.swift,
+│   │   +SessionPicker.swift, +UserPrompt.swift  # Decoupled extensions
+│   ├── LineEditor.swift      # Thin orchestrator for raw-mode editing
+│   ├── TextBuffer.swift      # Value-type text/cursor buffer
+│   ├── TerminalInput.swift   # Raw terminal I/O + escape sequence parser
+│   ├── EditorRenderer.swift  # Buffer-to-terminal drawing
+│   ├── ComposerState.swift   # Popup mode state machine
+│   ├── PasteBurstDetector.swift # Paste detection + placeholder substitution
+│   ├── TerminalRenderer.swift # ANSI rendering
+│   ├── MarkdownRenderer.swift # Markdown → ANSI
+│   ├── ColorTheme.swift      # ANSI color theme
+│   ├── DebugLogger.swift     # JSONL debug logging
+│   └── ...                   # CollapseDetector, ToolResultCache, etc.
+└── SwiftAgentApp/            # macOS SwiftUI App (DeepSeek-powered)
+    ├── EntryPoint.swift      # @main App entry with windows, commands, error overlay
+    ├── Window/               # MainContentView with NavigationSplitView
+    ├── Sidebar/              # SidebarView, ProjectRowView, ThreadRowView
+    ├── Content/              # ContentView, ComposerView, MessageListView, etc.
+    ├── RightTabs/            # Multi-tab right workspace (Review/Terminal/Browser/Files)
+    ├── DeepSeek/             # DeepSeekClient, Models, Config, KeychainStore
+    ├── LLM/                  # AppLLMProvider
+    ├── Storage/              # SQLite persistence (Database, Migrations, Repositories)
+    ├── ViewModels/           # AppViewModel, ThreadViewModel, ProjectViewModel
+    ├── Skills/               # Skills library + creator
+    ├── MCP/                  # MCP server config + management
+    ├── Worktree/             # Git worktree isolation
+    ├── Appshots/             # Cmd+Cmd screen capture
+    ├── Modals/               # Permission, Project, Rename, Slash command modals
+    ├── URLHandling/          # swiftagent:// URL routing
+    ├── Settings/             # Independent Settings window (4 categories, 13 tabs)
+    │   ├── personal/         # General, Appearance, Configuration, Personalization, Shortcuts
+    │   ├── integrations/     # Appshots, MCP, Browser, Computer Use
+    │   ├── coding/           # Hooks, Connections, Git, Environments, Worktrees
+    │   └── archived/         # Archived chats
+    ├── Animations/           # AnimationTokens, ViewExtensions
+    ├── Errors/               # ErrorPresenter (16 states), Banner/Toast/Modal views
+    ├── Accessibility/        # A11yExtensions (labels, contrast, reduce motion)
+    ├── Shortcuts/            # ShortcutRegistry (27+ shortcuts, single source of truth)
+    └── DesignSystem/         # Color, Typography, Spacing, Radius, StatusDot
+Tests/ — 258+ tests, 60+ suites (Core, CLI, App, UITests)
 ```
 
 ## Key Conventions
