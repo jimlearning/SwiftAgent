@@ -388,11 +388,11 @@ struct ChatCommand: AsyncParsableCommand {
                 let command = String(input.dropFirst()).trimmingCharacters(in: .whitespaces)
                 if command.isEmpty { continue }
                 let cwd = FileManager.default.currentDirectoryPath
-                // cd via shell to avoid NSTask.currentDirectoryURL crash on macOS 26
-                let fullCmd = "cd '\(cwd.replacingOccurrences(of: "'", with: "'\\''"))' && \(command)"
+                guard !cwd.isEmpty else { continue }
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: "/bin/zsh", isDirectory: false)
-                proc.arguments = ["-c", fullCmd]
+                proc.arguments = ["-c", command]
+                proc.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
                 proc.environment = ProcessInfo.processInfo.environment
                 let outPipe = Pipe(); let errPipe = Pipe()
                 proc.standardOutput = outPipe; proc.standardError = errPipe

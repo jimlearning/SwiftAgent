@@ -302,9 +302,10 @@ public struct BashTool: Tool {
     ) async throws -> ToolResult {
         let process = Process()
         let shellPath = context.shell ?? ShellResolver.resolve()
+        let workingPath = context.workingDirectory
         process.executableURL = URL(fileURLWithPath: shellPath, isDirectory: false)
         process.arguments = ["-c", cmd]
-        // Inherit CWD from parent process — avoids NSTask URL validation on macOS 26
+        process.currentDirectoryURL = URL(fileURLWithPath: workingPath, isDirectory: true)
 
         // Pipes for stdout and stderr
         let outPipe = Pipe()
@@ -475,9 +476,8 @@ public struct BashTool: Tool {
     ) -> ToolResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: context.shell ?? ShellResolver.resolve())
-        // cd via shell to avoid NSTask.currentDirectoryURL crash on macOS 26
-        let escapedCWD = context.workingDirectory.replacingOccurrences(of: "'", with: "'\\''")
-        process.arguments = ["-c", "cd '\(escapedCWD)' && \(cmd)"]
+        process.arguments = ["-c", cmd]
+        process.currentDirectoryURL = URL(fileURLWithPath: context.workingDirectory, isDirectory: true)
         process.environment = ProcessInfo.processInfo.environment
 
         let outputFile = FileManager.default.temporaryDirectory

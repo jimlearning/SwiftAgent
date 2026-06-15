@@ -132,23 +132,24 @@ struct ComposerSlashPopupIntegrationTests {
     }
 
     @Test
-    func popupDismissesWhenFirstCharHasNoMatches() {
+    func popupStaysOpenWhenFirstCharHasNoMatches() {
         let dataSource = CommandDataSource(commands: [("/help", nil)])
         var composer = ComposerState(slashDataSource: dataSource)
         var buffer = TextBuffer()
         buffer.insert("/")
         composer.openPopup(trigger: "/", triggerPos: 0, buffer: &buffer)
 
-        // Type "x" — /help won't match. Popup should auto-dismiss and
-        // keep the typed character in the buffer.
+        // Type "x" — /help won't match. Popup stays open so the user
+        // can backspace and try a different query. The character is
+        // still added to the buffer and query.
         composer.handlePopupChar(char: "x", buffer: &buffer)
-        #expect(!composer.mode.isPopup, "Popup should dismiss when no items match")
+        #expect(composer.mode.isPopup, "Popup should stay open even when no items match")
         #expect(buffer.content == "/x", "Typed char should be kept in buffer")
 
-        // Once dismissed, subsequent handlePopupChar calls are no-ops
-        // (LineEditor's default branch handles further typing).
+        // Further typing appends to buffer and updates query
         composer.handlePopupChar(char: "y", buffer: &buffer)
-        #expect(buffer.content == "/x", "Subsequent chars do not pass through handlePopupChar after dismiss")
+        #expect(buffer.content == "/xy", "Subsequent chars pass through handlePopupChar while popup stays open")
+        #expect(composer.mode.isPopup, "Popup should remain open")
     }
 
     @Test

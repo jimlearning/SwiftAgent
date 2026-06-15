@@ -121,20 +121,15 @@ public struct ComposerState {
                 }
                 return outcome
             } else {
-                cancelPopup(buffer: &buffer)
+                closePopup()
                 buffer.insert(" ")
-                return .resolved
+                return .subMenuOpened
             }
         }
 
         buffer.insert(char)
         state.popup.appendQuery(char)
-
-        if state.popup.items.isEmpty {
-            dismissPopupKeepBuffer()
-        } else {
-            mode = .popup(state)
-        }
+        mode = .popup(state)
         return .resolved
     }
 
