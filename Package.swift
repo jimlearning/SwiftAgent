@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .executable(name: "swift-agent", targets: ["SwiftAgentCLI"]),
         .library(name: "SwiftAgentCore", targets: ["SwiftAgentCore"]),
+        .executable(name: "SwiftAgentApp", targets: ["SwiftAgentApp"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
@@ -26,6 +27,11 @@ let package = Package(
             ],
             path: "Sources/SwiftAgentCLI"
         ),
+        .executableTarget(
+            name: "SwiftAgentApp",
+            dependencies: ["SwiftAgentCore"],
+            path: "Sources/SwiftAgentApp"
+        ),
         .testTarget(
             name: "SwiftAgentCoreTests",
             dependencies: ["SwiftAgentCore"],
@@ -35,6 +41,11 @@ let package = Package(
             name: "SwiftAgentCLITests",
             dependencies: ["SwiftAgentCLI"],
             path: "Tests/SwiftAgentCLITests"
+        ),
+        .testTarget(
+            name: "SwiftAgentAppTests",
+            dependencies: ["SwiftAgentApp"],
+            path: "Tests/SwiftAgentAppTests"
         ),
     ]
 )

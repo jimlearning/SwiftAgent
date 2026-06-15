@@ -1955,3 +1955,8 @@ Started from iteration 50 with Tool.swift corruption. Fixed the corruption, then
 - **BriefTool aliases: ["Brief"]**: matches CC's LEGACY_BRIEF_TOOL_NAME pattern
 - **Build**: success | **Tests**: 164/164 pass, 43 suites
 - **Alignment**: ~98.7% → ~99.0% (tool-level metadata now fully aligned: names + params + searchHint + shouldDefer + isConcurrencySafe + aliases + REPL mode)
+ATTEMPTED - 01-skeleton.md - iter=1 - Mon Jun 15 23:45:36 CST 2026
+ATTEMPTED - 01-skeleton.md - iter=2 - Mon Jun 15 23:46:21 CST 2026
+ATTEMPTED - 01-skeleton.md - iter=3 - Mon Jun 15 23:48:33 CST 2026
+DONE - 01-skeleton.md - Mon Jun 15 23:53:39 CST 2026
+ATTEMPTED - 02-deepseek.md - iter=5 - Mon Jun 15 23:55:26 CST 2026

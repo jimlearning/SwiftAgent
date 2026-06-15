@@ -13,6 +13,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SPECS_DIR="$PROJECT_DIR/specs"
 LOGS_DIR="$PROJECT_DIR/logs"
 HISTORY_FILE="$PROJECT_DIR/ralph_history.txt"
+PRODUCT_DOC="$PROJECT_DIR/.mavis/plans/swiftagent-macos-product-doc.md"
 MAX_ITERATIONS="${1:-10}"
 MODE="${2:-build}"
 SESSION_ID="ralph_$(date +%Y%m%d_%H%M%S)"
@@ -63,6 +64,23 @@ run_iteration() {
     local spec_content
     spec_content="$(cat "$spec_file")"
 
+    # Read the full product doc reference (contains detailed specs for all sections)
+    local product_doc_content=""
+    if [[ -f "$PRODUCT_DOC" ]]; then
+        product_doc_content="
+
+---
+
+# Full Product Specification (reference)
+
+The spec above is a phase-level checklist. The COMPLETE product specification with detailed SwiftUI code, color tokens, ASCII layout diagrams, anti-patterns list (25 items), and screenshots index lives here:
+
+$PRODUCT_DOC
+
+Read it before implementing — especially the sections cited in the spec (e.g. §3.3 for right panel, §4 for design tokens, §11 for DeepSeek). When in doubt, the product doc is authoritative.
+"
+    fi
+
     # Build the prompt for Claude Code
     local prompt
     prompt=$(cat <<PROMPT
@@ -71,15 +89,17 @@ You are implementing the following specification for the SwiftAgent project.
 IMPORTANT: Work in /Users/jim/SwiftAgent/
 
 ${spec_content}
+${product_doc_content}
 
 ---
 
 Your task:
-1. Read the current project state to understand what exists
-2. Implement ALL acceptance criteria in the specification
-3. Build and test: run \`swift build\` and \`swift test\`
-4. Fix any issues until all tests pass
-5. When ALL criteria are met, output EXACTLY: <promise>DONE</promise>
+1. Read the current project state (Sources/, Package.swift, CLAUDE.md) to understand what exists
+2. Read the product doc sections cited in the spec (e.g. §3.3, §4.1, §5.4, §11.3) for full details
+3. Implement ALL acceptance criteria in the specification
+4. Build and test: run \`swift build --disable-sandbox\` and \`swift test --disable-sandbox --no-parallel\`
+5. Fix any issues until all tests pass with zero warnings
+6. When ALL criteria are met, output EXACTLY: <promise>DONE</promise>
 
 Do NOT stop until every checkbox is verified. If you hit a blocker, document it in ralph_history.txt and continue with what you can.
 PROMPT
@@ -89,7 +109,9 @@ PROMPT
 
     # Run Claude Code with the prompt
     # --print for non-interactive mode, -p for prompt
-    claude --print -p "$prompt" 2>&1 | tee -a "$iter_log" || {
+    # --dangerously-skip-permissions: YOLO mode for autonomous iteration (per Ralph methodology)
+    # --bare: skip hooks/LSP/auto-memory; faster + more predictable for batch runs
+    claude --print --dangerously-skip-permissions --bare -p "$prompt" 2>&1 | tee -a "$iter_log" || {
         log "Claude Code exited with error (code: $?)"
     }
 
