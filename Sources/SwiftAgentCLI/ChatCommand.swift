@@ -383,6 +383,32 @@ struct ChatCommand: AsyncParsableCommand {
                 continue
             }
 
+            // Handle ! (bang) bash mode — execute command directly without LLM
+            if input.hasPrefix("!") {
+                let command = String(input.dropFirst()).trimmingCharacters(in: .whitespaces)
+                if command.isEmpty { continue }
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/bin/zsh", isDirectory: false)
+                proc.arguments = ["-c", command]
+                // Inherit CWD from parent process — avoids URL validation issues on macOS 26
+                let outPipe = Pipe(); let errPipe = Pipe()
+                proc.standardOutput = outPipe; proc.standardError = errPipe
+                try? proc.run()
+                proc.waitUntilExit()
+                let stdoutData = try? outPipe.fileHandleForReading.readToEnd()
+                let stderrData = try? errPipe.fileHandleForReading.readToEnd()
+                var output = ""
+                if let s = stdoutData.flatMap({ String(data: $0, encoding: .utf8) }), !s.isEmpty { output += s }
+                if let s = stderrData.flatMap({ String(data: $0, encoding: .utf8) }), !s.isEmpty {
+                    if !output.isEmpty && !output.hasSuffix("\n") { output += "\n" }
+                    output += s
+                }
+                if output.isEmpty { output = "(no output)" }
+                if !showThinking { print("") }  // spacing before output
+                emitBlock(output.trimmingCharacters(in: .whitespacesAndNewlines))
+                continue
+            }
+
             // Append user message to conversation history.
             // On the first turn, prepend MCP server instructions as a
             // <system-reminder> block — matching Claude Code's injection

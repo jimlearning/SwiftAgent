@@ -301,9 +301,10 @@ public struct BashTool: Tool {
         context: ToolUseContext
     ) async throws -> ToolResult {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: context.shell ?? ShellResolver.resolve())
+        let shellPath = context.shell ?? ShellResolver.resolve()
+        process.executableURL = URL(fileURLWithPath: shellPath, isDirectory: false)
         process.arguments = ["-c", cmd]
-        process.currentDirectoryURL = URL(fileURLWithPath: context.workingDirectory)
+        // Inherit CWD from parent process — avoids NSTask URL validation on macOS 26
 
         // Pipes for stdout and stderr
         let outPipe = Pipe()

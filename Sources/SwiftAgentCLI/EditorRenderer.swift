@@ -25,6 +25,19 @@ public struct EditorRenderer: Sendable {
         self.terminalColumns = terminalColumns
     }
 
+    // MARK: - Bash mode
+
+    /// Width of the visual gap rendered after the `!` prefix (in terminal columns).
+    /// Always 1 (a single space), but stored as a property so `cursorPosition`
+    /// can account for it without coupling to the render implementation.
+    private static let bashGapWidth: Int = 1
+
+    /// Whether the buffer is in bash mode (first character is `!`).
+    public static func isBashMode(_ buffer: TextBuffer) -> Bool {
+        guard let firstLine = buffer.lines.first, let first = firstLine.first else { return false }
+        return first == "!"
+    }
+
     // MARK: - Main render
 
     /// Full redraw of the line: clear previous content and draw buffer + ghost text.
@@ -32,6 +45,7 @@ public struct EditorRenderer: Sendable {
     public mutating func redraw(buffer: TextBuffer) {
         let lines = buffer.lines
         let totalRows = renderedRows(promptWidth: promptWidth, lines: lines)
+        let bashMode = Self.isBashMode(buffer)
 
         // Move cursor to row 0 of previously drawn area, then clear
         if lastCursorRow > 0 {
@@ -40,7 +54,14 @@ public struct EditorRenderer: Sendable {
         writeToStdout("\r\u{001B}[J")
 
         // Draw first line with prompt
-        writeToStdout(styledPrompt + lines[0])
+        if bashMode {
+            let firstLine = lines[0]
+            let rest = String(firstLine.dropFirst())
+            // Colored ! (magenta bold) + rendered gap + rest of text
+            writeToStdout(styledPrompt + "\u{001B}[1;35m!\u{001B}[0m " + rest)
+        } else {
+            writeToStdout(styledPrompt + lines[0])
+        }
 
         // Draw continuation lines
         let pad = String(repeating: " ", count: promptWidth)
@@ -50,7 +71,7 @@ public struct EditorRenderer: Sendable {
 
         // Calculate target cursor position
         let prefix = String(buffer.content.prefix(buffer.cursor))
-        let target = cursorPosition(promptWidth: promptWidth, prefix: prefix)
+        let target = cursorPosition(promptWidth: promptWidth, prefix: prefix, bashMode: bashMode)
 
         // Move cursor from end of drawn content up to target row
         let upRows = (totalRows - 1) - target.row
@@ -111,7 +132,7 @@ public struct EditorRenderer: Sendable {
 
     // MARK: - Cursor position calculation
 
-    public func cursorPosition(promptWidth: Int, prefix: String) -> (row: Int, column: Int) {
+    public func cursorPosition(promptWidth: Int, prefix: String, bashMode: Bool = false) -> (row: Int, column: Int) {
         let prefixLines = prefix.components(separatedBy: "\n")
         var row = 0
 
@@ -121,7 +142,10 @@ public struct EditorRenderer: Sendable {
         }
 
         let currentLine = prefixLines.last ?? ""
-        let offset = promptWidth + TerminalDisplayWidth.width(currentLine)
+        // Add bash gap width when cursor is past the `!` prefix (rendered gap is
+        // not stored in the buffer, so cursor calculation must account for it).
+        let extraGap = (bashMode && !prefix.isEmpty) ? Self.bashGapWidth : 0
+        let offset = promptWidth + TerminalDisplayWidth.width(currentLine) + extraGap
         let position = TerminalDisplayWidth.cursorPosition(forOffset: offset, columns: terminalColumns)
         return (row + position.row, position.column)
     }

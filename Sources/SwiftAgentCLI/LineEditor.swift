@@ -318,7 +318,8 @@ public final class LineEditor: @unchecked Sendable {
     /// Centralized so every byte handler invokes the same composite render.
     private func redraw(renderer: inout EditorRenderer, buffer: inout TextBuffer, promptWidth: Int) {
         let prefix = String(buffer.content.prefix(buffer.cursor))
-        let target = renderer.cursorPosition(promptWidth: promptWidth, prefix: prefix)
+        let bashMode = EditorRenderer.isBashMode(buffer)
+        let target = renderer.cursorPosition(promptWidth: promptWidth, prefix: prefix, bashMode: bashMode)
         renderer.redraw(buffer: buffer)
         if composer.mode.isPopup {
             let popupStartRow = renderer.moveToPopupArea()
