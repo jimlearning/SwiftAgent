@@ -254,7 +254,7 @@ public struct GrepTool: Tool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: rgPath)
         process.arguments = args + [searchPath]
-        process.currentDirectoryURL = URL(fileURLWithPath: searchPath)
+        // Inherit CWD from parent — rg accepts searchPath as positional arg
 
         let outPipe = Pipe()
         let errPipe = Pipe()

@@ -427,7 +427,7 @@ public final class CommandRegistry: @unchecked Sendable {
             var lines = ["Diff: \(base)...HEAD", String(repeating: "-", count: 30)]
             let runGit = { (args: [String]) -> String in
                 let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                p.arguments = ["git", "-C", cwd] + args; p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+                p.arguments = ["git", "-C", cwd] + args  // -C handles directory; skip currentDirectoryURL for macOS 26
                 let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
                 try? p.run(); p.waitUntilExit()
                 return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

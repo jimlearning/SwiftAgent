@@ -24,7 +24,7 @@ public struct WorktreeManager: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repoPath, "worktree", "add", path]
-        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        // git -C <path> handles directory; no currentDirectoryURL needed
         try await runProcess(process)
 
         return path
@@ -35,14 +35,14 @@ public struct WorktreeManager: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repoPath, "worktree", "remove", "--force", path]
-        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        // git -C <path> handles directory; no currentDirectoryURL needed
         try? await runProcess(process)
 
         // Prune any stale worktree references
         let prune = Process()
         prune.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         prune.arguments = ["-C", repoPath, "worktree", "prune"]
-        prune.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        // git -C <path> handles directory; no currentDirectoryURL needed
         try? await runProcess(prune)
     }
 
@@ -51,7 +51,7 @@ public struct WorktreeManager: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repoPath, "worktree", "list", "--porcelain"]
-        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        // git -C <path> handles directory; no currentDirectoryURL needed
 
         let outputPipe = Pipe()
         process.standardOutput = outputPipe

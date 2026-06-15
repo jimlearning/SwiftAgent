@@ -179,8 +179,8 @@ public final class FileSearchIndex: @unchecked Sendable {
     private static func runGit(args: [String], cwd: String) -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["git"] + args
-        proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        // Use -C to set git dir without NSTask.currentDirectoryURL (avoids macOS 26 crash)
+        proc.arguments = ["git", "-C", cwd] + args
 
         let outPipe = Pipe()
         proc.standardOutput = outPipe

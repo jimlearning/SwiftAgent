@@ -475,10 +475,10 @@ public struct BashTool: Tool {
     ) -> ToolResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: context.shell ?? ShellResolver.resolve())
-        process.arguments = ["-c", cmd]
-        process.currentDirectoryURL = URL(
-            fileURLWithPath: context.workingDirectory
-        )
+        // cd via shell to avoid NSTask.currentDirectoryURL crash on macOS 26
+        let escapedCWD = context.workingDirectory.replacingOccurrences(of: "'", with: "'\\''")
+        process.arguments = ["-c", "cd '\(escapedCWD)' && \(cmd)"]
+        process.environment = ProcessInfo.processInfo.environment
 
         let outputFile = FileManager.default.temporaryDirectory
             .appendingPathComponent(
