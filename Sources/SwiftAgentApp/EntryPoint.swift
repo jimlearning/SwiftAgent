@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 @main
 struct SwiftAgentAppEntry: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appViewModel = AppViewModel()
     @StateObject private var urlRouter = URLRouter()
     @StateObject private var hotkeyManager = GlobalHotkeyManager.shared
