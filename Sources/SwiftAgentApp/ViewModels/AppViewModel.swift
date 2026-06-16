@@ -385,6 +385,30 @@ public final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Attach a file to the current thread's composer. The composer
+    /// picks it up by reading the published `pendingAttachments` list,
+    /// so the file path appears as an @-mention-style chip the user
+    /// can edit around before sending.
+    @Published public var pendingAttachments: [ComposerAttachment] = []
+
+    public func addFileToComposer(_ url: URL) {
+        guard let thread = selectedThread else { return }
+        let attachment = ComposerAttachment(
+            id: UUID().uuidString,
+            kind: .file(path: url.path, displayName: url.lastPathComponent),
+            addedAt: Date()
+        )
+        pendingAttachments.append(attachment)
+        // Also drop a placeholder user message so the user can see
+        // the attachment represented in the conversation stream.
+        let msg = ThreadMessage(
+            role: .user,
+            content: "[File: \(url.lastPathComponent)]",
+            isStreaming: false
+        )
+        thread.messages.append(msg)
+    }
+
     /// Delete a thread.
     public func deleteThread(id: String) {
         do {

@@ -18,6 +18,8 @@ public struct FilesPanelView: View {
     let tabID: String
     let projectPath: String?
 
+    @EnvironmentObject var appViewModel: AppViewModel
+
     @State private var rootNodes: [FileNode] = []
     @State private var searchText: String = ""
     @State private var selectedFile: FileNode?
@@ -116,7 +118,10 @@ public struct FilesPanelView: View {
                             depth: 0,
                             expanded: $expandedFolders,
                             selected: $selectedFile,
-                            onSelect: handleSelect
+                            onSelect: handleSelect,
+                            onAddToChat: { fileNode in
+                                appViewModel.addFileToComposer(fileNode.url)
+                            }
                         )
                     }
                 }
@@ -347,9 +352,25 @@ struct FileTreeRow: View {
     @Binding var expanded: Set<String>
     @Binding var selected: FileNode?
     let onSelect: (FileNode) -> Void
+    let onAddToChat: (FileNode) -> Void
 
     private var isExpanded: Bool { expanded.contains(node.url.path) }
     private var isSelected: Bool { selected?.url == node.url }
+
+    /// Returns the list of app bundle URLs that can open this file,
+    /// in the same order Finder's "Open With" submenu would show.
+    /// Computed lazily so we don't hit NSWorkspace on every render.
+    private var availableApps: [URL] {
+        guard !node.isDirectory else { return [] }
+        return NSWorkspace.shared.urlsForApplications(toOpen: node.url)
+    }
+
+    /// The default app for this file (used by the top "Open in default
+    /// app" entry). nil for unknown types.
+    private var defaultApp: URL? {
+        guard !node.isDirectory else { return nil }
+        return NSWorkspace.shared.urlForApplication(toOpen: node.url)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -361,7 +382,8 @@ struct FileTreeRow: View {
                         depth: depth + 1,
                         expanded: $expanded,
                         selected: $selected,
-                        onSelect: onSelect
+                        onSelect: onSelect,
+                        onAddToChat: onAddToChat
                     )
                 }
             }
@@ -410,13 +432,61 @@ struct FileTreeRow: View {
             padding: EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
         )
         .contextMenu {
-            Button("Open with default app") { NSWorkspace.shared.open(node.url) }
-            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
+            // 1. Open in default app — opens with the system's default
+            //    app for this file type (Finder's "Open").
+            Button("Open in default app") {
+                NSWorkspace.shared.open(node.url)
+            }
+
+            // 2. Open with > — Finder-style submenu listing every app
+            //    that can open this file. The default app is checked.
+            Menu("Open with") {
+                if availableApps.isEmpty {
+                    Text("No app can open this file")
+                } else {
+                    ForEach(availableApps, id: \.self) { appURL in
+                        Button {
+                            try? NSWorkspace.shared.open(
+                                [node.url],
+                                withApplicationAt: appURL,
+                                options: [],
+                                configuration: [:]
+                            )
+                        } label: {
+                            let isDefault = (appURL == defaultApp)
+                            HStack {
+                                Image(systemName: isDefault ? "checkmark" : "")
+                                    .frame(width: 14)
+                                Text(appURL.deletingPathExtension().lastPathComponent)
+                            }
+                        }
+                    }
+                }
+            }
+
             Divider()
+
+            // 3. Reveal in Finder
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([node.url])
+            }
+
+            // 4. Copy path
             Button("Copy path") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(node.url.path, forType: .string)
             }
+
+            Divider()
+
+            // 5. Add to chat — attach this file to the current thread's
+            //    composer. The Files panel surfaces a placeholder
+            //    message so the user can see the attachment in the
+            //    conversation stream.
+            Button("Add to chat") {
+                onAddToChat(node)
+            }
+            .disabled(node.isDirectory)
         }
     }
 
@@ -425,8 +495,10 @@ struct FileTreeRow: View {
         switch ext {
         case "swift": return "swift"
         case "md", "markdown": return "doc.richtext"
+        case "txt": return "doc.text"
         case "json", "toml", "yaml", "yml": return "curlybraces"
         case "png", "jpg", "jpeg", "gif", "svg": return "photo"
+        case "gitignore", "git": return "arrow.triangle.branch"
         default: return "doc"
         }
     }
