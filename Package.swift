@@ -38,7 +38,20 @@ let package = Package(
                 .product(name: "KeychainAccess", package: "KeychainAccess"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ],
-            path: "Sources/SwiftAgentApp"
+            path: "Sources/SwiftAgentApp",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI"),
+                // Embed Info.plist into the Mach-O __TEXT,__info_plist section so the
+                // executable has a proper CFBundleIdentifier (fixes Xcode "Cannot index
+                // window tabs due to missing main bundle identifier" and SwiftUI Previews).
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Sources/SwiftAgentApp/Info.plist"
+                ])
+            ]
         ),
         .testTarget(
             name: "SwiftAgentCoreTests",
