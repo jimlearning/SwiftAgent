@@ -18,6 +18,13 @@ public final class AppViewModel: ObservableObject {
     /// Whether the API key setup banner should be shown.
     @Published public var showAPIKeyBanner: Bool = false
 
+    /// Whether the Settings window/sheet should be presented.
+    /// Driven by the sidebar Settings button and the ⌘, shortcut.
+    /// Routed through the SwiftUI scene in `EntryPoint` so it appears
+    /// as an independent `Window` (per §17 #23 anti-pattern — settings
+    /// is NOT an in-app popup).
+    @Published public var showSettings: Bool = false
+
     /// The resolved API key (empty if not configured).
     @Published public private(set) var apiKeyStatus: APIKeyStatus = .checking
 
@@ -52,6 +59,12 @@ public final class AppViewModel: ObservableObject {
 
     /// Whether storage is initialized and data is loaded.
     @Published public private(set) var isStorageReady: Bool = false
+
+    /// Files edited in the most recent thread turn — surfaced by the
+    /// EditSummaryCard in the conversation stream and by the Review
+    /// panel in the right tabs workspace. Updated by `ThreadViewModel`
+    /// when streaming completes with file-edit metadata.
+    @Published public var lastEditSummary: EditSummary = .empty
 
     /// Live list of MCP servers — published so the + menu and Settings page
     /// observe the same source. Empty until MCPConfigStore loads its TOML.
@@ -228,6 +241,11 @@ public final class AppViewModel: ObservableObject {
     public func createThread(title: String = "New Chat", projectId: String? = nil) -> ThreadViewModel {
         let thread = ThreadViewModel(llmProvider: llmProvider, storageManager: storage)
         thread.setProvider(llmProvider)
+        // Set the title on the live VM BEFORE persisting. Without this line
+        // the toolbar and sidebar would still show the placeholder
+        // "Untitled" until the user sends the first message (the auto-rename
+        // path in ThreadViewModel.send only fires on message send).
+        thread.title = title
 
         let persisted = PersistedThread(
             id: thread.id,

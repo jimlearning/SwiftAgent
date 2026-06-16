@@ -1,35 +1,47 @@
 import SwiftUI
 
+/// Routes a `RightTab` to its actual panel implementation. Phase 5
+/// finished, so Terminal / Browser / Files / Side chat are no longer
+/// placeholders — they are real SwiftUI views.
 struct TabContentView: View {
     let tab: RightTab
+    @EnvironmentObject var appViewModel: AppViewModel
+    @EnvironmentObject var rightTabsStore: RightTabsStore
 
     var body: some View {
         switch tab.type {
         case .review:
-            ReviewPanelView()
+            ReviewPanelView(entries: reviewEntries)
         case .terminal:
-            placeholderView(title: "Terminal", icon: "terminal")
+            TerminalPanelView(tabID: tab.id.uuidString)
         case .browser:
-            placeholderView(title: "Browser", icon: "globe")
+            BrowserPanelView(tabID: tab.id.uuidString, initialURL: initialBrowserURL)
         case .files:
-            placeholderView(title: "Files", icon: "folder")
+            FilesPanelView(tabID: tab.id.uuidString, projectPath: currentProjectPath)
         case .sideChat:
-            placeholderView(title: "Side chat", icon: "plus.circle")
+            SideChatPanelView(tabID: tab.id.uuidString)
         }
     }
 
-    private func placeholderView(title: String, icon: String) -> some View {
-        VStack(spacing: 12) {
-            Spacer()
-            Image(systemName: icon)
-                .font(.system(size: 24))
-                .foregroundColor(.textTertiary)
-            Text("\(title) — coming in Phase 5")
-                .font(.uiBody)
-                .foregroundColor(.textSecondary)
-            Spacer()
+    /// Derive Review entries from the selected thread's last-known
+    /// edit summary (kept on AppViewModel as `lastEditSummary`). When
+    /// the user has just sent a message that triggered file edits, the
+    /// EditSummaryCard carries the file list; we mirror it here so the
+    /// Review panel has something to render.
+    private var reviewEntries: [ReviewPanelView.DiffEntry] {
+        appViewModel.lastEditSummary.makeEntries()
+    }
+
+    private var currentProjectPath: String? {
+        guard let thread = appViewModel.selectedThread else { return nil }
+        return appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) })?.path
+            ?? FileManager.default.currentDirectoryPath
+    }
+
+    private var initialBrowserURL: URL {
+        if let path = currentProjectPath {
+            return URL(fileURLWithPath: path, isDirectory: true)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.bgRightPanel)
+        return URL(string: "https://deepseek.com")!
     }
 }

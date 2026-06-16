@@ -19,6 +19,7 @@ public struct ContentView: View {
     @State private var apiKeyText: String = ""
     @State private var isRenamingTitle: Bool = false
     @State private var renameTitleText: String = ""
+    @State private var showEnvPopover: Bool = false
 
     public init() {}
 
@@ -88,24 +89,52 @@ public struct ContentView: View {
 
             Spacer()
 
-            HStack(spacing: 12) {
-                // Environment button (Local/Worktree)
+            HStack(spacing: 8) {
+                // Environment button (Local / Worktree) — clicking cycles the env
                 Button {
                     cycleExecutionEnv(thread: thread)
                 } label: {
                     HStack(spacing: 4) {
+                        Image(systemName: envIcon(thread.executionEnv))
+                            .font(.system(size: 10))
                         Text(envLabel(thread.executionEnv, thread: thread))
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 11, weight: .medium))
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                     }
                     .foregroundColor(.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .hoverHighlight(
+                    background: Color.white.opacity(0.08),
+                    cornerRadius: 6,
+                    padding: EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+                )
+                .help("Toggle execution environment (Local / Worktree)")
 
-                // Mode indicator (Plan mode, etc.)
+                // Environment popover (Sources / git branch / commit / PR status)
+                Button {
+                    showEnvPopover.toggle()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverHighlight(cornerRadius: 6, padding: EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                .help("Environment details")
+                .popover(isPresented: $showEnvPopover, arrowEdge: .bottom) {
+                    EnvironmentPopoverContent()
+                }
+
+                // Plan mode indicator
                 if thread.mode == "plan" {
-                    Text("Planning...")
+                    Text("Plan")
                         .font(.uiCaption)
                         .foregroundColor(.accentPrimary)
                         .padding(.horizontal, 8)
@@ -134,13 +163,25 @@ public struct ContentView: View {
                                 RoundedRectangle(cornerRadius: 4)
                                     .strokeBorder(Color.accentPrimary, lineWidth: 1)
                             )
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Merge the worktree back into the main branch")
                 }
             }
         }
         .frame(height: 48)
         .padding(.horizontal, 16)
+    }
+
+    private func envIcon(_ env: String) -> String {
+        switch env {
+        case "worktree": return "arrow.triangle.branch"
+        case "cloud": return "cloud"
+        default: return "laptopcomputer"
+        }
     }
 
     // MARK: - Environment

@@ -2,13 +2,15 @@ import SwiftUI
 
 /// Sidebar: top entries + Projects list + Chats (global) + Settings.
 ///
-/// Uses `ScrollView` + `VStack` rather than `List` because List's row
-/// container hijacks hit-testing: a `Button` placed inside a List row has
-/// its tap region restricted to the label/icon, not the full row.
-/// That produced the "click the blank cell — nothing happens" bug.
-/// ScrollView + VStack keeps every Button's contentShape intact.
+/// Built from `ScrollView` + `VStack` rather than `List` because List's
+/// row container hijacks Button hit-testing: a `Button` placed inside a
+/// List row has its tap region restricted to the label/icon, not the
+/// full row. ScrollView + VStack keeps every Button's contentShape
+/// intact, so each top entry, project row, and thread row is a
+/// fully-clickable cell with hover highlight.
 struct SidebarView: View {
     @EnvironmentObject var appViewModel: AppViewModel
+    @Environment(\.openWindow) private var openWindow
 
     @State private var showNewProjectSheet = false
     @State private var showRenameSheet = false
@@ -22,7 +24,7 @@ struct SidebarView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 topEntries
-                if isSearchFocused { searchField }
+                searchFieldArea
                 projectsSection
                 chatsSection
                 Spacer().frame(height: 8)
@@ -49,8 +51,29 @@ struct SidebarView: View {
         .sheet(isPresented: $showPluginsSheet) {
             pluginsSheetContent
         }
-        .onAppear { setupKeyboardShortcuts() }
+        .onAppear {
+            // Listen for the ⌘F menu command to focus the search field.
+            // We store the observer token so we can remove it on disappear;
+            // passing `self` to removeObserver on a SwiftUI View struct is a
+            // no-op at runtime (no such observer registered), so we track
+            // the token directly.
+            searchObserverToken = NotificationCenter.default.addObserver(
+                forName: .swiftAgentFocusSearch,
+                object: nil,
+                queue: .main
+            ) { [self] _ in
+                isSearchFocused = true
+            }
+        }
+        .onDisappear {
+            if let token = searchObserverToken {
+                NotificationCenter.default.removeObserver(token)
+                searchObserverToken = nil
+            }
+        }
     }
+
+    @State private var searchObserverToken: NSObjectProtocol?
 
     // MARK: - Top 4 entries
 
@@ -66,7 +89,7 @@ struct SidebarView: View {
                 showPluginsSheet = true
             }
             topEntry(icon: "clock", title: "Automations", shortcut: nil) {
-                // Phase 4 stub
+                // Phase 4 stub — opens an Inbox placeholder
             }
         }
     }
@@ -93,22 +116,31 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hoverHighlight(
+            background: Color.white.opacity(0.08),
+            cornerRadius: 6,
+            padding: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        )
         .help(title)
     }
 
     // MARK: - Search Field
 
-    private var searchField: some View {
-        HStack {
+    @ViewBuilder
+    private var searchFieldArea: some View {
+        // Always visible (not just on focus) so the user can immediately
+        // see the input affordance and the focus highlight is obvious.
+        HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.textTertiary)
                 .font(.system(size: 12))
+                .frame(width: 16)
             TextField("Search threads...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.uiBody)
                 .focused($isSearchFocused)
-                .onSubmit {
-                    appViewModel.searchFilter = searchText
+                .onChange(of: searchText) { _, newValue in
+                    appViewModel.searchFilter = newValue
                 }
             if !searchText.isEmpty {
                 Button {
@@ -117,14 +149,20 @@ struct SidebarView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
+                        .foregroundColor(.textTertiary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(.textTertiary)
-                .contentShape(Rectangle())
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSearchFocused ? Color.bgElevated.opacity(0.6) : Color.clear)
+        )
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Projects Section
@@ -155,27 +193,203 @@ struct SidebarView: View {
                     .padding(.vertical, 4)
             }
 
+            // ProjectSectionView observes the ProjectViewModel directly so
+            // changes to `isExpanded` (collapse/expand) redraw correctly.
             ForEach(appViewModel.projects) { project in
-                VStack(alignment: .leading, spacing: 0) {
-                    projectRow(project: project)
-                    if project.isExpanded {
-                        if project.threads.isEmpty {
-                            Text("No chats")
-                                .font(.uiCaption)
-                                .foregroundColor(.textTertiary)
-                                .padding(.leading, 40)
-                                .padding(.vertical, 2)
+                ProjectSectionView(
+                    project: project,
+                    renameTarget: $renameTarget,
+                    onSelectThread: { appViewModel.selectThread($0) },
+                    onNewThread: { _ = appViewModel.createThread(projectId: project.id) },
+                    onDeleteProject: { appViewModel.deleteProject(id: project.id) },
+                    onDeleteThread: { appViewModel.deleteThread(id: $0) }
+                )
+            }
+        }
+    }
+
+    private func sectionHeader(_ title: String, trailing: AnyView?) -> some View {
+        HStack {
+            Text(title)
+                .font(.uiCaption)
+                .foregroundColor(.textSecondary)
+            Spacer()
+            if let trailing { trailing }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    // MARK: - Chats (global) Section
+
+    private var chatsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Chats (global)", trailing: nil)
+
+            if appViewModel.globalThreads.isEmpty {
+                Text("No chats yet")
+                    .font(.uiCaption)
+                    .foregroundColor(.textTertiary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+            }
+
+            ForEach(appViewModel.globalThreads) { thread in
+                ThreadRowView(
+                    thread: thread,
+                    isSelected: appViewModel.selectedThreadID == thread.id,
+                    renameTarget: $renameTarget,
+                    onSelect: { appViewModel.selectThread(thread) },
+                    onDelete: { appViewModel.deleteThread(id: thread.id) }
+                )
+            }
+        }
+    }
+
+    // MARK: - Settings Link
+
+    private var settingsLink: some View {
+        Button {
+            // Use SwiftUI's openWindow environment so the Settings
+            // scene declared in EntryPoint presents as an independent
+            // NSWindow (per §17 #23 — settings is NOT an in-app popup
+            // and must NOT use a custom URL scheme).
+            openWindow(id: "settings")
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 12))
+                Text("Settings")
+                    .font(.uiLabel)
+                Spacer()
+            }
+            .foregroundColor(.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hoverHighlight(
+            background: Color.white.opacity(0.08),
+            cornerRadius: 6,
+            padding: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        )
+        .accessibilityLabel("Open Settings")
+        .keyboardShortcut(",", modifiers: .command)
+    }
+
+    // MARK: - Open Project Folder
+
+    private func openProjectFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.message = "Select a project folder to open in SwiftAgent"
+        if panel.runModal() == .OK, let url = panel.url {
+            _ = appViewModel.openProject(path: url.path)
+        }
+    }
+
+    // MARK: - Plugins Sheet
+
+    enum PluginTab: String, CaseIterable {
+        case skills = "Skills"
+        case mcp = "MCP"
+    }
+
+    private var pluginsSheetContent: some View {
+        VStack(spacing: 0) {
+            // Header with close button
+            HStack {
+                HStack(spacing: 0) {
+                    ForEach(PluginTab.allCases, id: \.self) { tab in
+                        Button {
+                            pluginTab = tab
+                        } label: {
+                            Text(tab.rawValue)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(pluginTab == tab ? .textPrimary : .textTertiary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .contentShape(Rectangle())
                         }
-                        ForEach(project.threads) { thread in
-                            threadRow(thread: thread)
-                        }
+                        .buttonStyle(.plain)
+                        .background(pluginTab == tab ? Color.bgContent : Color.clear)
                     }
+                }
+                Spacer()
+                Button {
+                    showPluginsSheet = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.textTertiary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverHighlight(cornerRadius: 6, padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
+                .keyboardShortcut(.cancelAction)
+                .help("Close (Esc)")
+            }
+            .background(Color.bgSidebar)
+
+            Divider().background(Color.borderSubtle)
+
+            if pluginTab == .skills {
+                SkillsView()
+            } else {
+                MCPConfigView()
+            }
+        }
+        .frame(width: 500, height: 600)
+    }
+}
+
+// MARK: - Project Section View (observes its own ProjectViewModel)
+
+/// A self-contained row + child thread list for a single project.
+/// Uses `@ObservedObject` on `project` so changes to `isExpanded`
+/// trigger a redraw of just this row. Without this observation,
+/// SidebarView never gets a "project was collapsed" signal because
+/// SidebarView only observes AppViewModel, not ProjectViewModel.
+struct ProjectSectionView: View {
+    @ObservedObject var project: ProjectViewModel
+
+    @Binding var renameTarget: RenameTarget?
+    let onSelectThread: (ThreadViewModel) -> Void
+    let onNewThread: () -> Void
+    let onDeleteProject: () -> Void
+    let onDeleteThread: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            projectRow
+            if project.isExpanded {
+                if project.threads.isEmpty {
+                    Text("No chats")
+                        .font(.uiCaption)
+                        .foregroundColor(.textTertiary)
+                        .padding(.leading, 40)
+                        .padding(.vertical, 2)
+                }
+                ForEach(project.threads) { thread in
+                    ThreadRowView(
+                        thread: thread,
+                        isSelected: false,
+                        renameTarget: $renameTarget,
+                        onSelect: { onSelectThread(thread) },
+                        onDelete: { onDeleteThread(thread.id) }
+                    )
                 }
             }
         }
     }
 
-    private func projectRow(project: ProjectViewModel) -> some View {
+    private var projectRow: some View {
         Button {
             project.isExpanded.toggle()
         } label: {
@@ -196,19 +410,36 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hoverHighlight(
+            background: Color.white.opacity(0.08),
+            cornerRadius: 6,
+            padding: EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12)
+        )
         .contextMenu {
             Button("Rename") { renameTarget = .project(project.id) }
-            Button("New Thread") { _ = appViewModel.createThread(projectId: project.id) }
-            Button("Delete", role: .destructive) { appViewModel.deleteProject(id: project.id) }
+            Button("New Thread") { onNewThread() }
+            Divider()
+            Button("Delete", role: .destructive) { onDeleteProject() }
         }
     }
+}
 
-    private func threadRow(thread: ThreadViewModel) -> some View {
-        let isSelected = appViewModel.selectedThreadID == thread.id
-        return Button {
-            appViewModel.selectThread(thread)
-        } label: {
-            HStack(spacing: 4) {
+// MARK: - Thread Row View (cell with hover)
+
+/// Single thread row: title + relative timestamp + hover highlight.
+/// Self-contained so it can be used both inside ProjectSectionView and
+/// directly in the global Chats section.
+struct ThreadRowView: View {
+    @ObservedObject var thread: ThreadViewModel
+    let isSelected: Bool
+
+    @Binding var renameTarget: RenameTarget?
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 6) {
                 if thread.hasUnread {
                     Circle()
                         .fill(Color.accentPrimary)
@@ -216,7 +447,7 @@ struct SidebarView: View {
                 } else {
                     Spacer().frame(width: 6)
                 }
-                Text(thread.title)
+                Text(displayTitle)
                     .font(.uiBody)
                     .lineLimit(1)
                 Spacer()
@@ -224,194 +455,40 @@ struct SidebarView: View {
                     .font(.system(size: 10))
                     .foregroundColor(.textTertiary)
             }
-            .foregroundColor(isSelected ? .textPrimary : .textPrimary.opacity(0.85))
+            .foregroundColor(.textPrimary)
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
             .padding(.leading, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.bgElevated.opacity(0.5) : Color.clear)
+            .background(isSelected ? Color.bgElevated.opacity(0.6) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hoverHighlight(
+            background: Color.white.opacity(0.06),
+            cornerRadius: 6,
+            padding: EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12)
+        )
         .contextMenu {
             Button("Rename") { renameTarget = .thread(thread.id) }
-            Button("Delete", role: .destructive) { appViewModel.deleteThread(id: thread.id) }
+            Divider()
+            Button("Delete", role: .destructive) { onDelete() }
         }
     }
 
-    // MARK: - Chats (global) Section
-
-    private var chatsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("Chats (global)", trailing: nil)
-
-            if appViewModel.globalThreads.isEmpty {
-                Text("No chats yet")
-                    .font(.uiCaption)
-                    .foregroundColor(.textTertiary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
-            }
-
-            ForEach(appViewModel.globalThreads) { thread in
-                threadRow(thread: thread)
-            }
+    /// Show the thread title — fall back to "New Chat" when it's
+    /// still the placeholder from creation.
+    private var displayTitle: String {
+        let trimmed = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "Untitled" || trimmed == "New Chat" {
+            return "New Chat"
         }
+        return trimmed
     }
-
-    // MARK: - Settings Link
-
-    private var settingsLink: some View {
-        Button {
-            openSettingsWindow()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 12))
-                Text("Settings")
-                    .font(.uiLabel)
-                Spacer()
-            }
-            .foregroundColor(.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open Settings")
-        .keyboardShortcut(",", modifiers: .command)
-    }
-
-    // MARK: - Section Header
-
-    private func sectionHeader(_ title: String, trailing: AnyView?) -> some View {
-        HStack {
-            Text(title)
-                .font(.uiCaption)
-                .foregroundColor(.textSecondary)
-            Spacer()
-            if let trailing { trailing }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
-    }
-
-    // MARK: - Settings Window
-
-    private func openSettingsWindow() {
-        if let url = URL(string: "swiftagent-settings://settings") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    // MARK: - Open Project Folder
-
-    private func openProjectFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Open"
-        panel.message = "Select a project folder to open in SwiftAgent"
-        if panel.runModal() == .OK, let url = panel.url {
-            _ = appViewModel.openProject(path: url.path)
-        }
-    }
-
-    // MARK: - Helpers
 
     private func relativeTime(_ date: Date) -> String {
         let fmt = RelativeDateTimeFormatter()
         fmt.unitsStyle = .abbreviated
         return fmt.localizedString(for: date, relativeTo: Date())
-    }
-
-    // MARK: - Keyboard Shortcuts
-
-    private func setupKeyboardShortcuts() {
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let hasCommand = modifiers.contains(.command)
-            let hasShift = modifiers.contains(.shift)
-            let hasOption = modifiers.contains(.option)
-
-            switch event.keyCode {
-            case 45: // N key
-                if hasCommand && hasOption {
-                    let pid = appViewModel.selectedThread.flatMap { t in
-                        appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == t.id }) })?.id
-                    }
-                    _ = appViewModel.createThread(title: "Quick Chat", projectId: pid)
-                    return nil
-                }
-                if hasCommand && hasShift {
-                    let pid = appViewModel.selectedThread.flatMap { t in
-                        appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == t.id }) })?.id
-                    }
-                    _ = appViewModel.createThread(projectId: pid)
-                    return nil
-                }
-                if hasCommand {
-                    _ = appViewModel.createThread()
-                    return nil
-                }
-            case 3: // F key
-                if hasCommand {
-                    isSearchFocused = true
-                    return nil
-                }
-            case 15: // R key
-                if hasCommand && hasOption {
-                    if let id = appViewModel.selectedThreadID {
-                        renameTarget = .thread(id)
-                    }
-                    return nil
-                }
-            default:
-                break
-            }
-            return event
-        }
-    }
-
-    // MARK: - Plugins Sheet
-
-    enum PluginTab: String, CaseIterable {
-        case skills = "Skills"
-        case mcp = "MCP"
-    }
-
-    private var pluginsSheetContent: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(PluginTab.allCases, id: \.self) { tab in
-                    Button {
-                        pluginTab = tab
-                    } label: {
-                        Text(tab.rawValue)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(pluginTab == tab ? .textPrimary : .textTertiary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .background(pluginTab == tab ? Color.bgContent : Color.clear)
-                }
-                Spacer()
-            }
-            .background(Color.bgSidebar)
-
-            Divider().background(Color.borderSubtle)
-
-            if pluginTab == .skills {
-                SkillsView()
-            } else {
-                MCPConfigView()
-            }
-        }
-        .frame(width: 500, height: 600)
     }
 }

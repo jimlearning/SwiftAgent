@@ -11,6 +11,12 @@ struct SwiftAgentAppEntry: App {
     @StateObject private var settingsViewModel = SettingsViewModel()
     @StateObject private var errorPresenter = ErrorPresenter.shared
 
+    /// `openWindow` is the SwiftUI-native way to present a separately
+    /// declared `Window` scene (e.g. the Settings window) — calling
+    /// `NSWorkspace.open(scheme://...)` triggers macOS's
+    /// "no app registered to handle this URL" alert.
+    @Environment(\.openWindow) private var openWindow
+
     var body: some Scene {
         // Main window
         Window("SwiftAgent", id: "main") {
@@ -124,8 +130,10 @@ struct SwiftAgentAppEntry: App {
                 }
                 .keyboardShortcut("n", modifiers: [.command, .option])
 
-                Button("Find") { }
-                .keyboardShortcut("f", modifiers: .command)
+                Button("Find") {
+                    NotificationCenter.default.post(name: .swiftAgentFocusSearch, object: nil)
+                }
+                    .keyboardShortcut("f", modifiers: .command)
             }
 
             CommandGroup(after: .newItem) {
@@ -183,18 +191,18 @@ struct SwiftAgentAppEntry: App {
         .commands {
             CommandGroup(after: .appSettings) {
                 Button("Settings...") {
-                    openSettingsWindow()
+                    openWindow(id: "settings")
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
         }
     }
 
-    /// Open the Settings window programmatically.
+    /// Open the Settings window programmatically. Routes through
+    /// SwiftUI's `openWindow` rather than a custom URL scheme so we
+    /// don't trip macOS's "no app registered" alert.
     private func openSettingsWindow() {
-        if let url = URL(string: "swiftagent-settings://settings") {
-            NSWorkspace.shared.open(url)
-        }
+        openWindow(id: "settings")
     }
 
     /// Inject an appshot capture as a message into the active thread.
