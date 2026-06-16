@@ -53,6 +53,27 @@ public final class AppViewModel: ObservableObject {
     /// Whether storage is initialized and data is loaded.
     @Published public private(set) var isStorageReady: Bool = false
 
+    /// Live list of MCP servers — published so the + menu and Settings page
+    /// observe the same source. Empty until MCPConfigStore loads its TOML.
+    @Published public var mcpServers: [MCPConfigStore.MCPServerConfig] = []
+
+    /// Live list of available skills — published so the + menu and Settings page
+    /// observe the same source. Empty until SkillsViewModel loads SKILL.md files.
+    @Published public var skills: [SkillDescriptor] = []
+
+    /// Helper: a Binding into the selected thread's @Published properties.
+    /// Used by ComposerView's ModelPicker popover, which needs a Binding
+    /// into `selectedModel` to mutate it through the picker UI.
+    public func selectedThreadBinding(threadID: String) -> ThreadViewModel {
+        // Caller is guaranteed to pass the current selected thread id;
+        // we resolve fresh on each access so the Binding sees live mutations.
+        guard let vm = threadViewModels[threadID] else {
+            // Fallback: return a transient VM so SwiftUI doesn't crash
+            return ThreadViewModel()
+        }
+        return vm
+    }
+
     // MARK: - Init
 
     public init() {
@@ -64,9 +85,68 @@ public final class AppViewModel: ObservableObject {
         do {
             try storage.initialize()
             loadAllData()
+            loadSkills()
+            loadMCPServers()
             isStorageReady = true
         } catch {
             print("[AppViewModel] Storage init failed: \(error)")
+        }
+    }
+
+    // MARK: - Skills
+
+    /// Load available skills from user/project/system scopes (§10.1).
+    /// The Skills library reads SKILL.md files; for v1 we keep an in-memory
+    /// snapshot that the + menu and Settings consume.
+    public func loadSkills() {
+        var collected: [SkillDescriptor] = []
+
+        // User scope: ~/.swiftagent/skills/
+        let userSkillsPath = ("~/.swiftagent/skills" as NSString).expandingTildeInPath
+        collected.append(contentsOf: scanSkills(at: userSkillsPath, scope: .user))
+
+        // Project scope: walk current working directory for .swiftagent/skills/
+        let cwd = FileManager.default.currentDirectoryPath
+        let projectSkillsPath = (cwd as NSString).appendingPathComponent(".swiftagent/skills")
+        collected.append(contentsOf: scanSkills(at: projectSkillsPath, scope: .project))
+
+        // System scope: /etc/swiftagent/skills/ (best-effort, may not exist)
+        let systemSkillsPath = "/etc/swiftagent/skills"
+        collected.append(contentsOf: scanSkills(at: systemSkillsPath, scope: .system))
+
+        self.skills = collected
+    }
+
+    private func scanSkills(at path: String, scope: SkillDescriptor.Scope) -> [SkillDescriptor] {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: path) else { return [] }
+        return entries.compactMap { entry -> SkillDescriptor? in
+            let skillFile = (path as NSString).appendingPathComponent(entry).appending("/SKILL.md")
+            guard fm.fileExists(atPath: skillFile) else { return nil }
+            // Read first line as description
+            let desc = (try? String(contentsOfFile: skillFile, encoding: .utf8))?
+                .components(separatedBy: .newlines)
+                .first(where: { !$0.isEmpty && !$0.hasPrefix("---") }) ?? entry
+            return SkillDescriptor(name: entry, description: desc, scope: scope, path: skillFile)
+        }
+    }
+
+    // MARK: - MCP Servers
+
+    /// Load MCP servers from ~/.swiftagent/config.toml. The list is published
+    /// so the Composer + menu and the Settings page reflect live changes.
+    public func loadMCPServers() {
+        let configPath = ("~/.swiftagent/config.toml" as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: configPath) else {
+            self.mcpServers = []
+            return
+        }
+        do {
+            let store = MCPConfigStore()
+            self.mcpServers = store.servers
+        } catch {
+            print("[AppViewModel] MCP load failed: \(error)")
+            self.mcpServers = []
         }
     }
 

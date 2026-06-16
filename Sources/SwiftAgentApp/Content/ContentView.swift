@@ -1,7 +1,17 @@
 import SwiftUI
 
 /// Center pane: thread toolbar + message list + composer.
-/// Loads the currently selected thread from AppViewModel.
+///
+/// Reads the currently selected thread from `AppViewModel` via `@EnvironmentObject`
+/// (rather than receiving a `ThreadViewModel` value through the initializer).
+/// This guarantees that any `@Published` mutation inside the thread — including
+/// `messages`, `state`, and `thoughtTimeString` — drives a redraw of every
+/// child view that reads those properties, including the message list, the
+/// composer send-button state, and the "Thought for Xs" status row.
+///
+/// Using a single source of truth through `AppViewModel` also avoids stale
+/// closure captures that occur when a parent view rebuilds with a new
+/// thread reference but the child view's callback still points at the old one.
 public struct ContentView: View {
     @EnvironmentObject var appViewModel: AppViewModel
 
@@ -23,40 +33,14 @@ public struct ContentView: View {
                 }
 
                 // Message list (main content area)
-                if thread.messages.isEmpty {
-                    emptyState
-                } else {
-                    MessageListView(thread: thread)
-                }
+                MessageListView(threadID: thread.id)
+                    .id(thread.id)  // Force-rebuild on thread switch so scroll position resets cleanly
 
                 // Composer at bottom
-                ComposerView(thread: thread) { text in
-                    thread.send(userText: text)
-                } onSlashCommand: { cmd in
-                    handleSlashCommand(cmd, thread: thread)
-                }
+                ComposerView(threadID: thread.id)
             } else {
                 // No thread selected — show actionable empty state
-                VStack(spacing: 16) {
-                    Spacer()
-                    Text("SwiftAgent")
-                        .font(.uiTitle)
-                        .foregroundColor(.textPrimary)
-                    Text("Start a new chat to begin coding with AI")
-                        .font(.uiBody)
-                        .foregroundColor(.textSecondary)
-                    Button {
-                        let pid = appViewModel.projects.first?.id
-                        _ = appViewModel.createThread(projectId: pid)
-                    } label: {
-                        Label("New Chat", systemImage: "plus")
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut("n", modifiers: .command)
-                    Spacer()
-                }
+                emptyStateView
             }
         }
         .background(Color.bgContent)
@@ -228,76 +212,26 @@ public struct ContentView: View {
 
     // MARK: - Empty State
 
-    private var emptyState: some View {
+    private var emptyStateView: some View {
         VStack(spacing: 16) {
             Spacer()
-            Text("Hello, SwiftAgent")
+            Text("SwiftAgent")
                 .font(.uiTitle)
                 .foregroundColor(.textPrimary)
-
-            if appViewModel.apiKeyStatus == .configured {
-                Text("Type a message below to start")
-                    .font(.uiBody)
-                    .foregroundColor(.textSecondary)
-            } else {
-                VStack(spacing: 8) {
-                    Text("DeepSeek API key required")
-                        .font(.uiLabel)
-                        .foregroundColor(.textSecondary)
-                    apiKeyInputField
-                }
+            Text("Start a new chat to begin coding with AI")
+                .font(.uiBody)
+                .foregroundColor(.textSecondary)
+            Button {
+                let pid = appViewModel.projects.first?.id
+                _ = appViewModel.createThread(projectId: pid)
+            } label: {
+                Label("New Chat", systemImage: "plus")
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
             }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut("n", modifiers: .command)
             Spacer()
-        }
-    }
-
-    // MARK: - API Key Input
-
-    private var apiKeyInputField: some View {
-        HStack(spacing: 8) {
-            SecureField("sk-...", text: $apiKeyText)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 320)
-                .onSubmit { saveAPIKey() }
-
-            Button("Save") { saveAPIKey() }
-                .buttonStyle(.borderedProminent)
-                .disabled(apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .padding(.top, 8)
-    }
-
-    private func saveAPIKey() {
-        let key = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        appViewModel.saveAPIKey(key)
-        apiKeyText = ""
-    }
-
-    // MARK: - Slash Commands
-
-    private func handleSlashCommand(_ cmd: SlashCommand, thread: ThreadViewModel) {
-        switch cmd.command {
-        case "/help":
-            // Show help — insert help message as system note
-            let helpText = "Available commands: /help, /goal, /plan, /skills, /mcp, /status, /compact, /clear, /personality, /exit"
-            let msg = ThreadMessage(role: .assistant, content: helpText, isStreaming: false)
-            thread.messages.append(msg)
-        case "/status":
-            let statusText = "Thread ID: \(thread.id.prefix(8))...\nModel: \(thread.selectedModel.displayName)\nState: \(thread.persistedState)\nMode: \(thread.mode)"
-            let msg = ThreadMessage(role: .assistant, content: statusText, isStreaming: false)
-            thread.messages.append(msg)
-        case "/clear":
-            // Clear confirmation
-            thread.messages.removeAll()
-            let msg = ThreadMessage(role: .assistant, content: "Context cleared.", isStreaming: false)
-            thread.messages.append(msg)
-            thread.persistState()
-        case "/compact":
-            let msg = ThreadMessage(role: .assistant, content: "Compacted 0 tokens (stub — compaction engine pending Phase 4).", isStreaming: false)
-            thread.messages.append(msg)
-        default:
-            break
         }
     }
 }

@@ -7,16 +7,18 @@ import SwiftUI
 /// - Typing "/" opens slash command palette
 /// - Send button disabled when text empty, shows spinner when executing
 /// - Status row ("Thought for Xs") shown above the text area
+///
+/// Takes a `threadID` and resolves the live `ThreadViewModel` from
+/// `AppViewModel` via `@EnvironmentObject` on every render. This is the
+/// fix for the "Send a message, the message doesn't appear until I click
+/// a different sidebar row" bug: with id-based lookup, every read of
+/// `appViewModel.threadViewModels[threadID]?.messages` is a fresh
+/// observation, so the Send callback's mutation is immediately visible.
 public struct ComposerView: View {
-    @ObservedObject var thread: ThreadViewModel
-    @StateObject private var composer = ComposerViewModel()
     @EnvironmentObject var appViewModel: AppViewModel
+    let threadID: String
 
-    /// Callback when send is triggered. The composer text is passed as argument.
-    public var onSend: ((String) -> Void)?
-
-    /// Optional callback for slash command execution.
-    public var onSlashCommand: ((SlashCommand) -> Void)?
+    @StateObject private var composer = ComposerViewModel()
 
     @FocusState private var isFocused: Bool
     @State private var showAddMenu: Bool = false
@@ -26,43 +28,28 @@ public struct ComposerView: View {
     @State private var slashFilter: String = "/"
 
     public var body: some View {
+        if let thread = appViewModel.threadViewModels[threadID] {
+            content(thread: thread)
+        } else {
+            Color.clear.frame(height: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func content(thread: ThreadViewModel) -> some View {
         VStack(spacing: 0) {
             Divider().background(Color.borderSubtle)
 
             // Status row (thought time or error)
-            if let thoughtTime = thread.thoughtTimeString, thread.state == .executing {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
-                    Text(thoughtTime)
-                        .font(.uiCaption)
-                        .foregroundColor(.textSecondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-            } else if thread.state.isError, let status = thread.state.statusText, !status.isEmpty {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.danger)
-                    Text(status)
-                        .font(.uiCaption)
-                        .foregroundColor(.danger)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-            }
+            statusRow(thread: thread)
 
             // Text editor
-            textEditorArea
+            textEditorArea(thread: thread)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
 
             // Control row
-            controlRow
+            controlRow(thread: thread)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         }
@@ -84,7 +71,7 @@ public struct ComposerView: View {
             SlashCommandPalette(
                 filterText: $slashFilter,
                 onSelect: { cmd in
-                    handleSlashCommand(cmd)
+                    handleSlashCommand(cmd, thread: thread)
                     showSlashPalette = false
                 },
                 onDismiss: { showSlashPalette = false }
@@ -92,9 +79,40 @@ public struct ComposerView: View {
         }
     }
 
+    // MARK: - Status Row
+
+    @ViewBuilder
+    private func statusRow(thread: ThreadViewModel) -> some View {
+        if let thoughtTime = thread.thoughtTimeString, thread.state == .executing {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 12, height: 12)
+                Text(thoughtTime)
+                    .font(.uiCaption)
+                    .foregroundColor(.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+        } else if thread.state.isError, let status = thread.state.statusText, !status.isEmpty {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.danger)
+                Text(status)
+                    .font(.uiCaption)
+                    .foregroundColor(.danger)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+        }
+    }
+
     // MARK: - Text Editor
 
-    private var textEditorArea: some View {
+    private func textEditorArea(thread: ThreadViewModel) -> some View {
         ZStack(alignment: .topLeading) {
             if composer.text.isEmpty && !isFocused {
                 Text("Ask for follow-up changes")
@@ -115,18 +133,14 @@ public struct ComposerView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .disabled(thread.state.isComposerDisabled)
                 .onKeyPress(.return, phases: .down) { keyPress in
-                    // Enter sends, Shift+Enter inserts newline
                     if showSlashPalette {
-                        // Let the palette handle Enter
                         return .ignored
                     }
                     if keyPress.modifiers.contains(.shift) {
-                        // Shift+Enter: insert newline
                         composer.text.append("\n")
                         return .handled
                     }
-                    // Enter: send
-                    sendAction()
+                    sendAction(thread: thread)
                     return .handled
                 }
         }
@@ -136,35 +150,55 @@ public struct ComposerView: View {
 
     private func checkSlashCommand() {
         let trimmed = composer.text.trimmingCharacters(in: .newlines)
-        // Show palette when user types "/" as the first character on a new line
         if trimmed.hasPrefix("/") && !trimmed.contains(" ") && trimmed.count >= 1 && trimmed.count <= 30 {
             slashFilter = trimmed
             showSlashPalette = true
         } else if !trimmed.hasPrefix("/") {
             showSlashPalette = false
         } else {
-            // Has space after /, might be a full command
             showSlashPalette = false
         }
     }
 
-    private func handleSlashCommand(_ cmd: SlashCommand) {
-        onSlashCommand?(cmd)
-
+    private func handleSlashCommand(_ cmd: SlashCommand, thread: ThreadViewModel) {
         switch cmd.command {
         case "/help":
+            let helpText = "Available commands: /help, /goal, /plan, /skills, /mcp, /status, /compact, /clear, /personality, /exit"
+            let msg = ThreadMessage(role: .assistant, content: helpText, isStreaming: false)
+            thread.messages.append(msg)
             composer.text = ""
-            // Handled by parent
         case "/plan":
             thread.mode = thread.mode == "plan" ? "code" : "plan"
+            thread.persistState()
+            composer.text = ""
+        case "/goal":
+            thread.mode = thread.mode == "goal" ? "code" : "goal"
+            thread.persistState()
+            composer.text = ""
+        case "/skills":
+            let skillsText = "Skills view is available via Settings → Skills, or via the + menu → Plugins."
+            let msg = ThreadMessage(role: .assistant, content: skillsText, isStreaming: false)
+            thread.messages.append(msg)
+            composer.text = ""
+        case "/mcp":
+            let mcpText = "MCP servers are available via Settings → MCP servers, or via the + menu → Plugins."
+            let msg = ThreadMessage(role: .assistant, content: mcpText, isStreaming: false)
+            thread.messages.append(msg)
+            composer.text = ""
+        case "/status":
+            let statusText = "Thread ID: \(thread.id.prefix(8))...\nModel: \(thread.selectedModel.displayName)\nState: \(thread.persistedState)\nMode: \(thread.mode)"
+            let msg = ThreadMessage(role: .assistant, content: statusText, isStreaming: false)
+            thread.messages.append(msg)
             composer.text = ""
         case "/clear":
-            composer.text = ""
-            // Handled by parent (confirmation)
-        case "/status":
-            // Show status message as a system message
+            thread.messages.removeAll()
+            let msg = ThreadMessage(role: .assistant, content: "Context cleared.", isStreaming: false)
+            thread.messages.append(msg)
+            thread.persistState()
             composer.text = ""
         case "/compact":
+            let msg = ThreadMessage(role: .assistant, content: "Compacted 0 tokens (compaction engine pending).", isStreaming: false)
+            thread.messages.append(msg)
             composer.text = ""
         case "/personality":
             composer.text = ""
@@ -177,48 +211,39 @@ public struct ComposerView: View {
 
     // MARK: - Control Row
 
-    private var controlRow: some View {
+    private func controlRow(thread: ThreadViewModel) -> some View {
         HStack(spacing: 8) {
-            // + button
-            addButton
-
-            // ⚙️ Custom⌄ button
+            addButton(thread: thread)
             permissionButton
-
             Spacer()
-
-            // 5.5 High⌄ button
-            modelButton
-
-            // ↑ send button
-            sendButton
+            modelButton(thread: thread)
+            sendButton(thread: thread)
         }
     }
 
-    // MARK: - + Button
+    // MARK: - + Button (real skills/MCP counts)
 
-    private var addButton: some View {
+    private func addButton(thread: ThreadViewModel) -> some View {
         Button {
             showAddMenu.toggle()
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 14))
+                .font(.system(size: 14, weight: .medium))
         }
         .buttonStyle(.plain)
         .foregroundColor(.textSecondary)
+        .help("Add — photos, files, plan mode, plugins")
         .popover(isPresented: $showAddMenu, arrowEdge: .bottom) {
             AddMenuView(
                 onFilePick: {
                     showAddMenu = false
-                    openFilePicker()
+                    openFilePicker(thread: thread)
                 },
                 onCreateNewFile: {
                     showAddMenu = false
-                    // Create new file stub - notify via thread
                 },
                 onCreateNewProject: {
                     showAddMenu = false
-                    // Handled at ContentView level
                 },
                 onTogglePlanMode: {
                     showAddMenu = false
@@ -236,23 +261,13 @@ public struct ComposerView: View {
                 },
                 planModeOn: thread.mode == "plan",
                 goalModeOn: thread.mode == "goal",
-                mcpServerCount: mcpServerCount,
-                skillsCount: skillsCount
+                mcpServerCount: appViewModel.mcpServers.count,
+                skillsCount: appViewModel.skills.count
             )
         }
     }
 
-    private var mcpServerCount: Int {
-        // stub — will read from MCPConfigStore in future
-        0
-    }
-
-    private var skillsCount: Int {
-        // stub — will read from SkillsView data in future
-        0
-    }
-
-    private func openFilePicker() {
+    private func openFilePicker(thread: ThreadViewModel) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseFiles = true
@@ -287,6 +302,7 @@ public struct ComposerView: View {
             .foregroundColor(.textSecondary)
         }
         .buttonStyle(.plain)
+        .help("Permission mode — controls what the agent can do without asking")
         .popover(isPresented: $showPermissionPicker, arrowEdge: .bottom) {
             PermissionPickerView(selected: $composer.permissionMode)
         }
@@ -294,12 +310,12 @@ public struct ComposerView: View {
 
     // MARK: - 5.5 High⌄ Button
 
-    private var modelButton: some View {
+    private func modelButton(thread: ThreadViewModel) -> some View {
         Button {
             showModelPicker.toggle()
         } label: {
             HStack(spacing: 4) {
-                Text(modelButtonLabel)
+                Text(modelButtonLabel(thread: thread))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .bold))
             }
@@ -307,9 +323,13 @@ public struct ComposerView: View {
             .foregroundColor(.textSecondary)
         }
         .buttonStyle(.plain)
+        .help("Model and reasoning strength")
         .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
             ModelPickerView(
-                selectedModel: $thread.selectedModel,
+                selectedModel: Binding(
+                    get: { thread.selectedModel },
+                    set: { thread.selectedModel = $0 }
+                ),
                 reasoningStrength: $composer.reasoningStrength
             )
             .onChange(of: thread.selectedModel) { _, _ in
@@ -321,15 +341,15 @@ public struct ComposerView: View {
         }
     }
 
-    private var modelButtonLabel: String {
+    private func modelButtonLabel(thread: ThreadViewModel) -> String {
         "\(thread.selectedModel.displayName) \(composer.reasoningStrength.rawValue)"
     }
 
     // MARK: - ↑ Send Button
 
-    private var sendButton: some View {
-        Button(action: sendAction) {
-            if composer.isSending {
+    private func sendButton(thread: ThreadViewModel) -> some View {
+        Button(action: { sendAction(thread: thread) }) {
+            if composer.isSending || thread.state == .executing {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .scaleEffect(0.6)
@@ -341,17 +361,18 @@ public struct ComposerView: View {
             }
         }
         .buttonStyle(.plain)
-        .foregroundColor(composer.isSendEnabled ? .textPrimary : .textTertiary)
+        .foregroundColor(composer.isSendEnabled && !thread.state.isComposerDisabled ? .textPrimary : .textTertiary)
         .background(
             Circle()
-                .fill(composer.isSendEnabled ? Color.bgElevated : Color.bgElevated.opacity(0.5))
+                .fill((composer.isSendEnabled && !thread.state.isComposerDisabled) ? Color.bgElevated : Color.bgElevated.opacity(0.5))
         )
         .disabled(!composer.isSendEnabled || thread.state.isComposerDisabled)
+        .help("Send (Enter)")
     }
 
     // MARK: - Actions
 
-    private func sendAction() {
+    private func sendAction(thread: ThreadViewModel) {
         guard composer.isSendEnabled, !thread.state.isComposerDisabled else { return }
         let text = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -360,7 +381,7 @@ public struct ComposerView: View {
         composer.clear()
         isFocused = false
 
-        onSend?(text)
+        thread.send(userText: text)
     }
 }
 
