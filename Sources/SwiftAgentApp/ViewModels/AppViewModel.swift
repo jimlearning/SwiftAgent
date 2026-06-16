@@ -166,13 +166,11 @@ public final class AppViewModel: ObservableObject {
             self.mcpServers = []
             return
         }
-        do {
-            let store = MCPConfigStore()
-            self.mcpServers = store.servers
-        } catch {
-            print("[AppViewModel] MCP load failed: \(error)")
-            self.mcpServers = []
-        }
+        // MCPConfigStore.init doesn't throw on the current implementation
+        // (it only fails inside .save() / .addServer() / .updateServer()),
+        // so we read the loaded `servers` array directly and log on
+        // any future change.
+        self.mcpServers = MCPConfigStore().servers
     }
 
     // MARK: - Load from DB
@@ -395,7 +393,7 @@ public final class AppViewModel: ObservableObject {
         guard let thread = selectedThread else { return }
         let attachment = ComposerAttachment(
             id: UUID().uuidString,
-            kind: .file(path: url.path, displayName: url.lastPathComponent),
+            kind: .attachFile(path: url.path, displayName: url.lastPathComponent),
             addedAt: Date()
         )
         pendingAttachments.append(attachment)

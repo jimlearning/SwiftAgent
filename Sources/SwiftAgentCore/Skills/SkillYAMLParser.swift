@@ -198,7 +198,7 @@ public struct SkillYAMLParser {
             }
 
             // Check if continuing a multi-line value (indented)
-            if line.first?.isWhitespace ?? false, let key = currentKey {
+            if line.first?.isWhitespace ?? false, currentKey != nil {
                 currentMultiLine.append(trimmed)
                 continue
             }

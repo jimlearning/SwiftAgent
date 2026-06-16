@@ -91,6 +91,13 @@ public struct TerminalPanelView: NSViewRepresentable {
             process?.terminate()
         }
 
+        // All UI mutation on AppKit views (NSTextView, NSScrollView) and
+        // setting their delegates must happen on the main actor. Without
+        // @MainActor, Swift 6 strict concurrency rejects
+        // `textView.textStorage?.append(...)`, `scrollToEndOfDocument`,
+        // and `textView?.delegate = self` because those properties are
+        // main-actor-isolated.
+        @MainActor
         func appendOutput(_ text: String) {
             guard let textView else { return }
             let attrs: [NSAttributedString.Key: Any] = [
@@ -101,6 +108,7 @@ public struct TerminalPanelView: NSViewRepresentable {
             textView.scrollToEndOfDocument(nil)
         }
 
+        @MainActor
         func installKeyForwarding() {
             textView?.delegate = self
         }

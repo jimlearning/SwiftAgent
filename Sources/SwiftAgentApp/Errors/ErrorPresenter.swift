@@ -94,7 +94,7 @@ enum AppError: Identifiable, Equatable {
         case .appshotPermissionDenied: return "SwiftAgent needs Accessibility permission to capture screen content."
         case .appshotCaptureFailed: return "Cannot capture screen. The target window may be obstructed."
         case .mcpDisconnected(let server): return "MCP server '\(server)' disconnected. Attempting to reconnect..."
-        case .skillLoadFailed(let name): return "" // Handled silently in logs
+        case .skillLoadFailed: return "" // Handled silently in logs
         case .diffMergeFailed(let detail): return "Could not apply diff: \(detail). Manual merge required."
         case .goalPersistenceFailed: return "Could not save goal to disk. Falling back to in-memory mode."
         case .projectSwitchDataLoss: return "Unsaved changes were auto-stashed. They will be recovered when you return."
