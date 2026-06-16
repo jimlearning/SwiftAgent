@@ -63,7 +63,7 @@ public struct PersistedThread: Identifiable, Equatable, Sendable {
         mode: String = "code",
         sandboxMode: String = "workspace-write",
         executionEnv: String = "local",
-        model: String = "deepseek-chat",
+        model: String = "deepseek-v4-pro",
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {

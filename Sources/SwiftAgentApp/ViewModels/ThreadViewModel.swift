@@ -112,7 +112,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     @Published public var state: ThreadState = .idle
 
     /// Selected model for this thread.
-    @Published public var selectedModel: DeepSeekModel = .v3
+    @Published public var selectedModel: DeepSeekModel = .v4Pro
 
     /// Reasoning strength (for display, maps to model choice for DeepSeek).
     @Published public var reasoningStrength: ReasoningStrength = .high

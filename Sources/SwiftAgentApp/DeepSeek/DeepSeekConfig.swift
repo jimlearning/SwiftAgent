@@ -15,7 +15,7 @@ public struct DeepSeekConfig: Sendable {
     public init(
         baseURL: URL = URL(string: "https://api.deepseek.com/v1")!,
         apiKey: String,
-        defaultModel: DeepSeekModel = .v3
+        defaultModel: DeepSeekModel = .v4Pro
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey

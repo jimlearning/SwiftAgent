@@ -55,7 +55,7 @@ public enum Migrations {
                 mode TEXT NOT NULL DEFAULT 'code',
                 sandbox_mode TEXT NOT NULL DEFAULT 'workspace-write',
                 execution_env TEXT NOT NULL DEFAULT 'local',
-                model TEXT NOT NULL DEFAULT 'deepseek-chat',
+                model TEXT NOT NULL DEFAULT 'deepseek-v4-pro',
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL

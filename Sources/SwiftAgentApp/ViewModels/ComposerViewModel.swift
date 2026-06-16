@@ -19,7 +19,7 @@ public final class ComposerViewModel: ObservableObject {
     @Published public var reasoningStrength: ReasoningStrength = .high
 
     /// The currently selected model.
-    @Published public var selectedModel: DeepSeekModel = .v3
+    @Published public var selectedModel: DeepSeekModel = .v4Pro
 
     /// Whether the add menu is shown.
     @Published public var showAddMenu: Bool = false

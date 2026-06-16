@@ -125,8 +125,15 @@ public final class AppViewModel: ObservableObject {
 
             // Auto-select first thread if none selected
             if selectedThreadID == nil {
-                selectedThreadID = globalThreads.first?.id
-                    ?? projects.first?.threads.first?.id
+                if let first = globalThreads.first?.id ?? projects.first?.threads.first?.id {
+                    selectedThreadID = first
+                }
+            }
+
+            // First launch: if no threads exist at all, create a default one so
+            // the chat UI is immediately visible instead of showing a placeholder.
+            if threadViewModels.isEmpty {
+                _ = createThread()
             }
         } catch {
             print("[AppViewModel] Load failed: \(error)")
@@ -136,6 +143,7 @@ public final class AppViewModel: ObservableObject {
     // MARK: - Thread Management
 
     /// Create a new thread (optionally in a project).
+    /// Always registers in-memory so the UI updates. DB persistence is best-effort.
     @discardableResult
     public func createThread(title: String = "New Chat", projectId: String? = nil) -> ThreadViewModel {
         let thread = ThreadViewModel(llmProvider: llmProvider, storageManager: storage)
@@ -147,19 +155,22 @@ public final class AppViewModel: ObservableObject {
             title: title
         )
 
+        // Always register in-memory first — the UI must update even if DB fails
+        threadViewModels[thread.id] = thread
+
+        if let pid = projectId, let project = projects.first(where: { $0.id == pid }) {
+            project.threads.insert(thread, at: 0)
+        } else {
+            globalThreads.insert(thread, at: 0)
+        }
+
+        selectThread(thread)
+
+        // Persist to DB (best-effort, non-blocking for UI)
         do {
             try storage.threadRepo.create(persisted)
-            threadViewModels[thread.id] = thread
-
-            if let pid = projectId, let project = projects.first(where: { $0.id == pid }) {
-                project.threads.insert(thread, at: 0)
-            } else {
-                globalThreads.insert(thread, at: 0)
-            }
-
-            selectThread(thread)
         } catch {
-            print("[AppViewModel] Failed to create thread: \(error)")
+            print("[AppViewModel] Failed to persist thread: \(error)")
         }
 
         return thread
@@ -228,7 +239,7 @@ public final class AppViewModel: ObservableObject {
 
     // MARK: - Project Management
 
-    /// Create a new project.
+    /// Create a new project and auto-create a thread so the chat UI appears immediately.
     @discardableResult
     public func createProject(name: String, path: String) -> ProjectViewModel {
         let project = PersistedProject(name: name, path: path)
@@ -238,11 +249,22 @@ public final class AppViewModel: ObservableObject {
         do {
             try storage.projectRepo.create(project)
             projects.append(vm)
+
+            let threadTitle = "Chat in \(name)"
+            let thread = createThread(title: threadTitle, projectId: project.id)
+            vm.threads.append(thread)
         } catch {
             print("[AppViewModel] Create project failed: \(error)")
         }
 
         return vm
+    }
+
+    /// Open an existing folder as a project (auto-names from folder basename).
+    @discardableResult
+    public func openProject(path: String) -> ProjectViewModel {
+        let name = (path as NSString).lastPathComponent
+        return createProject(name: name, path: path)
     }
 
     /// Delete a project (moves threads to global).

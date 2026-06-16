@@ -9,10 +9,8 @@ struct ConfigurationSettingsView: View {
 
             SettingsRow(label: "Default model") {
                 Picker("", selection: $viewModel.defaultModel) {
-                    Text("DeepSeek-V3 (chat)").tag("deepseek-chat")
-                    Text("DeepSeek-R1 (reasoner)").tag("deepseek-reasoner")
-                    Text("DeepSeek-V3-0324").tag("deepseek-chat-0324")
-                    Text("DeepSeek-Coder-V2").tag("deepseek-coder-v2")
+                    Text("DeepSeek V4 Pro").tag("deepseek-v4-pro")
+                    Text("DeepSeek V4 Flash").tag("deepseek-v4-flash")
                 }
                 .pickerStyle(.menu)
                 .frame(width: 220)

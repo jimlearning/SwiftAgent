@@ -135,7 +135,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var contrast: Double = 50
 
     // MARK: - Configuration
-    @Published var defaultModel: String = "deepseek-chat"
+    @Published var defaultModel: String = "deepseek-v4-pro"
     @Published var defaultReasoningLevel: String = "High"
     @Published var defaultSandboxMode: String = "ask"
 
@@ -183,7 +183,7 @@ final class SettingsViewModel: ObservableObject {
         translucentSidebar = d.object(forKey: "settings.translucentSidebar") as? Bool ?? true
         contrast = d.double(forKey: "settings.contrast")
         if contrast == 0 { contrast = 50 }
-        defaultModel = d.string(forKey: "settings.defaultModel") ?? "deepseek-chat"
+        defaultModel = d.string(forKey: "settings.defaultModel") ?? "deepseek-v4-pro"
         defaultReasoningLevel = d.string(forKey: "settings.defaultReasoningLevel") ?? "High"
         defaultSandboxMode = d.string(forKey: "settings.defaultSandboxMode") ?? "ask"
         personality = d.string(forKey: "settings.personality") ?? "Pragmatic"

@@ -36,15 +36,25 @@ public struct ContentView: View {
                     handleSlashCommand(cmd, thread: thread)
                 }
             } else {
-                // No thread selected
+                // No thread selected — show actionable empty state
                 VStack(spacing: 16) {
                     Spacer()
                     Text("SwiftAgent")
                         .font(.uiTitle)
                         .foregroundColor(.textPrimary)
-                    Text("Select a chat from the sidebar or press ⌘N to start")
+                    Text("Start a new chat to begin coding with AI")
                         .font(.uiBody)
                         .foregroundColor(.textSecondary)
+                    Button {
+                        let pid = appViewModel.projects.first?.id
+                        _ = appViewModel.createThread(projectId: pid)
+                    } label: {
+                        Label("New Chat", systemImage: "plus")
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut("n", modifiers: .command)
                     Spacer()
                 }
             }

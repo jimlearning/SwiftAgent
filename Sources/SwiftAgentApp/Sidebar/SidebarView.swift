@@ -80,12 +80,19 @@ struct SidebarView: View {
                         .font(.uiCaption)
                         .foregroundColor(.textSecondary)
                     Spacer()
-                    Button {
-                        showNewProjectSheet = true
+                    Menu {
+                        Button("Open Project...") {
+                            openProjectFolder()
+                        }
+                        Button("New Project...") {
+                            showNewProjectSheet = true
+                        }
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .semibold))
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .buttonStyle(.plain)
                     .foregroundColor(.textSecondary)
                 }
@@ -219,6 +226,20 @@ struct SidebarView: View {
     private func openSettingsWindow() {
         if let url = URL(string: "swiftagent-settings://settings") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - Open Project Folder
+
+    private func openProjectFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.message = "Select a project folder to open in SwiftAgent"
+        if panel.runModal() == .OK, let url = panel.url {
+            _ = appViewModel.openProject(path: url.path)
         }
     }
 
