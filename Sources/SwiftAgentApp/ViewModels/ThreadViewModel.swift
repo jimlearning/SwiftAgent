@@ -159,6 +159,13 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     /// instead of `+0 -0`.
     public var onStreamComplete: (() -> Void)?
 
+    /// Optional callback fired on the user's first `send`. Wired by
+    /// AppViewModel to promote the thread from a "pending" selection
+    /// (no sidebar entry, no DB row) into a real one the moment the
+    /// user actually types something. Without this, clicking
+    /// "New chat" would create a sidebar entry immediately.
+    public var onFirstUserMessage: (() -> Void)?
+
     /// Whether this thread has unread messages (purely UI concept, not persisted).
     @Published public var hasUnread: Bool = false
 
@@ -266,6 +273,10 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             content: trimmed
         )
         persistMessage(pm)
+
+        // Promote a pending thread (created via the "New chat" button)
+        // into a real one the moment the user types something.
+        onFirstUserMessage?()
 
         // Create assistant placeholder
         let assistantID = UUID().uuidString

@@ -175,35 +175,28 @@ struct SwiftAgentAppEntry: App {
             }
         }
 
-        // Settings window (independent per §17 #23)
-        Window("Settings", id: "settings") {
+        // Settings scene — SwiftUI's macOS-native settings entry. Renders
+        // as a standard Settings window (no toolbar with + - x buttons;
+        // just a clean macOS title bar + close/min/max). ⌘, is wired up
+        // by SwiftUI automatically; we don't need to attach it ourselves.
+        Settings {
             SettingsWindow()
                 .environmentObject(settingsViewModel)
                 .environmentObject(appViewModel)
         }
-        .windowResizability(.contentMinSize)
-        .handlesExternalEvents(matching: ["swiftagent-settings"])
-
-        // Keyboard shortcut for Settings (⌘,)
-        Settings {
-            EmptyView()
-        }
-        .commands {
-            CommandGroup(after: .appSettings) {
-                Button("Settings...") {
-                    openWindow(id: "settings")
-                }
-                .keyboardShortcut(",", modifiers: .command)
-            }
-        }
     }
 
-    /// Open the Settings window programmatically. Routes through
-    /// SwiftUI's `openWindow` rather than a custom URL scheme so we
-    /// don't trip macOS's "no app registered" alert.
+    /// Open the Settings window programmatically. SwiftUI's Settings
+    /// scene is wired to ⌘, automatically; we route programmatic
+    /// opens through `openSettings` (an environment value, available
+    /// since macOS 14) which is the canonical Apple way to present it.
     private func openSettingsWindow() {
-        openWindow(id: "settings")
+        // Fallback: if the env value isn't available we post a
+        // notification so any view with the env value can react.
+        NotificationCenter.default.post(name: .swiftAgentOpenSettings, object: nil)
     }
+
+    /// Inject an appshot capture as a message into the active thread.
 
     /// Inject an appshot capture as a message into the active thread.
     private func injectAppshot(_ capture: AppshotCapture.AppshotData, into thread: ThreadViewModel) {

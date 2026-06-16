@@ -248,15 +248,19 @@ public final class AppViewModel: ObservableObject {
     // MARK: - Thread Management
 
     /// Create a new thread (optionally in a project).
-    /// Always registers in-memory so the UI updates. DB persistence is best-effort.
+    ///
+    /// When `persist` is `false` (the default for "New chat" button
+    /// clicks), the thread is held in memory as the selected thread
+    /// but NOT added to the sidebar list and NOT written to the
+    /// database. The first time the user actually sends a message,
+    /// `commitPendingThreadIfNeeded()` promotes it into the sidebar
+    /// list and persists it. This matches the Codex/ChatGPT UX where
+    /// clicking "New chat" shows a fresh composer without polluting
+    /// the sidebar until real activity occurs.
     @discardableResult
-    public func createThread(title: String = "New Chat", projectId: String? = nil) -> ThreadViewModel {
+    public func createThread(title: String = "New Chat", projectId: String? = nil, persist: Bool = false) -> ThreadViewModel {
         let thread = ThreadViewModel(llmProvider: llmProvider, storageManager: storage)
         thread.setProvider(llmProvider)
-        // Set the title on the live VM BEFORE persisting. Without this line
-        // the toolbar and sidebar would still show the placeholder
-        // "Untitled" until the user sends the first message (the auto-rename
-        // path in ThreadViewModel.send only fires on message send).
         thread.title = title
 
         // Hook the diff refresh so the Review panel updates after each
@@ -265,31 +269,77 @@ public final class AppViewModel: ObservableObject {
             self?.refreshDiffSummary()
         }
 
+        // Hook the first-message promotion: when the user sends the
+        // first message, move this thread from "pending" (selected but
+        // hidden in sidebar) into a real sidebar entry + DB row.
+        thread.onFirstUserMessage = { [weak self] in
+            self?.commitPendingThreadIfNeeded(thread)
+        }
+
+        // Always keep the thread in the in-memory registry so the
+        // composer / message list can look it up by id.
+        threadViewModels[thread.id] = thread
+
+        if persist {
+            promoteThreadToSidebar(thread, projectId: projectId)
+            persistThreadToDB(thread, projectId: projectId)
+        } else {
+            // Pending: only set selectedThreadID, do NOT add to the
+            // sidebar list. The sidebar will show this thread as soon
+            // as the user sends the first message.
+            selectedThreadID = thread.id
+        }
+
+        return thread
+    }
+
+    /// Promote a pending thread into the visible sidebar list. Called
+    /// from `ThreadViewModel.send` once the user has actually started
+    /// a conversation.
+    public func commitPendingThreadIfNeeded(_ thread: ThreadViewModel) {
+        // Already in the sidebar — nothing to do.
+        if let project = projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) }) {
+            _ = project
+            return
+        }
+        if globalThreads.contains(where: { $0.id == thread.id }) {
+            return
+        }
+
+        // Pick a sensible project bucket. If the current selection is
+        // already in a project, share that project; otherwise global.
+        let projectId: String? = projects
+            .first(where: { $0.threads.contains(where: { $0.id == thread.id }) })
+            .map(\.id) ?? projects.first?.id
+
+        promoteThreadToSidebar(thread, projectId: projectId)
+        persistThreadToDB(thread, projectId: projectId)
+    }
+
+    /// Insert the thread into the right `projects[].threads` or
+    /// `globalThreads` list, sorted by updatedAt (newest first).
+    private func promoteThreadToSidebar(_ thread: ThreadViewModel, projectId: String?) {
+        if let pid = projectId, let project = projects.first(where: { $0.id == pid }) {
+            project.threads.insert(thread, at: 0)
+            project.threads.sort { $0.updatedAt > $1.updatedAt }
+        } else {
+            globalThreads.insert(thread, at: 0)
+            globalThreads.sort { $0.updatedAt > $1.updatedAt }
+        }
+    }
+
+    /// Write the thread to SQLite. Best-effort; failures are logged.
+    private func persistThreadToDB(_ thread: ThreadViewModel, projectId: String?) {
         let persisted = PersistedThread(
             id: thread.id,
             projectId: projectId,
-            title: title
+            title: thread.title
         )
-
-        // Always register in-memory first — the UI must update even if DB fails
-        threadViewModels[thread.id] = thread
-
-        if let pid = projectId, let project = projects.first(where: { $0.id == pid }) {
-            project.threads.insert(thread, at: 0)
-        } else {
-            globalThreads.insert(thread, at: 0)
-        }
-
-        selectThread(thread)
-
-        // Persist to DB (best-effort, non-blocking for UI)
         do {
             try storage.threadRepo.create(persisted)
         } catch {
             print("[AppViewModel] Failed to persist thread: \(error)")
         }
-
-        return thread
     }
 
     /// Select a thread and load its messages.

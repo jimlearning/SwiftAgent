@@ -377,12 +377,15 @@ public struct ComposerView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(modelButtonLabel(thread: thread))
+                Text(thread.selectedModel.displayName)
+                    .foregroundColor(.textPrimary)
+                Text(composer.reasoningStrength.rawValue)
+                    .foregroundColor(.textTertiary)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.textTertiary)
             }
             .font(.uiCaption)
-            .foregroundColor(.textSecondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .contentShape(Rectangle())
@@ -391,10 +394,6 @@ public struct ComposerView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Model and reasoning strength")
-    }
-
-    private func modelButtonLabel(thread: ThreadViewModel) -> String {
-        "\(thread.selectedModel.displayName) \(composer.reasoningStrength.rawValue)"
     }
 
     // MARK: - ↑ Send Button

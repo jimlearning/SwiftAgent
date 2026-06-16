@@ -16,7 +16,7 @@ import SwiftUI
 /// - Project chevron: full-row hit area, not just the icon
 struct SidebarView: View {
     @EnvironmentObject var appViewModel: AppViewModel
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     @State private var showNewProjectSheet = false
     @State private var renameTarget: RenameTarget?
@@ -264,7 +264,7 @@ struct SidebarView: View {
 
     private var settingsLink: some View {
         Button {
-            openWindow(id: "settings")
+            openSettings()
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "gearshape")
