@@ -90,7 +90,9 @@ public struct ContentView: View {
             Spacer()
 
             HStack(spacing: 8) {
-                // Environment button (Local / Worktree) — clicking cycles the env
+                // Environment picker: clicking cycles Local → Worktree → Local.
+                // Long-press / right-click would open the picker; for v1 a
+                // direct cycle click matches the Codex interaction model.
                 Button {
                     cycleExecutionEnv(thread: thread)
                 } label: {
@@ -113,24 +115,83 @@ public struct ContentView: View {
                     cornerRadius: 6,
                     padding: EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
                 )
-                .help("Toggle execution environment (Local / Worktree)")
+                .help("Click to toggle execution environment (Local / Worktree)")
 
-                // Environment popover (Sources / git branch / commit / PR status)
-                Button {
-                    showEnvPopover.toggle()
+                // Environment details: 5 fields per product doc §3.5.
+                // Uses a real Menu (not popover) so each row's hit area
+                // and hover highlight work correctly.
+                Menu {
+                    Section("Environment") {
+                        Button {
+                            thread.executionEnv = "local"
+                            thread.persistState()
+                        } label: {
+                            HStack {
+                                Image(systemName: "laptopcomputer")
+                                Text("Local")
+                                if thread.executionEnv == "local" {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button {
+                            thread.executionEnv = "worktree"
+                            thread.persistState()
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.triangle.branch")
+                                Text("Worktree")
+                                if thread.executionEnv == "worktree" {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        Button {
+                            thread.executionEnv = "cloud"
+                            thread.persistState()
+                        } label: {
+                            HStack {
+                                Image(systemName: "cloud")
+                                Text("Cloud")
+                                if thread.executionEnv == "cloud" {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                    Divider()
+                    Button {
+                        // Trigger + Changes action — wires to the agent's
+                        // pending file edits in a follow-up patch.
+                    } label: {
+                        Label("Changes", systemImage: "plus.square")
+                    }
+                    Button {
+                        // Copy current branch to clipboard (git symbolic-ref).
+                        if let branch = try? runGitSymbolicRef() {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(branch, forType: .string)
+                        }
+                    } label: {
+                        Label("Copy branch name", systemImage: "doc.on.doc")
+                    }
+                    Divider()
+                    Text("Sources")
                 } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12))
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14))
                         .foregroundColor(.textSecondary)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .hoverHighlight(cornerRadius: 6, padding: EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
-                .help("Environment details")
-                .popover(isPresented: $showEnvPopover, arrowEdge: .bottom) {
-                    EnvironmentPopoverContent()
-                }
+                .help("Environment details and actions")
 
                 // Plan mode indicator
                 if thread.mode == "plan" {
@@ -174,6 +235,21 @@ public struct ContentView: View {
         }
         .frame(height: 48)
         .padding(.horizontal, 16)
+    }
+
+    private func runGitSymbolicRef() throws -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git", "symbolic-ref", "--short", "HEAD"]
+        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func envIcon(_ env: String) -> String {

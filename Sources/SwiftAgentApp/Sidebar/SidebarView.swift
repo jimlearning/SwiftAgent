@@ -6,19 +6,25 @@ import SwiftUI
 /// row container hijacks Button hit-testing: a `Button` placed inside a
 /// List row has its tap region restricted to the label/icon, not the
 /// full row. ScrollView + VStack keeps every Button's contentShape
-/// intact, so each top entry, project row, and thread row is a
-/// fully-clickable cell with hover highlight.
+/// intact.
+///
+/// Visual system (this pass):
+/// - Selected thread row: distinct background (`bgElevated.opacity(0.7)`)
+///   + 2pt left accent border (`accentPrimary`) + bolder title font
+/// - Hover: 8% white overlay across full row
+/// - Search field: pill-shaped, subtle border, focus glow
+/// - Project chevron: full-row hit area, not just the icon
 struct SidebarView: View {
     @EnvironmentObject var appViewModel: AppViewModel
     @Environment(\.openWindow) private var openWindow
 
     @State private var showNewProjectSheet = false
-    @State private var showRenameSheet = false
     @State private var renameTarget: RenameTarget?
     @State private var searchText: String = ""
     @FocusState private var isSearchFocused: Bool
     @State private var showPluginsSheet = false
     @State private var pluginTab: PluginTab = .skills
+    @State private var searchObserverToken: NSObjectProtocol?
 
     var body: some View {
         ScrollView {
@@ -27,10 +33,10 @@ struct SidebarView: View {
                 searchFieldArea
                 projectsSection
                 chatsSection
-                Spacer().frame(height: 8)
+                Spacer().frame(height: 12)
                 settingsLink
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
         }
         .background(Color.bgSidebar)
         .sheet(isPresented: $showNewProjectSheet) {
@@ -52,11 +58,6 @@ struct SidebarView: View {
             pluginsSheetContent
         }
         .onAppear {
-            // Listen for the ⌘F menu command to focus the search field.
-            // We store the observer token so we can remove it on disappear;
-            // passing `self` to removeObserver on a SwiftUI View struct is a
-            // no-op at runtime (no such observer registered), so we track
-            // the token directly.
             searchObserverToken = NotificationCenter.default.addObserver(
                 forName: .swiftAgentFocusSearch,
                 object: nil,
@@ -73,12 +74,10 @@ struct SidebarView: View {
         }
     }
 
-    @State private var searchObserverToken: NSObjectProtocol?
-
     // MARK: - Top 4 entries
 
     private var topEntries: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 1) {
             topEntry(icon: "square.and.pencil", title: "New chat", shortcut: "⌘N") {
                 _ = appViewModel.createThread()
             }
@@ -89,29 +88,31 @@ struct SidebarView: View {
                 showPluginsSheet = true
             }
             topEntry(icon: "clock", title: "Automations", shortcut: nil) {
-                // Phase 4 stub — opens an Inbox placeholder
+                // Phase 4 stub
             }
         }
+        .padding(.bottom, 6)
     }
 
     private func topEntry(icon: String, title: String, shortcut: String?, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .frame(width: 20)
+                    .font(.system(size: 13))
+                    .frame(width: 18)
+                    .foregroundColor(.textPrimary)
                 Text(title)
-                    .font(.uiLabel)
-                Spacer()
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundColor(.textPrimary)
+                Spacer(minLength: 4)
                 if let shortcut {
                     Text(shortcut)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.textTertiary)
                 }
             }
-            .foregroundColor(.textPrimary)
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -119,28 +120,29 @@ struct SidebarView: View {
         .hoverHighlight(
             background: Color.white.opacity(0.08),
             cornerRadius: 6,
-            padding: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+            padding: EdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
         )
         .help(title)
     }
 
     // MARK: - Search Field
 
-    @ViewBuilder
     private var searchFieldArea: some View {
-        // Always visible (not just on focus) so the user can immediately
-        // see the input affordance and the focus highlight is obvious.
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.textTertiary)
                 .font(.system(size: 12))
                 .frame(width: 16)
             TextField("Search threads...", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.uiBody)
+                .font(.system(size: 13))
                 .focused($isSearchFocused)
                 .onChange(of: searchText) { _, newValue in
                     appViewModel.searchFilter = newValue
+                }
+                .onSubmit {
+                    // Pressing Enter in the field — no-op for v1; future pass
+                    // will jump to the first match in the visible list.
                 }
             if !searchText.isEmpty {
                 Button {
@@ -150,19 +152,29 @@ struct SidebarView: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
                         .foregroundColor(.textTertiary)
+                        .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .hoverHighlight(cornerRadius: 9, padding: EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
+                .help("Clear search")
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSearchFocused ? Color.bgElevated.opacity(0.6) : Color.clear)
+                .fill(isSearchFocused ? Color.bgInput : Color.bgInput.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(
+                            isSearchFocused ? Color.accentPrimary.opacity(0.5) : Color.borderSubtle,
+                            lineWidth: 1
+                        )
+                )
         )
-        .padding(.horizontal, 8)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Projects Section
@@ -175,26 +187,26 @@ struct SidebarView: View {
                     Button("New Project…") { showNewProjectSheet = true }
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.textSecondary)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .hoverHighlight(cornerRadius: 4, padding: EdgeInsets(top: 3, leading: 3, bottom: 3, trailing: 3))
+                .help("Add or open a project")
             ))
 
             if appViewModel.projects.isEmpty {
                 Text("No projects yet")
                     .font(.uiCaption)
                     .foregroundColor(.textTertiary)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 4)
             }
 
-            // ProjectSectionView observes the ProjectViewModel directly so
-            // changes to `isExpanded` (collapse/expand) redraw correctly.
             ForEach(appViewModel.projects) { project in
                 ProjectSectionView(
                     project: project,
@@ -210,14 +222,15 @@ struct SidebarView: View {
 
     private func sectionHeader(_ title: String, trailing: AnyView?) -> some View {
         HStack {
-            Text(title)
-                .font(.uiCaption)
-                .foregroundColor(.textSecondary)
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.textTertiary)
+                .tracking(0.6)
             Spacer()
             if let trailing { trailing }
         }
         .padding(.horizontal, 12)
-        .padding(.top, 12)
+        .padding(.top, 10)
         .padding(.bottom, 4)
     }
 
@@ -225,13 +238,13 @@ struct SidebarView: View {
 
     private var chatsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("Chats (global)", trailing: nil)
+            sectionHeader("Chats", trailing: nil)
 
             if appViewModel.globalThreads.isEmpty {
                 Text("No chats yet")
                     .font(.uiCaption)
                     .foregroundColor(.textTertiary)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 4)
             }
 
@@ -251,22 +264,22 @@ struct SidebarView: View {
 
     private var settingsLink: some View {
         Button {
-            // Use SwiftUI's openWindow environment so the Settings
-            // scene declared in EntryPoint presents as an independent
-            // NSWindow (per §17 #23 — settings is NOT an in-app popup
-            // and must NOT use a custom URL scheme).
             openWindow(id: "settings")
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 10) {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
+                    .frame(width: 18)
                 Text("Settings")
-                    .font(.uiLabel)
+                    .font(.system(size: 13))
                 Spacer()
+                Text("⌘,")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.textTertiary)
             }
             .foregroundColor(.textSecondary)
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -274,13 +287,12 @@ struct SidebarView: View {
         .hoverHighlight(
             background: Color.white.opacity(0.08),
             cornerRadius: 6,
-            padding: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+            padding: EdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
         )
         .accessibilityLabel("Open Settings")
         .keyboardShortcut(",", modifiers: .command)
+        .help("Open Settings (⌘,)")
     }
-
-    // MARK: - Open Project Folder
 
     private func openProjectFolder() {
         let panel = NSOpenPanel()
@@ -303,24 +315,24 @@ struct SidebarView: View {
 
     private var pluginsSheetContent: some View {
         VStack(spacing: 0) {
-            // Header with close button
+            pluginsHeader
+            Divider().background(Color.borderSubtle)
+            if pluginTab == .skills {
+                SkillsView()
+            } else {
+                MCPConfigView()
+            }
+        }
+        .frame(width: 540, height: 600)
+        .background(Color.bgContent)
+    }
+
+    private var pluginsHeader: some View {
+        VStack(spacing: 0) {
             HStack {
-                HStack(spacing: 0) {
-                    ForEach(PluginTab.allCases, id: \.self) { tab in
-                        Button {
-                            pluginTab = tab
-                        } label: {
-                            Text(tab.rawValue)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(pluginTab == tab ? .textPrimary : .textTertiary)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .background(pluginTab == tab ? Color.bgContent : Color.clear)
-                    }
-                }
+                Text("Plugins")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.textPrimary)
                 Spacer()
                 Button {
                     showPluginsSheet = false
@@ -328,34 +340,51 @@ struct SidebarView: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 16))
                         .foregroundColor(.textTertiary)
+                        .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .hoverHighlight(cornerRadius: 6, padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
+                .hoverHighlight(cornerRadius: 12, padding: EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                 .keyboardShortcut(.cancelAction)
                 .help("Close (Esc)")
             }
-            .background(Color.bgSidebar)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
-            Divider().background(Color.borderSubtle)
-
-            if pluginTab == .skills {
-                SkillsView()
-            } else {
-                MCPConfigView()
+            HStack(spacing: 4) {
+                ForEach(PluginTab.allCases, id: \.self) { tab in
+                    Button {
+                        pluginTab = tab
+                    } label: {
+                        Text(tab.rawValue)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(pluginTab == tab ? .textPrimary : .textTertiary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(pluginTab == tab ? Color.bgElevated : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .hoverHighlight(
+                        background: Color.white.opacity(0.06),
+                        cornerRadius: 6,
+                        padding: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+                    )
+                }
+                Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
         }
-        .frame(width: 500, height: 600)
     }
 }
 
-// MARK: - Project Section View (observes its own ProjectViewModel)
+// MARK: - Project Section View
 
-/// A self-contained row + child thread list for a single project.
-/// Uses `@ObservedObject` on `project` so changes to `isExpanded`
-/// trigger a redraw of just this row. Without this observation,
-/// SidebarView never gets a "project was collapsed" signal because
-/// SidebarView only observes AppViewModel, not ProjectViewModel.
 struct ProjectSectionView: View {
     @ObservedObject var project: ProjectViewModel
 
@@ -373,7 +402,7 @@ struct ProjectSectionView: View {
                     Text("No chats")
                         .font(.uiCaption)
                         .foregroundColor(.textTertiary)
-                        .padding(.leading, 40)
+                        .padding(.leading, 36)
                         .padding(.vertical, 2)
                 }
                 ForEach(project.threads) { thread in
@@ -395,17 +424,19 @@ struct ProjectSectionView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: project.isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 9, weight: .bold))
                     .frame(width: 14)
+                    .foregroundColor(.textTertiary)
                 Image(systemName: "folder")
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
+                    .foregroundColor(.textSecondary)
                 Text(project.name)
-                    .font(.uiLabel)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.textPrimary)
                 Spacer()
             }
-            .foregroundColor(.textPrimary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -413,7 +444,7 @@ struct ProjectSectionView: View {
         .hoverHighlight(
             background: Color.white.opacity(0.08),
             cornerRadius: 6,
-            padding: EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12)
+            padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)
         )
         .contextMenu {
             Button("Rename") { renameTarget = .project(project.id) }
@@ -424,11 +455,11 @@ struct ProjectSectionView: View {
     }
 }
 
-// MARK: - Thread Row View (cell with hover)
+// MARK: - Thread Row View
 
-/// Single thread row: title + relative timestamp + hover highlight.
-/// Self-contained so it can be used both inside ProjectSectionView and
-/// directly in the global Chats section.
+/// Single thread row with strong visual distinction between selected
+/// and unselected states. Selection shows: a 2pt accent border on the
+/// left edge, a darker background overlay, and a bolder title font.
 struct ThreadRowView: View {
     @ObservedObject var thread: ThreadViewModel
     let isSelected: Bool
@@ -440,34 +471,46 @@ struct ThreadRowView: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 6) {
-                if thread.hasUnread {
+                // 2pt accent bar — only visible when selected. Acts as the
+                // strongest visual cue that this thread is active.
+                Rectangle()
+                    .fill(Color.accentPrimary)
+                    .frame(width: 2)
+                    .opacity(isSelected ? 1 : 0)
+
+                if thread.hasUnread && !isSelected {
                     Circle()
                         .fill(Color.accentPrimary)
                         .frame(width: 6, height: 6)
-                } else {
-                    Spacer().frame(width: 6)
                 }
+
                 Text(displayTitle)
-                    .font(.uiBody)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .foregroundColor(isSelected ? .textPrimary : .textPrimary.opacity(0.85))
                     .lineLimit(1)
-                Spacer()
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 4)
+
                 Text(relativeTime(thread.updatedAt))
                     .font(.system(size: 10))
-                    .foregroundColor(.textTertiary)
+                    .foregroundColor(isSelected ? .textSecondary : .textTertiary)
             }
-            .foregroundColor(.textPrimary)
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
-            .padding(.leading, 24)
+            .padding(.vertical, 6)
+            .padding(.leading, isSelected ? 8 : 10)  // compensate for accent bar
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.bgElevated.opacity(0.6) : Color.clear)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.bgElevated : Color.clear)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hoverHighlight(
-            background: Color.white.opacity(0.06),
+            background: Color.white.opacity(isSelected ? 0.04 : 0.06),
             cornerRadius: 6,
-            padding: EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12)
+            padding: EdgeInsets(top: 6, leading: isSelected ? 8 : 10, bottom: 6, trailing: 12)
         )
         .contextMenu {
             Button("Rename") { renameTarget = .thread(thread.id) }
@@ -476,11 +519,9 @@ struct ThreadRowView: View {
         }
     }
 
-    /// Show the thread title — fall back to "New Chat" when it's
-    /// still the placeholder from creation.
     private var displayTitle: String {
         let trimmed = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == "Untitled" || trimmed == "New Chat" {
+        if trimmed.isEmpty || trimmed == "Untitled" {
             return "New Chat"
         }
         return trimmed

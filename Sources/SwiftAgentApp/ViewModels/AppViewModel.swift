@@ -66,6 +66,18 @@ public final class AppViewModel: ObservableObject {
     /// when streaming completes with file-edit metadata.
     @Published public var lastEditSummary: EditSummary = .empty
 
+    /// Per-file Review entries with real unified-diff content, computed
+    /// from `git diff` in the current project. The Review panel binds
+    /// to this directly so it shows actual `+N -M` counts instead of
+    /// the placeholder `+0 -0` from before.
+    @Published public var lastReviewEntries: [DiffSummary.DiffEntry] = []
+
+    /// Per-file Review entries backed by an in-memory git diff cache.
+    /// Computed lazily on demand by `refreshDiffSummary()`.
+    public func refreshDiffSummary() {
+        DiffService.refresh(for: self)
+    }
+
     /// Live list of MCP servers — published so the + menu and Settings page
     /// observe the same source. Empty until MCPConfigStore loads its TOML.
     @Published public var mcpServers: [MCPConfigStore.MCPServerConfig] = []
@@ -246,6 +258,12 @@ public final class AppViewModel: ObservableObject {
         // "Untitled" until the user sends the first message (the auto-rename
         // path in ThreadViewModel.send only fires on message send).
         thread.title = title
+
+        // Hook the diff refresh so the Review panel updates after each
+        // agent turn completes (whether success or error).
+        thread.onStreamComplete = { [weak self] in
+            self?.refreshDiffSummary()
+        }
 
         let persisted = PersistedThread(
             id: thread.id,

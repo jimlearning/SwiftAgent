@@ -153,6 +153,12 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     /// The current streaming task (allows cancellation).
     private var streamingTask: Task<Void, Never>?
 
+    /// Optional callback fired when a stream finishes (whether
+    /// successfully or with an error). Wired by AppViewModel to
+    /// refresh the diff cache so the Review panel shows real numbers
+    /// instead of `+0 -0`.
+    public var onStreamComplete: (() -> Void)?
+
     /// Whether this thread has unread messages (purely UI concept, not persisted).
     @Published public var hasUnread: Bool = false
 
@@ -374,6 +380,10 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         )
         persistMessage(pm)
         persistState()
+
+        // Refresh the diff summary on the main actor so the Review
+        // panel sees up-to-date file edits.
+        onStreamComplete?()
     }
 
     private func handleStreamError(assistantID: String, error: Error) {
