@@ -224,47 +224,64 @@ public struct ComposerView: View {
     // MARK: - + Button (real skills/MCP counts)
 
     private func addButton(thread: ThreadViewModel) -> some View {
-        Button {
-            showAddMenu.toggle()
+        // Use SwiftUI's native `Menu` for the dropdown so we get correct
+        // positioning, hover highlight, and click-anywhere-in-cell hit-testing
+        // out of the box. We attach the actions to the Menu's content via a
+        // dedicated `AddMenuContent` so the + icon itself stays a simple
+        // tap target without owning the menu state.
+        Menu {
+            Button {
+                openFilePicker(thread: thread)
+            } label: {
+                Label("Add photos & files", systemImage: "paperclip")
+            }
+            Menu {
+                Button("New File") {
+                    // Phase 4 stub — opens an empty Swift file in the current project
+                }
+                Button("New Project") {
+                    appViewModel.createProject(name: "Untitled", path: FileManager.default.currentDirectoryPath)
+                }
+            } label: {
+                Label("Create", systemImage: "plus.square")
+            }
+            Divider()
+            Button {
+                thread.mode = thread.mode == "plan" ? "code" : "plan"
+                thread.persistState()
+            } label: {
+                Label("Plan mode", systemImage: "doc.text.magnifyingglass")
+            }
+            Button {
+                thread.mode = thread.mode == "goal" ? "code" : "goal"
+                thread.persistState()
+            } label: {
+                Label("Pursue goal", systemImage: "target")
+            }
+            Menu {
+                PluginsSubmenuContent(
+                    mcpServerCount: appViewModel.mcpServers.count,
+                    skillsCount: appViewModel.skills.count
+                )
+            } label: {
+                Label("Plugins", systemImage: "puzzlepiece.extension")
+            }
+            Divider()
+            Button {
+                Task { await GlobalHotkeyManager.shared.triggerManualCapture() }
+            } label: {
+                Label("Appshot (Cmd+Cmd)", systemImage: "camera")
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 14, weight: .medium))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .foregroundColor(.textSecondary)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .help("Add — photos, files, plan mode, plugins")
-        .popover(isPresented: $showAddMenu, arrowEdge: .bottom) {
-            AddMenuView(
-                onFilePick: {
-                    showAddMenu = false
-                    openFilePicker(thread: thread)
-                },
-                onCreateNewFile: {
-                    showAddMenu = false
-                },
-                onCreateNewProject: {
-                    showAddMenu = false
-                },
-                onTogglePlanMode: {
-                    showAddMenu = false
-                    thread.mode = thread.mode == "plan" ? "code" : "plan"
-                    thread.persistState()
-                },
-                onToggleGoalMode: {
-                    showAddMenu = false
-                    thread.mode = thread.mode == "goal" ? "code" : "goal"
-                    thread.persistState()
-                },
-                onTriggerAppshot: {
-                    showAddMenu = false
-                    Task { await GlobalHotkeyManager.shared.triggerManualCapture() }
-                },
-                planModeOn: thread.mode == "plan",
-                goalModeOn: thread.mode == "goal",
-                mcpServerCount: appViewModel.mcpServers.count,
-                skillsCount: appViewModel.skills.count
-            )
-        }
     }
 
     private func openFilePicker(thread: ThreadViewModel) {
@@ -289,8 +306,20 @@ public struct ComposerView: View {
     // MARK: - ⚙️ Custom⌄ Button
 
     private var permissionButton: some View {
-        Button {
-            showPermissionPicker.toggle()
+        Menu {
+            ForEach(Array(PermissionMode.allCases.enumerated()), id: \.offset) { _, mode in
+                Button {
+                    composer.permissionMode = mode
+                } label: {
+                    HStack {
+                        Text(mode.rawValue)
+                        if composer.permissionMode == mode {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "gearshape")
@@ -300,19 +329,52 @@ public struct ComposerView: View {
             }
             .font(.uiCaption)
             .foregroundColor(.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .help("Permission mode — controls what the agent can do without asking")
-        .popover(isPresented: $showPermissionPicker, arrowEdge: .bottom) {
-            PermissionPickerView(selected: $composer.permissionMode)
-        }
     }
 
     // MARK: - 5.5 High⌄ Button
 
     private func modelButton(thread: ThreadViewModel) -> some View {
-        Button {
-            showModelPicker.toggle()
+        Menu {
+            // Reasoning strength submenu (left panel equivalent in Codex)
+            Menu("Reasoning") {
+                ForEach(Array(ReasoningStrength.allCases.enumerated()), id: \.offset) { _, strength in
+                    Button {
+                        composer.reasoningStrength = strength
+                    } label: {
+                        HStack {
+                            Text(strength.rawValue)
+                            if composer.reasoningStrength == strength {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+            // Model submenu
+            Menu("Model") {
+                ForEach(Array(DeepSeekModel.allCases.enumerated()), id: \.offset) { _, model in
+                    Button {
+                        thread.selectedModel = model
+                    } label: {
+                        HStack {
+                            Text(model.displayName)
+                            if thread.selectedModel == model {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
         } label: {
             HStack(spacing: 4) {
                 Text(modelButtonLabel(thread: thread))
@@ -321,24 +383,14 @@ public struct ComposerView: View {
             }
             .font(.uiCaption)
             .foregroundColor(.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .help("Model and reasoning strength")
-        .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
-            ModelPickerView(
-                selectedModel: Binding(
-                    get: { thread.selectedModel },
-                    set: { thread.selectedModel = $0 }
-                ),
-                reasoningStrength: $composer.reasoningStrength
-            )
-            .onChange(of: thread.selectedModel) { _, _ in
-                showModelPicker = false
-            }
-            .onChange(of: composer.reasoningStrength) { _, _ in
-                showModelPicker = false
-            }
-        }
     }
 
     private func modelButtonLabel(thread: ThreadViewModel) -> String {
@@ -348,25 +400,28 @@ public struct ComposerView: View {
     // MARK: - ↑ Send Button
 
     private func sendButton(thread: ThreadViewModel) -> some View {
-        Button(action: { sendAction(thread: thread) }) {
-            if composer.isSending || thread.state == .executing {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .scaleEffect(0.6)
-                    .frame(width: 28, height: 28)
-            } else {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 28, height: 28)
+        let isEnabled = composer.isSendEnabled && !thread.state.isComposerDisabled
+        return Button(action: { sendAction(thread: thread) }) {
+            Group {
+                if composer.isSending || thread.state == .executing {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(0.6)
+                } else {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                }
             }
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundColor(composer.isSendEnabled && !thread.state.isComposerDisabled ? .textPrimary : .textTertiary)
+        .foregroundColor(isEnabled ? .textPrimary : .textTertiary)
         .background(
             Circle()
-                .fill((composer.isSendEnabled && !thread.state.isComposerDisabled) ? Color.bgElevated : Color.bgElevated.opacity(0.5))
+                .fill(isEnabled ? Color.bgElevated : Color.bgElevated.opacity(0.5))
         )
-        .disabled(!composer.isSendEnabled || thread.state.isComposerDisabled)
+        .disabled(!isEnabled)
         .help("Send (Enter)")
     }
 
