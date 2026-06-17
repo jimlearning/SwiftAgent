@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import OSLog
 
 /// Files panel: a proper tree browser for the current project.
 ///
@@ -25,6 +26,9 @@ public struct FilesPanelView: View {
     @State private var selectedFile: FileNode?
     @State private var selectedFileContent: String?
     @State private var expandedFolders: Set<String> = []
+
+    private static let log = Logger(subsystem: "com.swiftagent.app", category: "FilesPanel")
+    private static var mdRenderCache: [String: AttributedString] = [:]
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -179,21 +183,19 @@ public struct FilesPanelView: View {
                 if let content = selectedFileContent {
                     ScrollView([.vertical, .horizontal]) {
                         if isMarkdownFile(selected.name) {
-                            // Full Markdown rendering for .md files
-                            Text(MarkdownRenderer(
-                                baseFont: .system(size: 12, weight: .regular),
-                                codeFont: .system(size: 11, design: .monospaced),
-                                foregroundColor: .textPrimary
-                            ).render(content))
+                            Text(renderedMarkdown(file: selected.name, content: content))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(12)
-                            .textSelection(.enabled)
                         } else {
-                            // Syntax-highlighted code preview
                             Text(highlightedPreview(for: selected, content: content))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
-                                .textSelection(.enabled)
+                        }
+                    }
+                    .contextMenu {
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(content, forType: .string)
                         }
                     }
                 } else {
@@ -286,6 +288,30 @@ public struct FilesPanelView: View {
         case "gitignore", "git": return "arrow.triangle.branch"
         default: return "doc"
         }
+    }
+
+    private func renderedMarkdown(file name: String, content: String) -> AttributedString {
+        let cacheKey = "\(name):\(content.count)"
+        if let cached = Self.mdRenderCache[cacheKey] {
+            Self.log.debug("[MD CACHE HIT] file=\(name) len=\(content.count)")
+            return cached
+        }
+        let start = CFAbsoluteTimeGetCurrent()
+        let renderer = MarkdownRenderer(
+            baseFont: .system(size: 12, weight: .regular),
+            codeFont: .system(size: 11, design: .monospaced),
+            foregroundColor: .textPrimary
+        )
+        let result = renderer.render(content)
+        let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        let lines = content.components(separatedBy: .newlines).count
+        if elapsed > 5 {
+            Self.log.warning("[MD RENDER] file=\(name) elapsed=\(String(format: "%.1f", elapsed))ms lines=\(lines) chars=\(content.count)")
+        } else {
+            Self.log.debug("[MD RENDER] file=\(name) elapsed=\(String(format: "%.1f", elapsed))ms lines=\(lines) chars=\(content.count)")
+        }
+        Self.mdRenderCache[cacheKey] = result
+        return result
     }
 
     private func isMarkdownFile(_ name: String) -> Bool {
