@@ -23,18 +23,19 @@ import SwiftUI
 struct MainContentView: View {
     @EnvironmentObject var appViewModel: AppViewModel
 
-    private let sidebarWidth: CGFloat = 260
-    private let rightNormalWidth: CGFloat = 420
-    private let rightMinWidth: CGFloat = 380
-
     var body: some View {
         HStack(spacing: 0) {
-            // Left: sidebar — fixed width, pinned to leading edge.
+            // Left: sidebar — user-resizable via drag divider.
             if appViewModel.sidebarVisible {
                 SidebarView()
-                    .frame(width: sidebarWidth)
+                    .frame(width: appViewModel.sidebarWidth)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                     .zIndex(1)
+
+                DragDivider(
+                    width: $appViewModel.sidebarWidth,
+                    range: appViewModel.sidebarWidthRange
+                )
             }
 
             // Center: content — flexible, fills the space between
@@ -48,22 +49,28 @@ struct MainContentView: View {
                     ))
             }
 
-            // Thin divider between center and right — hidden when
-            // either side is collapsed to avoid a floating line.
+            // Draggable divider between center and right — hidden when
+            // either side is collapsed or in focus mode (right fills all).
             if !appViewModel.focusMode && appViewModel.rightVisible {
-                Rectangle()
-                    .fill(Color.borderStrong)
-                    .frame(width: 1)
+                DragDivider(
+                    width: $appViewModel.rightWidth,
+                    range: appViewModel.rightWidthRange,
+                    inverted: true
+                )
             }
 
-            // Right: multi-tab workspace. Fixed ~420pt in normal mode;
+            // Right: multi-tab workspace. User-resizable in normal mode;
             // expands to fill all remaining space in focus mode.
             if appViewModel.rightVisible {
-                RightTabsView()
-                    .frame(minWidth: appViewModel.focusMode ? 480 : rightMinWidth,
-                           idealWidth: appViewModel.focusMode ? nil : rightNormalWidth,
-                           maxWidth: .infinity)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                if appViewModel.focusMode {
+                    RightTabsView()
+                        .frame(maxWidth: .infinity)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                } else {
+                    RightTabsView()
+                        .frame(width: appViewModel.rightWidth)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
         }
         .background(Color.bgContent)

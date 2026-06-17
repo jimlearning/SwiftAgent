@@ -40,6 +40,10 @@ public final class AppViewModel: ObservableObject {
     /// width; false = sidebar collapsed to 0.
     @Published public var sidebarVisible: Bool = true
 
+    /// User-resizable sidebar width. Clamped to `sidebarWidthRange` by
+    /// the DragDivider between sidebar and content.
+    @Published public var sidebarWidth: CGFloat = 260
+
     /// Right pane visibility. True = right pane shown at its default
     /// width; false = right pane collapsed to 0.
     ///
@@ -53,6 +57,11 @@ public final class AppViewModel: ObservableObject {
             }
         }
     }
+
+    /// User-resizable right-pane width. Clamped to `rightWidthRange` by
+    /// the DragDivider between content and right tabs. Ignored in focus
+    /// mode (right pane fills all available space).
+    @Published public var rightWidth: CGFloat = 420
 
     /// Focus mode: the center column (ContentView) is removed from the
     /// layout so the right pane expands to fill the freed space.
@@ -72,6 +81,12 @@ public final class AppViewModel: ObservableObject {
     /// visible (focus hides ContentView; both center and right can't be
     /// hidden simultaneously).
     public var canFocus: Bool { rightVisible }
+
+    /// Min / max bounds for user-resizable sidebar width.
+    public let sidebarWidthRange: ClosedRange<CGFloat> = 180...400
+
+    /// Min / max bounds for user-resizable right-pane width.
+    public let rightWidthRange: ClosedRange<CGFloat> = 320...700
 
     /// The resolved API key (empty if not configured).
     @Published public private(set) var apiKeyStatus: APIKeyStatus = .checking
