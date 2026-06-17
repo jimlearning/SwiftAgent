@@ -10,6 +10,10 @@ import SwiftUI
 /// left increases the width. Use this for dividers that sit at the
 /// leading edge of the pane they resize (e.g. right pane): pulling the
 /// divider into the content area widens the adjacent panel.
+///
+/// Uses `.global` coordinate space so the cursor delta is measured in
+/// screen-absolute coordinates and isn't affected by layout changes that
+/// reposition the divider mid-drag (avoids the feedback loop).
 struct DragDivider: View {
     @Binding var width: CGFloat
     let range: ClosedRange<CGFloat>
@@ -18,7 +22,6 @@ struct DragDivider: View {
     private let hitWidth: CGFloat = 6
     private let visualWidth: CGFloat = 1
 
-    /// Snapshot of `width` when the gesture began.
     @State private var initialWidth: CGFloat?
 
     var body: some View {
@@ -39,13 +42,12 @@ struct DragDivider: View {
                 }
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         let start = initialWidth ?? width
                         initialWidth = start
-                        let delta = inverted
-                            ? -value.translation.width
-                            : value.translation.width
+                        let globalDelta = value.location.x - value.startLocation.x
+                        let delta = inverted ? -globalDelta : globalDelta
                         width = max(range.lowerBound,
                                     min(range.upperBound,
                                         start + delta))
