@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftAgentCore
+import OSLog
 
 /// Renders Markdown text into an `AttributedString` suitable for SwiftUI `Text`.
 ///
@@ -11,6 +12,8 @@ public struct MarkdownRenderer: Sendable {
     private let baseFont: Font
     private let codeFont: Font
     private let foregroundColor: Color
+
+    private static let log = Logger(subsystem: "com.swiftagent.app", category: "MarkdownRenderer")
 
     public init(
         baseFont: Font = Font.system(size: 13, weight: .regular),
@@ -27,6 +30,7 @@ public struct MarkdownRenderer: Sendable {
     public func render(_ markdown: String) -> AttributedString {
         guard !markdown.isEmpty else { return AttributedString("") }
 
+        let start = CFAbsoluteTimeGetCurrent()
         let lines = markdown.components(separatedBy: .newlines)
         var result = AttributedString()
         var i = 0
@@ -101,6 +105,10 @@ public struct MarkdownRenderer: Sendable {
             i += 1
         }
 
+        let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        if elapsed > 5 {
+            Self.log.warning("[RENDER SLOW] elapsed=\(String(format: "%.1f", elapsed))ms lines=\(lines.count) chars=\(markdown.count)")
+        }
         return result
     }
 

@@ -10,24 +10,23 @@ public struct MessageBubbleView: View {
     let reasoningExpanded: Bool
     let onToggleReasoning: () -> Void
 
-    /// Cached rendered AttributedString so we don't re-parse markdown + re-run
-    /// regex syntax highlighting on every SwiftUI body evaluation during scroll.
-    @State private var cachedRenderContent: String = ""
-    @State private var cachedRenderResult: AttributedString?
+    /// Static render cache keyed by message ID + content length.
+    /// A plain Dictionary — NOT @State — so writes don't trigger SwiftUI
+    /// "Modifying state during view update" warnings and re-render spirals.
+    /// All access is main-actor-only (body evaluation), so no lock needed.
+    private static var renderCache: [String: AttributedString] = [:]
+    private static let maxCacheEntries = 300
 
     public var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
-            // Status row for assistant messages
             if message.role == .assistant, let thoughtTime = thoughtTimeString, message.isStreaming {
                 statusRow(thoughtTime)
             }
 
-            // Reasoning block (R1 thinking chain)
             if message.role == .assistant, let reasoning = message.reasoningContent, !reasoning.isEmpty {
                 reasoningBlock(reasoning)
             }
 
-            // Message content
             if message.role == .user {
                 userBubble
             } else {
@@ -63,19 +62,21 @@ public struct MessageBubbleView: View {
     }
 
     /// Returns the cached render if content hasn't changed; otherwise re-renders.
-    /// Eliminates the per-frame markdown parse + regex highlight cost during scroll.
+    /// Uses a static dictionary cache (not @State) to avoid triggering
+    /// "Modifying state during view update" warnings during body evaluation.
     private func renderedAssistantContent() -> AttributedString {
         if message.content.isEmpty && message.isStreaming {
             return AttributedString(" ")
         }
-        if let cached = cachedRenderResult, cachedRenderContent == message.content {
+        let cacheKey = "\(message.id):\(message.content.count)"
+        if let cached = Self.renderCache[cacheKey] {
             return cached
         }
-        // Reuse a single renderer to avoid recompiling regex grammars every time.
-        let renderer = Self.markdownRenderer
-        let result = renderer.render(message.content)
-        cachedRenderContent = message.content
-        cachedRenderResult = result
+        let result = Self.markdownRenderer.render(message.content)
+        if Self.renderCache.count >= Self.maxCacheEntries {
+            Self.renderCache.removeAll(keepingCapacity: true)
+        }
+        Self.renderCache[cacheKey] = result
         return result
     }
 
@@ -91,8 +92,8 @@ public struct MessageBubbleView: View {
 
     private func statusRow(_ text: String) -> some View {
         Text(text)
-            .font(.uiCaption)       // 12pt
-            .foregroundColor(.textSecondary)  // small gray text
+            .font(.uiCaption)
+            .foregroundColor(.textSecondary)
             .padding(.leading, 4)
     }
 
