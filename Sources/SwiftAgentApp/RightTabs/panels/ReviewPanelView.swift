@@ -2,6 +2,12 @@ import SwiftUI
 
 /// Diff Review panel shown in the right multi-tab workspace.
 /// Shows a summary of edited files with unified diff view.
+///
+/// Diff lines are syntax-highlighted using `MarkdownRenderer.highlightCode`
+/// (which reuses the Core `RegexSyntaxHighlighter` + Monokai `CodeColors`).
+/// Diff markers (`+`/`-`) retain their green/red styling; the code portion
+/// gets full syntax coloring.
+///
 /// Per §5.3: no per-line Accept/Reject buttons.
 public struct ReviewPanelView: View {
     /// A single file diff entry.
@@ -26,6 +32,11 @@ public struct ReviewPanelView: View {
             self.linesRemoved = linesRemoved
             self.diffContent = diffContent
             self.status = status
+        }
+
+        /// File extension sans dot, for syntax language detection.
+        public var fileExtension: String {
+            (fileName as NSString).pathExtension
         }
 
         public var statusDotColor: Color {
@@ -58,12 +69,8 @@ public struct ReviewPanelView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Top bar: summary
             summaryBar
-
             Divider().background(Color.borderStrong)
-
-            // File list
             if entries.isEmpty {
                 emptyState
             } else {
@@ -128,7 +135,6 @@ public struct ReviewPanelView: View {
 
     private func fileRow(_ entry: DiffEntry) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // File header
             Button(action: {
                 withAnimation(.easeOut(duration: 0.15)) {
                     expandedFileID = expandedFileID == entry.id ? nil : entry.id
@@ -156,46 +162,96 @@ public struct ReviewPanelView: View {
             }
             .buttonStyle(.plain)
 
-            // Diff content (expanded)
             if expandedFileID == entry.id, !entry.diffContent.isEmpty {
-                unifiedDiffView(entry.diffContent)
+                unifiedDiffView(content: entry.diffContent, language: languageFor(entry))
             }
         }
     }
 
+    private func languageFor(_ entry: DiffEntry) -> String? {
+        MarkdownRenderer.languageFromFileExtension(entry.fileExtension)
+    }
+
     // MARK: - Unified Diff View
 
-    private func unifiedDiffView(_ content: String) -> some View {
+    private func unifiedDiffView(content: String, language: String?) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(content.components(separatedBy: .newlines).enumerated()), id: \.offset) { _, line in
-                    diffLine(line)
+                    diffLine(line, language: language)
                 }
             }
         }
         .padding(.bottom, 8)
     }
 
-    private func diffLine(_ line: String) -> some View {
-        let bgColor: Color
-        let textColor: Color
-
-        if line.hasPrefix("+") && !line.hasPrefix("+++") {
-            bgColor = Color.success.opacity(0.1)
-            textColor = .success
-        } else if line.hasPrefix("-") && !line.hasPrefix("---") {
-            bgColor = Color.danger.opacity(0.1)
-            textColor = .danger
-        } else {
-            bgColor = .clear
-            textColor = .textPrimary
+    @ViewBuilder
+    private func diffLine(_ line: String, language: String?) -> some View {
+        // Hunk header: `@@ -10,7 +10,8 @@ func ...`
+        if line.hasPrefix("@@") {
+            Text(line)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.accentPrimary.opacity(0.7))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .background(Color.accentPrimary.opacity(0.06))
         }
-
-        return Text(line)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundColor(textColor)
+        // Metadata: `diff --git`, `index`, `---`, `+++`
+        else if line.hasPrefix("diff ") || line.hasPrefix("index ") {
+            Text(line)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+        }
+        else if line.hasPrefix("---") || line.hasPrefix("+++") {
+            Text(line)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+        }
+        // Added line
+        else if line.hasPrefix("+") {
+            HStack(spacing: 0) {
+                Text("+")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.success)
+                Text(MarkdownRenderer.highlightCode(
+                    String(line.dropFirst()), language: language,
+                    font: .system(size: 11, design: .monospaced),
+                    foregroundColor: .success
+                ))
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
-            .background(bgColor)
+            .background(Color.success.opacity(0.08))
+        }
+        // Removed line
+        else if line.hasPrefix("-") {
+            HStack(spacing: 0) {
+                Text("-")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.danger)
+                Text(MarkdownRenderer.highlightCode(
+                    String(line.dropFirst()), language: language,
+                    font: .system(size: 11, design: .monospaced),
+                    foregroundColor: .danger
+                ))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .background(Color.danger.opacity(0.08))
+        }
+        // Context line (unchanged)
+        else {
+            Text(MarkdownRenderer.highlightCode(
+                line, language: language,
+                font: .system(size: 11, design: .monospaced),
+                foregroundColor: .textPrimary
+            ))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+        }
     }
 }

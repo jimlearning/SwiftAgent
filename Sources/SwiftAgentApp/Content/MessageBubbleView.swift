@@ -10,6 +10,11 @@ public struct MessageBubbleView: View {
     let reasoningExpanded: Bool
     let onToggleReasoning: () -> Void
 
+    /// Cached rendered AttributedString so we don't re-parse markdown + re-run
+    /// regex syntax highlighting on every SwiftUI body evaluation during scroll.
+    @State private var cachedRenderContent: String = ""
+    @State private var cachedRenderResult: AttributedString?
+
     public var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
             // Status row for assistant messages
@@ -49,15 +54,38 @@ public struct MessageBubbleView: View {
             .frame(maxWidth: 320, alignment: .trailing)
     }
 
-    // MARK: - Assistant Content (no bubble)
+    // MARK: - Assistant Content (markdown rendered)
 
     private var assistantContent: some View {
-        Text(message.content.isEmpty && message.isStreaming ? " " : message.content)
-            .font(.uiBody)
-            .foregroundColor(.textPrimary)
+        Text(renderedAssistantContent())
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
     }
+
+    /// Returns the cached render if content hasn't changed; otherwise re-renders.
+    /// Eliminates the per-frame markdown parse + regex highlight cost during scroll.
+    private func renderedAssistantContent() -> AttributedString {
+        if message.content.isEmpty && message.isStreaming {
+            return AttributedString(" ")
+        }
+        if let cached = cachedRenderResult, cachedRenderContent == message.content {
+            return cached
+        }
+        // Reuse a single renderer to avoid recompiling regex grammars every time.
+        let renderer = Self.markdownRenderer
+        let result = renderer.render(message.content)
+        cachedRenderContent = message.content
+        cachedRenderResult = result
+        return result
+    }
+
+    /// Shared MarkdownRenderer — avoids re-initializing RegexSyntaxHighlighter
+    /// (which compiles language grammars) on every cache miss.
+    private static let markdownRenderer = MarkdownRenderer(
+        baseFont: .uiBody,
+        codeFont: .codeMono,
+        foregroundColor: .textPrimary
+    )
 
     // MARK: - Status Row
 

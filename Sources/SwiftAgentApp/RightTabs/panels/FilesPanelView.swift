@@ -178,12 +178,23 @@ public struct FilesPanelView: View {
                 Divider().background(Color.borderSubtle)
                 if let content = selectedFileContent {
                     ScrollView([.vertical, .horizontal]) {
-                        Text(content)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(.textPrimary)
+                        if isMarkdownFile(selected.name) {
+                            // Full Markdown rendering for .md files
+                            Text(MarkdownRenderer(
+                                baseFont: .system(size: 12, weight: .regular),
+                                codeFont: .system(size: 11, design: .monospaced),
+                                foregroundColor: .textPrimary
+                            ).render(content))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(12)
                             .textSelection(.enabled)
+                        } else {
+                            // Syntax-highlighted code preview
+                            Text(highlightedPreview(for: selected, content: content))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .textSelection(.enabled)
+                        }
                     }
                 } else {
                     Spacer()
@@ -275,6 +286,22 @@ public struct FilesPanelView: View {
         case "gitignore", "git": return "arrow.triangle.branch"
         default: return "doc"
         }
+    }
+
+    private func isMarkdownFile(_ name: String) -> Bool {
+        let ext = (name as NSString).pathExtension.lowercased()
+        return ext == "md" || ext == "markdown"
+    }
+
+    private func highlightedPreview(for node: FileNode, content: String) -> AttributedString {
+        let ext = (node.name as NSString).pathExtension
+        let language = MarkdownRenderer.languageFromFileExtension(ext)
+        return MarkdownRenderer.highlightCode(
+            content,
+            language: language,
+            font: .system(size: 12, design: .monospaced),
+            foregroundColor: .textPrimary
+        )
     }
 
     private func refreshFiles() {
