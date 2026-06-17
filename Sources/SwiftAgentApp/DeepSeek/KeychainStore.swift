@@ -10,13 +10,30 @@ public enum KeychainStore {
     /// Store the API key in Keychain.
     public static func save(apiKey: String) throws {
         let keychain = Keychain(service: service)
+            .accessibility(.afterFirstUnlock)
         try keychain.set(apiKey, key: key)
     }
 
     /// Retrieve the API key from Keychain. Returns nil if not set.
+    /// After a successful read, re-saves with relaxed accessibility to fix
+    /// ACL prompts on development builds (one last prompt, then permanent).
     public static func load() -> String? {
         let keychain = Keychain(service: service)
-        return try? keychain.get(key)
+        guard let value = try? keychain.get(key), !value.isEmpty else { return nil }
+
+        // Re-save with afterFirstUnlock to migrate old items that were created
+        // with restrictive ACL. After one approval, prompts stop permanently.
+        let migratedKey = "deepseek-api-key-migrated"
+        if Keychain(service: service)[migratedKey] != "1" {
+            try? Keychain(service: service)
+                .accessibility(.afterFirstUnlock)
+                .set(value, key: key)
+            try? Keychain(service: service)
+                .accessibility(.afterFirstUnlock)
+                .set("1", key: migratedKey)
+        }
+
+        return value
     }
 
     /// Remove the API key from Keychain.
