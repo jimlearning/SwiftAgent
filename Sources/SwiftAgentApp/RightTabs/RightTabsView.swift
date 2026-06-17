@@ -4,14 +4,13 @@ import SwiftUI
 /// - Tab bar with horizontal scroll and + menu (open new tab of any type)
 /// - Content area for the active tab
 ///
-/// The previously-shown 5 top entries (Review / Terminal / Browser /
-/// Files / Side chat) were redundant with the + menu's AddTabMenu
-/// picker. They are removed: open a new tab of any type via the +
-/// button, then close it via the per-tab × button. Empty state still
-/// shows `EmptyTabPlaceholder` so the right pane never feels broken.
+/// Uses the shared `RightTabsStore` from the environment (owned by
+/// `EntryPoint`) so keyboard shortcuts, the + menu, and tab state all
+/// reference the same store. Opening a tab via ⌘T or the + button both
+/// route through the same instance.
 struct RightTabsView: View {
     @EnvironmentObject var appViewModel: AppViewModel
-    @StateObject private var tabsStore = RightTabsStore()
+    @EnvironmentObject var tabsStore: RightTabsStore
 
     var body: some View {
         VStack(spacing: 0) {

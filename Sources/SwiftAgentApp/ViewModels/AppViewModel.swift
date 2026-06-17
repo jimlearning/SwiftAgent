@@ -42,14 +42,36 @@ public final class AppViewModel: ObservableObject {
 
     /// Right pane visibility. True = right pane shown at its default
     /// width; false = right pane collapsed to 0.
-    @Published public var rightVisible: Bool = true
+    ///
+    /// When right pane is hidden, focus mode is forced off — focus mode
+    /// hides ContentView, and at least one of ContentView/RightTabsView
+    /// must remain visible.
+    @Published public var rightVisible: Bool = true {
+        didSet {
+            if !rightVisible && focusMode {
+                focusMode = false
+            }
+        }
+    }
 
-    /// Focus mode: the center column collapses to width 0 and the
-    /// right pane expands to fill the freed space. Sidebar state is
-    /// preserved (left visible / hidden as the user had it). Used when
-    /// the user wants to give the right pane the full app width for
-    /// review/terminal/browser while still keeping chats in reach.
-    @Published public var focusMode: Bool = false
+    /// Focus mode: the center column (ContentView) is removed from the
+    /// layout so the right pane expands to fill the freed space.
+    ///
+    /// Sidebar state is preserved independently. Focus mode can only
+    /// engage when the right pane is visible; the toolbar button is
+    /// hidden otherwise.
+    @Published public var focusMode: Bool = false {
+        didSet {
+            if focusMode && !rightVisible {
+                rightVisible = true
+            }
+        }
+    }
+
+    /// Whether focus mode can be toggled — only when the right pane is
+    /// visible (focus hides ContentView; both center and right can't be
+    /// hidden simultaneously).
+    public var canFocus: Bool { rightVisible }
 
     /// The resolved API key (empty if not configured).
     @Published public private(set) var apiKeyStatus: APIKeyStatus = .checking

@@ -141,17 +141,18 @@ struct SwiftAgentAppEntry: App {
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             }
 
-            // Right tabs
+            // Right tabs — auto-show the right pane when a tab is opened
+            // via keyboard shortcut, so the user sees the tab appear.
             CommandGroup(after: .windowArrangement) {
-                Button("New Review Tab") { rightTabsStore.openTab(type: .review) }
+                Button("New Review Tab") { openTabAndShow(type: .review) }
                     .keyboardShortcut("g", modifiers: [.control, .shift])
-                Button("New Terminal Tab") { rightTabsStore.openTab(type: .terminal) }
+                Button("New Terminal Tab") { openTabAndShow(type: .terminal) }
                     .keyboardShortcut("`", modifiers: .control)
-                Button("New Browser Tab") { rightTabsStore.openTab(type: .browser) }
+                Button("New Browser Tab") { openTabAndShow(type: .browser) }
                     .keyboardShortcut("t", modifiers: .command)
-                Button("New Files Tab") { rightTabsStore.openTab(type: .files) }
+                Button("New Files Tab") { openTabAndShow(type: .files) }
                     .keyboardShortcut("p", modifiers: .command)
-                Button("New Side Chat Tab") { rightTabsStore.openTab(type: .sideChat) }
+                Button("New Side Chat Tab") { openTabAndShow(type: .sideChat) }
                     .keyboardShortcut("s", modifiers: [.command, .option])
             }
 
@@ -191,6 +192,17 @@ struct SwiftAgentAppEntry: App {
                 .environmentObject(settingsViewModel)
                 .environmentObject(appViewModel)
         }
+    }
+
+    /// Open a right-pane tab and auto-show the right pane if hidden.
+    /// Wrapped in animation so the pane slides in when the tab appears.
+    private func openTabAndShow(type: RightTabType) {
+        if !appViewModel.rightVisible {
+            withAnimation(.easeInOut(duration: 0.22)) {
+                appViewModel.rightVisible = true
+            }
+        }
+        rightTabsStore.openTab(type: type)
     }
 
     /// Open the Settings window programmatically. SwiftUI's Settings
