@@ -46,8 +46,10 @@ struct ToolCallCard: View {
                             .font(.system(size: 11))
                     }
                     .foregroundColor(.textTertiary)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .cellHoverHighlightTight()
 
                 if argsExpanded {
                     Text(args)
@@ -136,8 +138,10 @@ struct EditSummaryCard: View {
                                 .font(.system(size: 11))
                         }
                         .foregroundColor(.textSecondary)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .cellHoverHighlightTight()
 
                     Button(action: onReview) {
                         HStack(spacing: 4) {
@@ -151,8 +155,10 @@ struct EditSummaryCard: View {
                             RoundedRectangle(cornerRadius: 4)
                                 .strokeBorder(Color.accentPrimary, lineWidth: 1)
                         )
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .cellHoverHighlightTight()
                 }
             }
 
@@ -166,8 +172,10 @@ struct EditSummaryCard: View {
                             .font(.system(size: 11))
                     }
                     .foregroundColor(.textTertiary)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .cellHoverHighlightTight()
 
                 if filesExpanded {
                     VStack(alignment: .leading, spacing: 2) {

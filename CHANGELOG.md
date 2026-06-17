@@ -5,6 +5,15 @@ All notable changes to SwiftAgent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (macOS App — 3-pane layout rework)
+
+- **Layout primitive**: Switched `MainContentView` from `NavigationSplitView` to `HSplitView`. Two real problems with `NavigationSplitView` for the 3-toggle model: (1) `.navigationSplitViewColumnWidth(min: 0)` collapses a column to 0pt but still reserves its layout slot, so neighboring columns can't expand to fill the gap; (2) `NavigationSplitViewVisibility` is a 4-case enum with no value meaning "sidebar + detail, hide content" (which is exactly focus mode). `HSplitView` (NSSplitView wrapper) has fixed-order columns with flex widths — collapse a column to 0pt and the remaining columns naturally expand to fill.
+- **Focus mode**: Replaced the width-zero trick (`.frame(minWidth: 0, idealWidth: 0, maxWidth: 0)`) with `if !focusMode { ContentView() }`. With `ContentView`'s `layoutPriority(1)`, collapsing to width 0 still claimed the leading layout slot and pushed `SidebarView` to the middle of the window. Removing `ContentView` from the tree entirely lets `HSplitView` relayout sidebar + right so sidebar is back at the leading edge and right expands across the freed space.
+- **Toolbar**: `.toolbar { ToolbarItem(placement: .navigation) { } }` + `ToolbarItemGroup(placement: .primaryAction) { }` give the three pane toggles the native macOS toolbar (title-bar integration, accessibility, hover affordances, ⌘ shortcut hints) without any custom chrome.
+- **State**: 3 independent `@Published` flags on `AppViewModel` — `sidebarVisible`, `rightVisible`, `focusMode` — each directly controls its own column's width (or in focus mode, whether `ContentView` is in the tree). `.animation(.easeInOut(duration: 0.18))` on each flag for smooth transitions.
+
 ## [v0.5.0] — 2026-06-16
 
 ### Added (Phase 5 — Polish)

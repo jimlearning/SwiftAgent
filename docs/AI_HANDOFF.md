@@ -276,11 +276,15 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 
 The macOS app uses **MVVM** with SwiftUI, backed by SQLite persistence:
 
-- **AppViewModel** — Root state (projects, threads, API key, LLM provider)
+- **AppViewModel** — Root state (projects, threads, API key, LLM provider, **layout toggles**)
 - **ThreadViewModel** — Per-thread state, message send/stream lifecycle
 - **ProjectViewModel** — Per-project state
 
 Data: Storage (SQLite) → AppViewModel → SwiftUI views via `@Published` / `@EnvironmentObject`.
+
+### 3-Pane Layout (HSplitView)
+
+The main window is a 3-pane `HSplitView` (Sidebar | Content | Right Tabs) with three independent toggles (`sidebarVisible`, `rightVisible`, `focusMode`) wired into the native macOS toolbar via `.toolbar { ToolbarItem(placement: .navigation | .primaryAction) }`. See [ARCHITECTURE.md](ARCHITECTURE.md) "macOS App Layout — HSplitView 3-Pane" for the design rationale (why not `NavigationSplitView`, why focus mode removes `ContentView` from the tree entirely).
 
 ### Key Modules
 

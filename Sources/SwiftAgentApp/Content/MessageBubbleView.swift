@@ -80,8 +80,10 @@ public struct MessageBubbleView: View {
                         .font(.uiCaption)
                 }
                 .foregroundColor(.textSecondary)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .cellHoverHighlightTight()
 
             if reasoningExpanded {
                 Text(content)

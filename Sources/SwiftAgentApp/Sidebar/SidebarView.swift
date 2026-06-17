@@ -111,17 +111,11 @@ struct SidebarView: View {
                         .foregroundColor(.textTertiary)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .hoverHighlight(
-            background: Color.white.opacity(0.08),
-            cornerRadius: 6,
-            padding: EdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
-        )
+        .cellHoverHighlight()
         .help(title)
     }
 
@@ -278,17 +272,11 @@ struct SidebarView: View {
                     .foregroundColor(.textTertiary)
             }
             .foregroundColor(.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .hoverHighlight(
-            background: Color.white.opacity(0.08),
-            cornerRadius: 6,
-            padding: EdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
-        )
+        .cellHoverHighlight()
         .accessibilityLabel("Open Settings")
         .keyboardShortcut(",", modifiers: .command)
         .help("Open Settings (⌘,)")
@@ -435,17 +423,11 @@ struct ProjectSectionView: View {
                     .foregroundColor(.textPrimary)
                 Spacer()
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .hoverHighlight(
-            background: Color.white.opacity(0.08),
-            cornerRadius: 6,
-            padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)
-        )
+        .cellHoverHighlight()
         .contextMenu {
             Button("Rename") { renameTarget = .project(project.id) }
             Button("New Thread") { onNewThread() }
@@ -496,21 +478,24 @@ struct ThreadRowView: View {
                     .font(.system(size: 10))
                     .foregroundColor(isSelected ? .textSecondary : .textTertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .padding(.leading, isSelected ? 8 : 10)  // compensate for accent bar
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: CellTokens.cornerRadius)
                     .fill(isSelected ? Color.bgElevated : Color.clear)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.leading, isSelected ? 8 : 10)  // reserve room for accent bar
         .hoverHighlight(
-            background: Color.white.opacity(isSelected ? 0.04 : 0.06),
-            cornerRadius: 6,
-            padding: EdgeInsets(top: 6, leading: isSelected ? 8 : 10, bottom: 6, trailing: 12)
+            background: isSelected ? CellTokens.selectedHoverBackground : CellTokens.hoverBackground,
+            cornerRadius: CellTokens.cornerRadius,
+            padding: EdgeInsets(
+                top: CellTokens.padding.top,
+                leading: isSelected ? 8 : 10,
+                bottom: CellTokens.padding.bottom,
+                trailing: CellTokens.padding.trailing
+            )
         )
         .contextMenu {
             Button("Rename") { renameTarget = .thread(thread.id) }

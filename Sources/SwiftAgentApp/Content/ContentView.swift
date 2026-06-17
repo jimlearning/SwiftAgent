@@ -57,7 +57,14 @@ public struct ContentView: View {
     // MARK: - Toolbar
 
     private func toolbarView(thread: ThreadViewModel) -> some View {
-        HStack {
+        HStack(spacing: 8) {
+            // Note: the three pane-toggle buttons (sidebar / focus /
+            // right) used to live here, but they disappeared along
+            // with the center column when focus mode collapsed it,
+            // trapping the user with no way to exit focus mode. They
+            // now live in `MainContentView`'s floating toggle bar,
+            // which is always visible regardless of column state.
+
             VStack(alignment: .leading, spacing: 2) {
                 if isRenamingTitle {
                     TextField("Thread title", text: $renameTitleText)

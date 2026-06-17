@@ -155,12 +155,19 @@ struct SwiftAgentAppEntry: App {
                     .keyboardShortcut("s", modifiers: [.command, .option])
             }
 
-            // Panel toggles
+            // Panel toggles — wired to `appViewModel`'s published layout state
+            // so the toolbar icons in `ContentView` stay in sync.
+            // ⌘B and ⌘⇧B match the macOS-standard hide/show-sidebars
+            // shortcuts (Xcode, Mail, Notes).
             CommandGroup(after: .toolbar) {
-                Button("Toggle Left Sidebar") { }
+                Button("Toggle Left Sidebar") {
+                    appViewModel.sidebarVisible.toggle()
+                }
                 .keyboardShortcut("b", modifiers: .command)
 
-                Button("Toggle Right Panel") { }
+                Button("Toggle Right Panel") {
+                    appViewModel.rightVisible.toggle()
+                }
                 .keyboardShortcut("b", modifiers: [.command, .shift])
             }
 

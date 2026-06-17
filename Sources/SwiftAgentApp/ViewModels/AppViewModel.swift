@@ -25,6 +25,32 @@ public final class AppViewModel: ObservableObject {
     /// is NOT an in-app popup).
     @Published public var showSettings: Bool = false
 
+    // MARK: - Layout (sidebar / right pane / focus mode)
+    //
+    // Three independent flags control the three-pane layout so the
+    // user can mix-and-match (e.g. right pane only, sidebar + right
+    // pane with center collapsed). Toggled from toolbar buttons in
+    // `ContentView`; observed by `MainContentView`.
+    //
+    // Persistence: deliberately NOT persisted across launches — these
+    // are transient session preferences. Users re-open the panels
+    // they want when they relaunch.
+
+    /// Left sidebar visibility. True = sidebar shown at its default
+    /// width; false = sidebar collapsed to 0.
+    @Published public var sidebarVisible: Bool = true
+
+    /// Right pane visibility. True = right pane shown at its default
+    /// width; false = right pane collapsed to 0.
+    @Published public var rightVisible: Bool = true
+
+    /// Focus mode: the center column collapses to width 0 and the
+    /// right pane expands to fill the freed space. Sidebar state is
+    /// preserved (left visible / hidden as the user had it). Used when
+    /// the user wants to give the right pane the full app width for
+    /// review/terminal/browser while still keeping chats in reach.
+    @Published public var focusMode: Bool = false
+
     /// The resolved API key (empty if not configured).
     @Published public private(set) var apiKeyStatus: APIKeyStatus = .checking
 

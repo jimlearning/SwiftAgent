@@ -49,6 +49,8 @@ Thin CLI layer. All UI/UX lives here.
 | Sub-agent execution | REPL wires `AgentTool` to `SubAgentManager` | Foreground sub-agents run to completion with status-line progress; background sub-agents return a `TaskOutput` task ID and store progress/final output in `TaskManager` |
 | ChatCommand decomposition | Extension files (`+Type`, `+SystemPrompt`, etc.) | Keeps struct definition intact, uses module-level visibility for extension access. Reduced from 1,992→1,111 lines (-44%) |
 | LineEditor decomposition | 5 independent modules (`TextBuffer`, `TerminalInput`, `EditorRenderer`, `PasteBurstDetector`, `ComposerState`) | Pure function-like subsystems with no terminal side-effects. Reduced from 1,287→461 lines (-64%) |
+| macOS app layout | `HSplitView` 3-pane (not `NavigationSplitView`) + native `.toolbar` | 3 independent toggles (sidebar / right / focus) can't be expressed through `NavigationSplitViewVisibility`'s 4-case enum, and `.navigationSplitViewColumnWidth(min: 0)` reserves the collapsed column's layout slot. `HSplitView` (NSSplitView wrapper) has fixed-order columns with flex widths — collapse a column to 0pt and the remaining columns naturally expand to fill. |
+| macOS focus mode | `if !focusMode { ContentView() }` — remove from tree entirely, not `.frame(width: 0)` | `ContentView` carries `.layoutPriority(1)`, so even at width 0 it claims the leading slot and pushes `SidebarView` to the middle. Removing from the tree lets `HSplitView` relayout sidebar + right to fill the freed space with sidebar back at the leading edge. |
 
 ## Design Conventions
 
@@ -196,7 +198,7 @@ Sources/SwiftAgentCLI/
 Sources/SwiftAgentApp/            # macOS SwiftUI App (DeepSeek-powered)
 ├── EntryPoint.swift              # @main App entry, windows, commands, error overlay
 ├── Window/
-│   └── MainContentView.swift     # NavigationSplitView three-pane layout
+│   └── MainContentView.swift     # HSplitView 3-pane + native .toolbar (see "macOS App Layout" below)
 ├── Sidebar/
 │   ├── SidebarView.swift         # Projects, threads, settings link
 │   ├── ProjectRowView.swift      # Project expandable rows
@@ -320,7 +322,7 @@ Tests/
 
 The macOS app uses **MVVM** with SwiftUI, backed by SQLite persistence:
 
-- **AppViewModel** — Root view model, owns all state (projects, threads, API key, LLM provider)
+- **AppViewModel** — Root view model, owns all state (projects, threads, API key, LLM provider, **layout toggles**)
 - **ThreadViewModel** — Per-thread state, message list, send/stream lifecycle
 - **ProjectViewModel** — Per-project state (name, path, threads)
 - **ComposerViewModel** — Input buffer state, slash command parsing
@@ -328,6 +330,58 @@ The macOS app uses **MVVM** with SwiftUI, backed by SQLite persistence:
 Data flows from Storage (SQLite) → AppViewModel → SwiftUI views via `@Published` / `@EnvironmentObject`.
 
 The Settings window is an **independent NSWindow** (not in-app popup, per §17 #23), opened via `⌘,` or sidebar ⚙ link using URL scheme `swiftagent-settings://`.
+
+### macOS App Layout — HSplitView 3-Pane
+
+The main window is a 3-pane workspace: **Sidebar (left) | Content (center) | Right Tabs (right)**. Each pane can be independently toggled via the native macOS toolbar.
+
+```
+┌─────────────────────────────────────────────────────┐
+│ [▤]                                  [⤡] [▥]       │  ← macOS native .toolbar
+├──────────┬──────────────────────┬───────────────────┤
+│ Sidebar  │  Content (chat)      │  Right Tabs       │
+│ (240-320)│  (480-inf)           │  (380-520)        │
+└──────────┴──────────────────────┴───────────────────┘
+```
+
+**Why `HSplitView` and not `NavigationSplitView`**
+
+We started with `NavigationSplitView` because it's the macOS "modern navigation" idiom. It broke the 3-independent-toggle model in two ways:
+
+1. `.navigationSplitViewColumnWidth(min: 0)` collapses a column to 0pt, but `NavigationSplitView` still reserves the collapsed column's layout slot — neighboring columns don't expand to fill the gap. Focus mode (collapse content) leaves an empty band and the right pane doesn't grow into it.
+2. `NavigationSplitViewVisibility` has only 4 cases: `.automatic`, `.all`, `.doubleColumn`, `.detailOnly`. There is **no value meaning "sidebar + detail, hide content"** — exactly what focus mode requires. Mapping 3 independent toggles through a 4-case enum is lossy.
+
+`HSplitView` (SwiftUI wrapper around AppKit's `NSSplitView`) has fixed-order columns with flex widths. Collapse a column to 0pt and the remaining columns naturally expand to fill the freed space. No reserved layout slots, no enum-mapping hell.
+
+**Why focus mode uses `if !focusMode { ContentView() }`**
+
+We tried `.frame(minWidth: 0, idealWidth: 0, maxWidth: 0)` to collapse `ContentView` to 0 width. The result: `ContentView` still occupied the leading layout slot (because it carries `.layoutPriority(1)`), so `SidebarView` got pushed into the middle of the window and the right pane didn't grow to fill the gap. Removing `ContentView` from the view tree entirely in focus mode lets `HSplitView` relayout sidebar + right so sidebar is back at the leading edge and right expands across the freed space.
+
+**Layout state**
+
+`AppViewModel` owns three independent `@Published` flags:
+
+| Flag | Effect when `false` |
+|---|---|
+| `sidebarVisible` | Sidebar column's `min/ideal/max` width all 0 → column collapses, content extends leftward |
+| `rightVisible` | Right column's `min/ideal/max` width all 0 → column collapses, content extends rightward |
+| `focusMode` | `ContentView` removed from tree → right pane expands to fill freed space; sidebar stays in place |
+
+The flags are **not persisted across launches** — they're transient session preferences. `MainContentView` animates width changes with `.animation(.easeInOut(duration: 0.18), value: <flag>)` for smooth transitions.
+
+**Toolbar**
+
+`.toolbar` is attached to `HSplitView` (works on any SwiftUI view inside a `Window` scene) and renders the three pane toggles into the native macOS toolbar:
+
+| Button | Placement | SF Symbol | Bound to | Shortcut |
+|---|---|---|---|---|
+| Sidebar toggle | `.navigation` (system sidebar slot) | `sidebar.left` | `sidebarVisible` | `⌘B` |
+| Focus toggle | `.primaryAction` (trailing) | `arrow.up.left.and.arrow.down.right` / `arrow.down.right.and.arrow.up.left` (swaps in focus) | `focusMode` | (toolbar only) |
+| Right toggle | `.primaryAction` (trailing) | `sidebar.squares.right` / `sidebar.right` (swaps when right hidden) | `rightVisible` | `⇧⌘B` |
+
+`.navigation` placement gives the sidebar toggle the system sidebar-collapse button styling. The focus button gets `.tint` foreground when active so the user can see focus state at a glance.
+
+`ShortcutRegistry.panels` lists the keyboard shortcuts; the actual bindings live in `EntryPoint.swift`'s `.commands` modifier (`CommandGroup(after: .toolbar)`).
 
 ## Reference Materials
 

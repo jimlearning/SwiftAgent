@@ -43,7 +43,7 @@ Sources/
 │   └── ...                   # CollapseDetector, ToolResultCache, etc.
 └── SwiftAgentApp/            # macOS SwiftUI App (DeepSeek-powered)
     ├── EntryPoint.swift      # @main App entry with windows, commands, error overlay
-    ├── Window/               # MainContentView with NavigationSplitView
+    ├── Window/               # MainContentView with HSplitView 3-pane + native .toolbar
     ├── Sidebar/              # SidebarView, ProjectRowView, ThreadRowView
     ├── Content/              # ContentView, ComposerView, MessageListView, etc.
     ├── RightTabs/            # Multi-tab right workspace (Review/Terminal/Browser/Files)
@@ -136,6 +136,16 @@ SwiftAgent is the Swift/Apple-platform counterpart to Claude Code: a local agent
 - Slash commands are typed command metadata, not just string switches.
 - Plan mode is collaboration behavior, not just a local tool-execution flag.
 - `exec`/CI output must remain deterministic and script-friendly.
+
+## macOS App Layout
+
+The main window is an `HSplitView` 3-pane (Sidebar / Content / Right Tabs) with three independent toggles (`sidebarVisible`, `rightVisible`, `focusMode`) on `AppViewModel`, rendered into the native macOS toolbar via `.toolbar { ToolbarItem(placement: .navigation | .primaryAction) }`.
+
+- **Do not** switch to `NavigationSplitView`. Its 4-case `NavigationSplitViewVisibility` can't express the 3-toggle state, and `.navigationSplitViewColumnWidth(min: 0)` reserves the collapsed column's layout slot (so the right pane can't grow into the gap left by content in focus mode).
+- **Do not** collapse `ContentView` to width 0 in focus mode. `ContentView` carries `.layoutPriority(1)` and still claims the leading layout slot, pushing `SidebarView` into the middle. Remove `ContentView` from the tree entirely with `if !focusMode { ContentView() }`.
+- Toolbar shortcuts: `⌘B` toggles sidebar, `⇧⌘B` toggles right pane. Bindings live in `EntryPoint.swift` `.commands` modifier; the canonical shortcut list is in `ShortcutRegistry.panels`.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) "macOS App Layout — HSplitView 3-Pane" for the full design rationale.
 
 ## Documentation Self-Organization
 

@@ -5,7 +5,6 @@ import Combine
 final class RightTabsStore: ObservableObject {
     @Published var tabs: [RightTab] = []
     @Published var activeTabID: UUID?
-    @Published var showAddPopover: Bool = false
 
     var activeTab: RightTab? {
         tabs.first(where: { $0.id == activeTabID })
@@ -26,9 +25,5 @@ final class RightTabsStore: ObservableObject {
 
     func activate(_ id: UUID) {
         activeTabID = id
-    }
-
-    func showAddMenu() {
-        showAddPopover.toggle()
     }
 }

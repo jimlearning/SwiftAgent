@@ -274,13 +274,22 @@ public struct ComposerView: View {
             }
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.textPrimary)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        // Hover region expanded past the 28pt icon to match the rest
+        // of the toolbar (≈36×36 hit area + 6pt corners), so the user
+        // doesn't have to land on the icon glyph itself.
+        .hoverHighlight(
+            background: Color.white.opacity(0.08),
+            cornerRadius: 6,
+            padding: EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4)
+        )
         .help("Add — photos, files, plan mode, plugins")
     }
 
@@ -328,14 +337,13 @@ public struct ComposerView: View {
                     .font(.system(size: 7, weight: .bold))
             }
             .font(.uiCaption)
-            .foregroundColor(.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            .foregroundColor(.textPrimary)
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .cellHoverHighlightTight()
         .help("Permission mode — controls what the agent can do without asking")
     }
 
@@ -376,23 +384,34 @@ public struct ComposerView: View {
                 }
             }
         } label: {
+            // Three visually distinct layers, all rendered:
+            //   1. Model name (textPrimary) — bright white, primary identifier
+            //   2. Reasoning strength (textSecondary) — mid-gray, readable
+            //      but secondary; intentionally brighter than the chevron
+            //      so the text doesn't get visually swallowed by it
+            //   3. Chevron (textTertiary) — dim gray, far right with a
+            //      larger gap so it reads as a control affordance, not
+            //      as part of the reasoning text
+            // Both text labels are always rendered — Reasoning is NOT
+            // hidden. The chevron is always at the end of the row.
             HStack(spacing: 4) {
                 Text(thread.selectedModel.displayName)
                     .foregroundColor(.textPrimary)
                 Text(composer.reasoningStrength.rawValue)
-                    .foregroundColor(.textTertiary)
+                    .foregroundColor(.textSecondary)
+                    .padding(.leading, 4)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundColor(.textTertiary)
+                    .padding(.leading, 4)
             }
             .font(.uiCaption)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .cellHoverHighlightTight()
         .help("Model and reasoning strength")
     }
 
@@ -419,6 +438,11 @@ public struct ComposerView: View {
         .background(
             Circle()
                 .fill(isEnabled ? Color.bgElevated : Color.bgElevated.opacity(0.5))
+        )
+        .hoverHighlight(
+            background: Color.white.opacity(0.08),
+            cornerRadius: 14,  // half of 28 — full-circle hover
+            padding: EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
         )
         .disabled(!isEnabled)
         .help("Send (Enter)")

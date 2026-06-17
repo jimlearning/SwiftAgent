@@ -22,7 +22,7 @@
 
 | Phase | Name | Status | Notes |
 |---|---|---|---|
-| 1 | Skeleton | ✅ Done | NavigationSplitView 3-pane, DesignSystem, Sidebar, Content, Right panel |
+| 1 | Skeleton | ✅ Done | HSplitView 3-pane (Sidebar / Content / Right), DesignSystem, Sidebar, Content, Right panel |
 | 2 | DeepSeek Integration | ✅ Done | DeepSeekClient, KeychainStore, Composer 4 controls, streaming chat |
 | 3 | Multi-Thread + Persistence | ✅ Done | SQLite storage, Projects, Threads, Messages, slash commands |
 | 4 | Advanced Features | ✅ Done | Skills, MCP, Worktree, Appshots, 4-tier permissions, right multi-tabs |

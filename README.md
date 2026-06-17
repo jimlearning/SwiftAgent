@@ -210,7 +210,7 @@ SwiftAgent/
 │   │   └── ...
 │   └── SwiftAgentApp/          # macOS SwiftUI App (DeepSeek-powered)
 │       ├── EntryPoint.swift    # @main App entry, windows, commands
-│       ├── Window/             # NavigationSplitView layout
+│       ├── Window/             # HSplitView 3-pane + native .toolbar
 │       ├── Sidebar/            # Projects, threads, settings
 │       ├── Content/            # Chat view, composer, messages
 │       ├── RightTabs/          # Multi-tab right workspace
