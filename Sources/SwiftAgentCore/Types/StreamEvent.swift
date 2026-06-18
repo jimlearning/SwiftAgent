@@ -35,7 +35,7 @@ public enum StreamContentBlockStart: Sendable {
 }
 
 /// Token usage matching Claude Code's NonNullableUsage / BetaUsage.
-public struct Usage: Codable, Sendable {
+public struct Usage: Codable, Sendable, Equatable {
     public var inputTokens: Int
     public var cacheCreationInputTokens: Int
     public var cacheReadInputTokens: Int
@@ -51,7 +51,7 @@ public struct Usage: Codable, Sendable {
     public var contextWindow: Int?
     public var maxOutputTokens: Int?
 
-    public struct ServerToolUse: Codable, Sendable {
+    public struct ServerToolUse: Codable, Sendable, Equatable {
         public var webSearchRequests: Int
         public var webFetchRequests: Int
 
@@ -61,7 +61,7 @@ public struct Usage: Codable, Sendable {
         }
     }
 
-    public struct CacheCreation: Codable, Sendable {
+    public struct CacheCreation: Codable, Sendable, Equatable {
         public var ephemeral1hInputTokens: Int
         public var ephemeral5mInputTokens: Int
 
@@ -71,7 +71,7 @@ public struct Usage: Codable, Sendable {
         }
     }
 
-    public struct UsageIteration: Codable, Sendable {
+    public struct UsageIteration: Codable, Sendable, Equatable {
         public var inputTokens: Int
         public var outputTokens: Int
 

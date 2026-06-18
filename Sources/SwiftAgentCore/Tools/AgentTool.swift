@@ -226,6 +226,8 @@ public struct AgentTool: Tool {
         onProgress: ToolCallProgress?
     ) {
         switch event {
+        case .textDelta, .thinkingDelta:
+            break // Text/thinking deltas don't need progress reporting
         case .modelStreaming:
             emitProgress(onProgress, toolUseID: toolUseID, message: "\(agentName) is thinking")
         case .assistantTextStreaming:

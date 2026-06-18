@@ -63,7 +63,11 @@ public struct QueryEngine: Sendable {
         state: AppState,
         tools: [ToolDefinition]? = nil,
         querySource: QuerySource = .repl,
-        onEvent: ((StreamingQueryEvent) -> Void)? = nil
+        onEvent: (@Sendable (StreamingQueryEvent) -> Void)? = nil,
+        /// Optional permission prompt handler for interactive sessions (e.g. SwiftUI dialogs).
+        permissionPromptHandler: PermissionPromptHandler? = nil,
+        /// Working directory for tool execution. Defaults to the current process directory.
+        workingDirectory: String = FileManager.default.currentDirectoryPath
     ) async throws -> RunResult {
         await state.startProcessing()
         defer { Task { await state.stopProcessing() } }
@@ -187,7 +191,7 @@ public struct QueryEngine: Sendable {
                 // Pre-build tool context and progress callback for streaming tool execution.
                 // Tools start executing during streaming (content_block_stop) and need
                 // these captured before the stream loop.
-                let workingDir = FileManager.default.currentDirectoryPath
+                let workingDir = workingDirectory
                 let assistantUUID = UUID().uuidString
                 let currentMode = await state.permissionMode
                 let isBypassAvailable = await state.isAutoModeActive
@@ -206,7 +210,7 @@ public struct QueryEngine: Sendable {
                     abortSignal: { Task.isCancelled },
                     mainLoopModel: model,
                     querySource: querySource,
-                    permissionPromptHandler: { toolName, toolUseID, decision in
+                    permissionPromptHandler: permissionPromptHandler ?? { toolName, toolUseID, decision in
                         // In non-interactive sessions, auto-deny permission prompts.
                         // Matches CC's behavior when no TUI prompt is available.
                         if isBypassAvailable {
@@ -247,6 +251,7 @@ public struct QueryEngine: Sendable {
                     switch event {
                     case .textDelta(let text):
                         turnText += text
+                        onEvent?(.textDelta(text))
                         if !didEmitAssistantTextStreaming,
                            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             onEvent?(.assistantTextStreaming)
@@ -320,7 +325,9 @@ public struct QueryEngine: Sendable {
                     case .messageStart(let msg):
                         _ = msg // metadata
 
-                    case .messageStop, .thinkingDelta, .signatureDelta, .inputJSONDelta, .ping:
+                    case .thinkingDelta(let text):
+                        onEvent?(.thinkingDelta(text))
+                    case .messageStop, .signatureDelta, .inputJSONDelta, .ping:
                         break
 
                     case .error(let msg):
@@ -528,6 +535,10 @@ public struct QueryEngine: Sendable {
 /// Matches CC's QueryYield events in query.ts — tool results and progress
 /// are yielded to the caller as they complete for real-time UI updates.
 public enum StreamingQueryEvent: Sendable {
+    /// A single text token from the assistant's response.
+    case textDelta(String)
+    /// A single thinking/reasoning token.
+    case thinkingDelta(String)
     /// A tool started executing.
     case toolStarted(toolUseID: String, toolName: String, inputSummary: String? = nil)
     /// A tool completed with its result.
@@ -592,7 +603,7 @@ public enum AgentError: Error {
 }
 
 extension JSONValue {
-    var jsonString: String {
+    public var jsonString: String {
         if let data = try? JSONEncoder().encode(self),
            let str = String(data: data, encoding: .utf8) {
             return str

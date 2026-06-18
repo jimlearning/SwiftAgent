@@ -49,7 +49,7 @@ public struct SubAgentManager: Sendable {
         context: AgentContext,
         state: AppState,
         tools: [ToolDefinition]? = nil,
-        onEvent: ((StreamingQueryEvent) -> Void)? = nil
+        onEvent: (@Sendable (StreamingQueryEvent) -> Void)? = nil
     ) async throws -> SubAgentResult {
         let task = await taskManager.create(
             name: definition.name,
@@ -261,6 +261,15 @@ public struct SubAgentManager: Sendable {
                 detail: "turn \(turnNumber) complete",
                 turnNumber: turnNumber,
                 toolCallCount: toolCallCount
+            )
+        case .textDelta, .thinkingDelta:
+            return BackgroundProgress(
+                phase: .running,
+                message: "\(label) streaming",
+                toolName: nil,
+                detail: nil,
+                turnNumber: nil,
+                toolCallCount: nil
             )
         }
     }
