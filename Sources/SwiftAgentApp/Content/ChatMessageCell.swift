@@ -287,10 +287,31 @@ public final class ChatMessageCell: NSView {
         return result
     }
 
-    /// Measure a view: for NSTextField use `cellSize(forBounds:)` which
-    /// correctly measures wrapped text at a given width. For containers
-    /// recurse to find the text field. Fall back to `fittingSize`.
+    /// Measure a view: for containers with their own intrinsicContentSize
+    /// (UserBubbleView, ToolResultCardView), use fittingSize which includes
+    /// padding. For bare NSTextField use cellSize(forBounds:). Falls back
+    /// to fittingSize for everything else.
     private func measuredSize(of view: NSView, maxWidth: CGFloat) -> CGSize {
+        // Containers with their own size logic — use fittingSize after setting widths
+        if view is UserBubbleView {
+            setMaxLayoutWidth(on: view, maxWidth: maxWidth)
+            let fs = view.fittingSize
+            DLog("    measuredSize UserBubbleView fittingSize=\(fs) maxWidth=\(maxWidth)")
+            return fs
+        }
+        if view is ToolResultCardView {
+            setMaxLayoutWidth(on: view, maxWidth: maxWidth)
+            let fs = view.fittingSize
+            DLog("    measuredSize ToolResultCardView fittingSize=\(fs) maxWidth=\(maxWidth)")
+            return fs
+        }
+        if view is ToolUseCardView {
+            setMaxLayoutWidth(on: view, maxWidth: maxWidth)
+            let fs = view.fittingSize
+            DLog("    measuredSize ToolUseCardView fittingSize=\(fs)")
+            return fs
+        }
+        // Bare NSTextField — use cellSize for correct wrapping measurement
         if let tf = view as? NSTextField, tf.maximumNumberOfLines != 1, maxWidth > 0,
            let cell = tf.cell {
             cell.usesSingleLineMode = false
@@ -300,14 +321,9 @@ public final class ChatMessageCell: NSView {
             DLog("    measuredSize NSTextField maxWidth=\(maxWidth) cellSize=\(size) string='\(tf.stringValue.prefix(40))'")
             return size
         }
-        for (j, sub) in view.subviews.enumerated() {
-            if sub is NSTextField {
-                DLog("    measuredSize recursing into sub[\(j)] \(type(of: sub))")
-                return measuredSize(of: sub, maxWidth: maxWidth)
-            }
-        }
+        // Simple containers or NSButton — use fittingSize
         let fs = view.fittingSize
-        DLog("    measuredSize fallback fittingSize=\(fs) type=\(type(of: view))")
+        DLog("    measuredSize fittingSize=\(fs) type=\(type(of: view))")
         return fs
     }
 
