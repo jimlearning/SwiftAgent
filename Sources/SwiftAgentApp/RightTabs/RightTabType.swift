@@ -6,6 +6,7 @@ enum RightTabType: String, CaseIterable, Identifiable, Codable {
     case browser
     case files
     case sideChat
+    case debug
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum RightTabType: String, CaseIterable, Identifiable, Codable {
         case .browser: return "Browser"
         case .files: return "Files"
         case .sideChat: return "Side chat"
+        case .debug: return "Debug"
         }
     }
 
@@ -26,6 +28,7 @@ enum RightTabType: String, CaseIterable, Identifiable, Codable {
         case .browser: return "globe"
         case .files: return "folder"
         case .sideChat: return "plus.circle"
+        case .debug: return "ladybug"
         }
     }
 
@@ -36,6 +39,7 @@ enum RightTabType: String, CaseIterable, Identifiable, Codable {
         case .browser: return "\u{2318}T"
         case .files: return "\u{2318}P"
         case .sideChat: return "\u{2325}\u{2318}S"
+        case .debug: return "\u{2303}\u{21E7}D"
         }
     }
 }

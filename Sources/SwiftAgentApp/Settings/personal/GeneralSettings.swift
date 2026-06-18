@@ -2,6 +2,35 @@ import SwiftUI
 
 struct GeneralSettingsView: View {
     @EnvironmentObject var viewModel: SettingsViewModel
+    @EnvironmentObject var appViewModel: AppViewModel
+
+    private var apiKeyStatusView: some View {
+        HStack(spacing: 8) {
+            switch appViewModel.apiKeyStatus {
+            case .configured:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.success)
+                    .font(.system(size: 12))
+                Text("Configured")
+                    .font(.uiCaption)
+                    .foregroundColor(.textSecondary)
+            case .missing:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.warning)
+                    .font(.system(size: 12))
+                Text("Not set")
+                    .font(.uiCaption)
+                    .foregroundColor(.textSecondary)
+            case .checking:
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 12, height: 12)
+                Text("Checking…")
+                    .font(.uiCaption)
+                    .foregroundColor(.textSecondary)
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -52,11 +81,18 @@ struct GeneralSettingsView: View {
 
             // API Key status
             SettingsRow(label: "DeepSeek API Key") {
+                apiKeyStatusView
+            }
+
+            Divider().background(Color.borderSubtle)
+
+            // Debug Console toggle
+            SettingsRow(label: "Debug Console") {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.success)
-                        .font(.system(size: 12))
-                    Text("Configured")
+                    Toggle("", isOn: $viewModel.debugConsoleEnabled)
+                        .toggleStyle(.switch)
+                        .scaleEffect(0.8)
+                    Text(viewModel.debugConsoleEnabled ? "On — logs appear at bottom of chat" : "Off")
                         .font(.uiCaption)
                         .foregroundColor(.textSecondary)
                 }

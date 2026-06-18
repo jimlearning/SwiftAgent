@@ -93,6 +93,8 @@ private struct MenuShortcutModifier: ViewModifier {
             content.keyboardShortcut("p", modifiers: .command)
         case .sideChat:
             content.keyboardShortcut("s", modifiers: [.command, .option])
+        case .debug:
+            content.keyboardShortcut("d", modifiers: [.control, .shift])
         }
     }
 }

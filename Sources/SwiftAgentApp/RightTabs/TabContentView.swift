@@ -22,6 +22,8 @@ struct TabContentView: View {
                 FilesPanelView(tabID: tab.id.uuidString, projectPath: currentProjectPath)
             case .sideChat:
                 SideChatPanelView(tabID: tab.id.uuidString)
+            case .debug:
+                DebugPanelView()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

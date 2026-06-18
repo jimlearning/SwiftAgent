@@ -160,6 +160,11 @@ final class SettingsViewModel: ObservableObject {
     @Published var worktreeAutoCleanup: Bool = true
     @Published var worktreeBaseBranch: String = "main"
 
+    // MARK: - Debug
+    @Published var debugConsoleEnabled: Bool = AgentDebugger.shared.isEnabled {
+        didSet { AgentDebugger.shared.isEnabled = debugConsoleEnabled }
+    }
+
     // MARK: - Search
     @Published var searchQuery: String = ""
 
