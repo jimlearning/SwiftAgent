@@ -622,8 +622,11 @@ final class UserBubbleView: NSView {
         let cellSize = label.cell?.cellSize(forBounds: NSRect(
             x: 0, y: 0, width: maxContentWidth, height: CGFloat.greatestFiniteMagnitude
         )) ?? label.intrinsicContentSize
+        // ceil the width so the bubble is always >=1px wider than the text,
+        // preventing edge-case wrap-to-next-line from floating-point precision.
+        let textWidth = ceil(cellSize.width)
         return CGSize(
-            width: min(cellSize.width, kUserBubbleMaxWidth) + kUserBubbleHPadding * 2,
+            width: min(textWidth, kUserBubbleMaxWidth) + kUserBubbleHPadding * 2,
             height: cellSize.height + kUserBubbleVPadding * 2
         )
     }

@@ -266,7 +266,12 @@ public struct AppKitChatView: NSViewRepresentable {
                         _ = lastCell.updateBlockText(at: i, text: text)
                     }
                 }
+                // Synchronous layout needed: text width change → cell height change
+                // → document height change. Without this, autoScrollToBottom uses
+                // stale document dimensions and the UI shows mismatched frames.
+                lastCell.needsLayout = true
                 scrollView.chatDocument.needsLayout = true
+                scrollView.layoutSubtreeIfNeeded()
                 scrollView.autoScrollToBottom(animated: false)
                 return
             }
