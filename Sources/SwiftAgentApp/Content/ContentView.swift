@@ -33,8 +33,8 @@ public struct ContentView: View {
                     apiKeyBanner
                 }
 
-                // Message list (main content area)
-                MessageListView(threadID: thread.id)
+                // Message list (main content area) — AppKit-native for performance
+                AppKitChatView(threadID: thread.id)
                     .id(thread.id)  // Force-rebuild on thread switch so scroll position resets cleanly
 
                 // Composer at bottom
@@ -48,7 +48,7 @@ public struct ContentView: View {
         .onChange(of: appViewModel.apiKeyStatus) { _, newStatus in
             if newStatus == .configured {
                 for vm in appViewModel.threadViewModels.values {
-                    vm.setProvider(appViewModel.llmProvider)
+                    vm.setAgentSession(appViewModel.agentSession)
                 }
             }
         }
