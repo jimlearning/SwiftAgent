@@ -220,10 +220,9 @@ struct SwiftAgentAppEntry: App {
     /// Inject an appshot capture as a message into the active thread.
     private func injectAppshot(_ capture: AppshotCapture.AppshotData, into thread: ThreadViewModel) {
         let contextMsg = capture.contextDescription
-        let msg = ThreadMessage(
+        let msg = AgentMessage(
             role: .user,
-            content: contextMsg,
-            isStreaming: false
+            blocks: [.text(contextMsg)]
         )
         thread.messages.append(msg)
     }

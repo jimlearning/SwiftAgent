@@ -1,21 +1,14 @@
 import SwiftUI
 
-/// Renders a single message bubble.
-/// User messages: rounded bubble, right-aligned, bgElevated background, 4pt corner radius.
-/// Assistant messages: no bubble, text directly on bgContent, left-aligned.
-/// Status rows: small gray text (per §5.1).
+/// Renders a single message bubble with native AgentMessageBlock support.
+/// - User messages: rounded bubble, right-aligned
+/// - Assistant messages: text + thinking + tool_use + tool_result blocks
+/// - System messages: small gray text
 public struct MessageBubbleView: View {
-    let message: ThreadMessage
+    let message: AgentMessage
     let thoughtTimeString: String?
     let reasoningExpanded: Bool
     let onToggleReasoning: () -> Void
-
-    /// Static render cache keyed by message ID + content length.
-    /// A plain Dictionary — NOT @State — so writes don't trigger SwiftUI
-    /// "Modifying state during view update" warnings and re-render spirals.
-    /// All access is main-actor-only (body evaluation), so no lock needed.
-    private static var renderCache: [String: AttributedString] = [:]
-    private static let maxCacheEntries = 300
 
     public var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
@@ -23,14 +16,8 @@ public struct MessageBubbleView: View {
                 statusRow(thoughtTime)
             }
 
-            if message.role == .assistant, let reasoning = message.reasoningContent, !reasoning.isEmpty {
-                reasoningBlock(reasoning)
-            }
-
-            if message.role == .user {
-                userBubble
-            } else {
-                assistantContent
+            ForEach(Array(message.blocks.enumerated()), id: \.offset) { _, block in
+                blockView(for: block)
             }
         }
         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
@@ -38,10 +25,32 @@ public struct MessageBubbleView: View {
         .padding(.vertical, 4)
     }
 
+    // MARK: - Block rendering
+
+    @ViewBuilder
+    private func blockView(for block: AgentMessageBlock) -> some View {
+        switch block {
+        case .text(let text):
+            if message.role == .user {
+                userBubble(text)
+            } else {
+                assistantText(text)
+            }
+        case .thinking(let text, let isExpanded):
+            thinkingBlock(text, isExpanded: isExpanded)
+        case .toolUse(let toolUse):
+            toolUseCard(toolUse)
+        case .toolResult(let result):
+            toolResultCard(result)
+        case .systemReminder(let text):
+            systemReminder(text)
+        }
+    }
+
     // MARK: - User Bubble
 
-    private var userBubble: some View {
-        Text(message.content)
+    private func userBubble(_ text: String) -> some View {
+        Text(text)
             .font(.uiBody)
             .foregroundColor(.textPrimary)
             .padding(.horizontal, 14)
@@ -53,40 +62,144 @@ public struct MessageBubbleView: View {
             .frame(maxWidth: 320, alignment: .trailing)
     }
 
-    // MARK: - Assistant Content (markdown rendered)
+    // MARK: - Assistant Text
 
-    private var assistantContent: some View {
-        Text(renderedAssistantContent())
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
+    private func assistantText(_ text: String) -> some View {
+        Group {
+            if text.isEmpty && message.isStreaming {
+                Text(" ")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(text)
+                    .font(.uiBody)
+                    .foregroundColor(.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
-    /// Returns the cached render if content hasn't changed; otherwise re-renders.
-    /// Uses a static dictionary cache (not @State) to avoid triggering
-    /// "Modifying state during view update" warnings during body evaluation.
-    private func renderedAssistantContent() -> AttributedString {
-        if message.content.isEmpty && message.isStreaming {
-            return AttributedString(" ")
+    // MARK: - Thinking Block
+
+    private func thinkingBlock(_ content: String, isExpanded: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button(action: onToggleReasoning) {
+                HStack(spacing: 4) {
+                    Image(systemName: reasoningExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Thinking\(message.isStreaming ? "..." : "")")
+                        .font(.uiCaption)
+                }
+                .foregroundColor(.textSecondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if reasoningExpanded && !content.isEmpty {
+                Text(content)
+                    .font(.uiCaption)
+                    .foregroundColor(.textTertiary)
+                    .padding(.leading, 16)
+                    .textSelection(.enabled)
+            }
         }
-        let cacheKey = "\(message.id):\(message.content.count)"
-        if let cached = Self.renderCache[cacheKey] {
-            return cached
-        }
-        let result = Self.markdownRenderer.render(message.content)
-        if Self.renderCache.count >= Self.maxCacheEntries {
-            Self.renderCache.removeAll(keepingCapacity: true)
-        }
-        Self.renderCache[cacheKey] = result
-        return result
     }
 
-    /// Shared MarkdownRenderer — avoids re-initializing RegexSyntaxHighlighter
-    /// (which compiles language grammars) on every cache miss.
-    private static let markdownRenderer = MarkdownRenderer(
-        baseFont: .uiBody,
-        codeFont: .codeMono,
-        foregroundColor: .textPrimary
-    )
+    // MARK: - Tool Use Card
+
+    private func toolUseCard(_ toolUse: ToolUseBlock) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: toolIcon(for: toolUse.toolName))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.textSecondary)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toolUse.toolName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.textSecondary)
+                Text(toolUse.inputSummary)
+                    .font(.system(size: 10))
+                    .foregroundColor(.textTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            toolStatusBadge(toolUse.status)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.bgElevated.opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.borderSubtle, lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private func toolStatusBadge(_ status: ToolUseStatus) -> some View {
+        switch status {
+        case .pending:
+            Circle()
+                .fill(Color.textTertiary)
+                .frame(width: 6, height: 6)
+        case .executing:
+            ProgressView()
+                .scaleEffect(0.5)
+                .frame(width: 14, height: 14)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.success)
+        case .error(let msg):
+            HStack(spacing: 2) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(.danger)
+                Text(msg.truncated(to: 40))
+                    .font(.system(size: 9))
+                    .foregroundColor(.danger)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    // MARK: - Tool Result Card
+
+    private func toolResultCard(_ result: ToolResultBlock) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: result.isError ? "xmark.circle" : "arrow.turn.down.left")
+                    .font(.system(size: 10))
+                    .foregroundColor(result.isError ? .danger : .textTertiary)
+                Text(result.isError ? "Error" : "Result")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(result.isError ? .danger : .textTertiary)
+            }
+
+            Text(result.content.truncated(to: 500))
+                .font(.system(size: 10))
+                .foregroundColor(.textTertiary)
+                .lineLimit(result.isExpanded ? nil : 6)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .padding(.leading, 28)
+    }
+
+    // MARK: - System Reminder
+
+    private func systemReminder(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10))
+            .foregroundColor(.textTertiary.opacity(0.6))
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
 
     // MARK: - Status Row
 
@@ -97,30 +210,23 @@ public struct MessageBubbleView: View {
             .padding(.leading, 4)
     }
 
-    // MARK: - Reasoning Block
+    // MARK: - Tool icon mapping
 
-    private func reasoningBlock(_ content: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button(action: onToggleReasoning) {
-                HStack(spacing: 4) {
-                    Image(systemName: reasoningExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Thinking...")
-                        .font(.uiCaption)
-                }
-                .foregroundColor(.textSecondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .cellHoverHighlightTight()
-
-            if reasoningExpanded {
-                Text(content)
-                    .font(.uiCaption)
-                    .foregroundColor(.textTertiary)
-                    .padding(.leading, 16)
-                    .textSelection(.enabled)
-            }
+    private func toolIcon(for toolName: String) -> String {
+        switch toolName {
+        case "Bash", "PowerShell": return "terminal"
+        case "Read", "FileRead": return "doc.text"
+        case "Write", "FileWrite": return "doc.badge.plus"
+        case "Edit", "FileEdit": return "pencil"
+        case "Grep": return "magnifyingglass"
+        case "Glob": return "folder"
+        case "WebFetch", "WebSearch": return "globe"
+        case "Task", "TaskCreate", "TaskGet", "TaskList", "TaskStop": return "list.bullet.clipboard"
+        case "Agent": return "cpu"
+        case "Skill": return "wand.and.stars"
+        case "TodoWrite": return "checklist"
+        case "NotebookEdit": return "book"
+        default: return "wrench"
         }
     }
 }
@@ -130,15 +236,31 @@ struct MessageBubbleView_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 0) {
             MessageBubbleView(
-                message: ThreadMessage(role: .user, content: "Hello, DeepSeek!"),
+                message: AgentMessage.user("Hello, DeepSeek!"),
                 thoughtTimeString: nil,
                 reasoningExpanded: false,
                 onToggleReasoning: {}
             )
             MessageBubbleView(
-                message: ThreadMessage(role: .assistant, content: "Hello! How can I help you today?"),
+                message: AgentMessage(
+                    role: .assistant,
+                    blocks: [
+                        .thinking("Let me think about this..."),
+                        .text("Hello! How can I help you today?"),
+                        .toolUse(ToolUseBlock(
+                            toolUseID: "tool_1", toolName: "Bash",
+                            inputSummary: "ls -la", inputDetail: "",
+                            status: .completed
+                        )),
+                        .toolResult(ToolResultBlock(
+                            toolUseID: "tool_1",
+                            content: "total 48\ndrwxr-xr-x  12 user  staff   384 Jun 18 10:00 .",
+                            isError: false
+                        ))
+                    ]
+                ),
                 thoughtTimeString: "Thought for 3s",
-                reasoningExpanded: false,
+                reasoningExpanded: true,
                 onToggleReasoning: {}
             )
         }

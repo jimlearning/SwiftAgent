@@ -12,8 +12,11 @@ public final class AppViewModel: ObservableObject {
 
     // MARK: - LLM Provider
 
-    /// The LLM provider (nil if no API key configured).
-    @Published public private(set) var llmProvider: AppLLMProvider?
+    /// The unified LLM provider (nil if no API key configured).
+    @Published public private(set) var agentProvider: AppAgentProvider?
+
+    /// The agent session manager — bootstraps all Core subsystems.
+    @Published public private(set) var agentSession: AgentSessionManager?
 
     /// Whether the API key setup banner should be shown.
     @Published public var showAPIKeyBanner: Bool = false
@@ -257,7 +260,7 @@ public final class AppViewModel: ObservableObject {
             for pt in persistedThreads {
                 let vm = ThreadViewModel(
                     id: pt.id,
-                    llmProvider: llmProvider,
+                    agentSession: agentSession,
                     storageManager: storage
                 )
                 vm.update(from: pt)
@@ -320,8 +323,9 @@ public final class AppViewModel: ObservableObject {
     /// the sidebar until real activity occurs.
     @discardableResult
     public func createThread(title: String = "New Chat", projectId: String? = nil, persist: Bool = false) -> ThreadViewModel {
-        let thread = ThreadViewModel(llmProvider: llmProvider, storageManager: storage)
-        thread.setProvider(llmProvider)
+        let thread = ThreadViewModel(agentSession: agentSession, storageManager: storage)
+        thread.workingDirectory = projectId.flatMap { pid in projects.first(where: { $0.id == pid })?.path }
+            ?? FileManager.default.currentDirectoryPath
         thread.title = title
 
         // Hook the diff refresh so the Review panel updates after each
@@ -403,9 +407,16 @@ public final class AppViewModel: ObservableObject {
         }
     }
 
-    /// Select a thread and load its messages.
+    /// Select a thread, load its messages, and set the working directory.
     public func selectThread(_ thread: ThreadViewModel) {
         selectedThreadID = thread.id
+        // Set working directory from the thread's project (or default cwd)
+        if let pid = projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) })?.id,
+           let project = projects.first(where: { $0.id == pid }) {
+            thread.workingDirectory = project.path
+        } else {
+            thread.workingDirectory = FileManager.default.currentDirectoryPath
+        }
     }
 
     /// Persist thread state change immediately.
@@ -415,8 +426,7 @@ public final class AppViewModel: ObservableObject {
             if let pt = try storage.threadRepo.get(id: thread.id) {
                 var updated = pt
                 updated.state = thread.persistedState
-                updated.reuseState = thread.reuseState.rawValue
-                updated.model = thread.selectedModel.rawValue
+                updated.model = thread.selectedModel
                 try storage.threadRepo.update(updated)
             }
         } catch {
@@ -462,11 +472,7 @@ public final class AppViewModel: ObservableObject {
         pendingAttachments.append(attachment)
         // Also drop a placeholder user message so the user can see
         // the attachment represented in the conversation stream.
-        let msg = ThreadMessage(
-            role: .user,
-            content: "[File: \(url.lastPathComponent)]",
-            isStreaming: false
-        )
+        let msg = AgentMessage.user("[File: \(url.lastPathComponent)]")
         thread.messages.append(msg)
     }
 
@@ -546,34 +552,55 @@ public final class AppViewModel: ObservableObject {
 
     // MARK: - API Key
 
-    /// Check whether an API key is available and configure the provider.
+    /// Check whether an API key is available and bootstrap the agent session.
     public func checkAPIKey() {
-        if let key = DeepSeekAPIKeyResolver.resolve() {
-            let config = DeepSeekConfig(apiKey: key)
-            self.llmProvider = AppLLMProvider(config: config)
+        let provider = AppAgentProvider()
+        if provider.isConfigured {
+            self.agentProvider = provider
             self.apiKeyStatus = .configured
             self.showAPIKeyBanner = false
+            // Bootstrap agent session async
+            Task {
+                let session = AgentSessionManager(provider: provider)
+                let ok = await session.bootstrap()
+                if ok {
+                    self.agentSession = session
+                    // Update all existing thread VMs
+                    for vm in threadViewModels.values {
+                        vm.setAgentSession(session)
+                    }
+                }
+            }
         } else {
-            self.llmProvider = nil
+            self.agentProvider = nil
+            self.agentSession = nil
             self.apiKeyStatus = .missing
             self.showAPIKeyBanner = true
         }
     }
 
-    /// Save the API key to Keychain and initialize the provider.
+    /// Save the API key to Keychain and bootstrap the agent session.
     public func saveAPIKey(_ key: String) {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
         do {
             try KeychainStore.save(apiKey: key.trimmingCharacters(in: .whitespacesAndNewlines))
-            let config = DeepSeekConfig(apiKey: key.trimmingCharacters(in: .whitespacesAndNewlines))
-            self.llmProvider = AppLLMProvider(config: config)
+            let provider = AppAgentProvider(apiKey: key.trimmingCharacters(in: .whitespacesAndNewlines))
+            self.agentProvider = provider
             self.apiKeyStatus = .configured
             self.showAPIKeyBanner = false
-            // Update providers on all threads
-            for vm in threadViewModels.values {
-                vm.setProvider(self.llmProvider)
+            // Bootstrap agent session async
+            Task {
+                let session = AgentSessionManager(provider: provider)
+                let ok = await session.bootstrap()
+                if ok {
+                    self.agentSession = session
+                    // Update all existing thread VMs
+                    for vm in threadViewModels.values {
+                        vm.setAgentSession(session)
+                    }
+                }
             }
         } catch {
             checkAPIKey()

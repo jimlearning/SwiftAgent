@@ -56,7 +56,7 @@ public struct ComposerView: View {
         .frame(minHeight: 80)
         .background(Color.bgContent)
         .onChange(of: thread.state) { _, newState in
-            if newState == .idle || newState == .done {
+            if newState == .idle || newState == .done || newState.isError {
                 composer.isSending = false
             }
             if newState.isComposerDisabled {
@@ -165,7 +165,7 @@ public struct ComposerView: View {
         case "/help":
             let helpText = "Available commands: /help, /goal, /plan, /skills, /mcp, /status, /compact, /clear, /personality, /exit"
             let msg = ThreadMessage(role: .assistant, content: helpText, isStreaming: false)
-            thread.messages.append(msg)
+            thread.messages.append(msg.agentMessage)
             composer.text = ""
         case "/plan":
             thread.mode = thread.mode == "plan" ? "code" : "plan"
@@ -178,27 +178,27 @@ public struct ComposerView: View {
         case "/skills":
             let skillsText = "Skills view is available via Settings → Skills, or via the + menu → Plugins."
             let msg = ThreadMessage(role: .assistant, content: skillsText, isStreaming: false)
-            thread.messages.append(msg)
+            thread.messages.append(msg.agentMessage)
             composer.text = ""
         case "/mcp":
             let mcpText = "MCP servers are available via Settings → MCP servers, or via the + menu → Plugins."
             let msg = ThreadMessage(role: .assistant, content: mcpText, isStreaming: false)
-            thread.messages.append(msg)
+            thread.messages.append(msg.agentMessage)
             composer.text = ""
         case "/status":
-            let statusText = "Thread ID: \(thread.id.prefix(8))...\nModel: \(thread.selectedModel.displayName)\nState: \(thread.persistedState)\nMode: \(thread.mode)"
+            let statusText = "Thread ID: \(thread.id.prefix(8))...\nModel: \(thread.selectedModel)\nState: \(thread.persistedState)\nMode: \(thread.mode)"
             let msg = ThreadMessage(role: .assistant, content: statusText, isStreaming: false)
-            thread.messages.append(msg)
+            thread.messages.append(msg.agentMessage)
             composer.text = ""
         case "/clear":
             thread.messages.removeAll()
             let msg = ThreadMessage(role: .assistant, content: "Context cleared.", isStreaming: false)
-            thread.messages.append(msg)
+            thread.messages.append(msg.agentMessage)
             thread.persistState()
             composer.text = ""
         case "/compact":
             let msg = ThreadMessage(role: .assistant, content: "Compacted 0 tokens (compaction engine pending).", isStreaming: false)
-            thread.messages.append(msg)
+            thread.messages.append(msg.agentMessage)
             composer.text = ""
         case "/personality":
             composer.text = ""
@@ -306,7 +306,7 @@ public struct ComposerView: View {
                         content: "[File attached: \(url.lastPathComponent)]",
                         isStreaming: false
                     )
-                    thread.messages.append(msg)
+                    thread.messages.append(msg.agentMessage)
                 }
             }
         }
@@ -371,11 +371,12 @@ public struct ComposerView: View {
             Menu("Model") {
                 ForEach(Array(DeepSeekModel.allCases.enumerated()), id: \.offset) { _, model in
                     Button {
-                        thread.selectedModel = model
+                        composer.selectedModel = model
+                        thread.selectedModel = model.rawValue
                     } label: {
                         HStack {
                             Text(model.displayName)
-                            if thread.selectedModel == model {
+                            if composer.selectedModel == model {
                                 Spacer()
                                 Image(systemName: "checkmark")
                             }
@@ -395,7 +396,7 @@ public struct ComposerView: View {
             // Both text labels are always rendered — Reasoning is NOT
             // hidden. The chevron is always at the end of the row.
             HStack(spacing: 4) {
-                Text(thread.selectedModel.displayName)
+                Text(composer.selectedModel.displayName)
                     .foregroundColor(.textPrimary)
                 Text(composer.reasoningStrength.rawValue)
                     .foregroundColor(.textSecondary)

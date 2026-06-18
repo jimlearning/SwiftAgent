@@ -22,14 +22,14 @@ public struct MessageListView: View {
                             emptyState
                                 .id("empty-state")
                         } else {
-                            ForEach(thread.messages) { message in
+                            ForEach(Array(thread.messages)) { agentMsg in
                                 MessageBubbleView(
-                                    message: message,
-                                    thoughtTimeString: thoughtTimeFor(message),
+                                    message: agentMsg,
+                                    thoughtTimeString: thoughtTimeFor(agentMsg),
                                     reasoningExpanded: thread.reasoningExpanded,
                                     onToggleReasoning: { thread.reasoningExpanded.toggle() }
                                 )
-                                .id(message.id)
+                                .id(agentMsg.displayID)
                             }
                         }
 
@@ -48,10 +48,7 @@ public struct MessageListView: View {
                 .onChange(of: thread.messages.last?.id) { _, _ in
                     scrollToBottom(proxy: proxy, animated: true)
                 }
-                .onChange(of: thread.messages.last?.content) { _, _ in
-                    scrollToBottom(proxy: proxy, animated: false)
-                }
-                .onChange(of: thread.messages.last?.reasoningContent) { _, _ in
+                .onChange(of: thread.messages.count) { _, _ in
                     scrollToBottom(proxy: proxy, animated: false)
                 }
                 .onChange(of: thread.state) { _, newState in
@@ -79,10 +76,11 @@ public struct MessageListView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func thoughtTimeFor(_ message: ThreadMessage) -> String? {
+    private func thoughtTimeFor(_ message: AgentMessage) -> String? {
         guard message.role == .assistant,
               message.isStreaming,
-              message.content.isEmpty || appViewModel.threadViewModels[threadID]?.messages.last?.id == message.id else {
+              message.blocks.allSatisfy({ $0.textContent?.isEmpty ?? true }),
+              appViewModel.threadViewModels[threadID]?.messages.last?.id == message.id else {
             return nil
         }
         return appViewModel.threadViewModels[threadID]?.thoughtTimeString
@@ -138,7 +136,7 @@ private final class HangDetector: @unchecked Sendable {
                 switch waitResult {
                 case .success:
                     if roundTrip > hangThreshold {
-                        log.warning("[MAIN HANG] iter=\(iteration) blocked=\(String(format: "%.0f", roundTrip))ms")
+                        //log.warning("[MAIN HANG] iter=\(iteration) blocked=\(String(format: "%.0f", roundTrip))ms")
                     }
                 case .timedOut:
                     log.warning("[MAIN HANG] iter=\(iteration) SEMAPHORE TIMEOUT (2s+) — main thread hard-blocked")

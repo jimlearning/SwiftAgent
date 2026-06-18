@@ -3,30 +3,13 @@ import SwiftAgentCore
 
 // MARK: - ThreadState
 
-/// Thread execution state machine (§7.1).
-/// Phase 2 implements: idle, executing, done, failed.
+/// Thread execution state machine.
 public enum ThreadState: Equatable, Sendable {
     case idle
     case executing
     case done
-    case failed(String)  // error message
+    case failed(String)
 
-    public init?(rawValue: String) {
-        switch rawValue {
-        case "idle": self = .idle
-        case "executing": self = .executing
-        case "done": self = .done
-        case "failed": self = .failed("")
-        default:
-            if rawValue.hasPrefix("failed:") {
-                self = .failed(String(rawValue.dropFirst(7)))
-            } else {
-                self = .idle
-            }
-        }
-    }
-
-    /// Whether the composer should be disabled.
     public var isComposerDisabled: Bool {
         switch self {
         case .executing: return true
@@ -34,184 +17,108 @@ public enum ThreadState: Equatable, Sendable {
         }
     }
 
-    /// Human-readable status for display.
-    public var statusText: String? {
-        switch self {
-        case .idle: return nil
-        case .executing: return nil  // status row shows "Thought for Xs"
-        case .done: return nil
-        case .failed(let msg): return msg
-        }
-    }
-
-    /// Whether an error state is active.
     public var isError: Bool {
         if case .failed = self { return true }
         return false
     }
-}
 
-// MARK: - ThreadMessage
-
-/// A message in the thread conversation.
-public struct ThreadMessage: Identifiable, Equatable {
-    public let id: String
-    public let role: MessageRole
-    public var content: String
-    /// Reasoning content (for R1 model thinking chain).
-    public var reasoningContent: String?
-    /// Whether this message is still being streamed.
-    public var isStreaming: Bool
-    /// Token count estimate.
-    public var tokenCount: Int
-
-    public init(
-        id: String = UUID().uuidString,
-        role: MessageRole,
-        content: String = "",
-        reasoningContent: String? = nil,
-        isStreaming: Bool = false,
-        tokenCount: Int = 0
-    ) {
-        self.id = id
-        self.role = role
-        self.content = content
-        self.reasoningContent = reasoningContent
-        self.isStreaming = isStreaming
-        self.tokenCount = tokenCount
+    /// Human-readable status for display.
+    public var statusText: String? {
+        switch self {
+        case .idle: return nil
+        case .executing: return nil
+        case .done: return nil
+        case .failed(let msg): return msg
+        }
     }
-}
-
-// MARK: - ThreadReuseState
-
-/// Cross-session reuse state (§7.2).
-public enum ThreadReuseState: String, Sendable {
-    case new
-    case active
-    case idle
-    case resumed
-    case paused
 }
 
 // MARK: - ThreadViewModel
 
 /// View model for a single conversation thread.
-/// Manages message list, streaming state, and interaction with the LLM provider.
+/// Manages the agent loop via `AgentSessionManager`, message list,
+/// streaming state, and persistence.
 @MainActor
 public final class ThreadViewModel: ObservableObject, Identifiable {
-    /// The thread's unique identifier.
     public let id: String
 
-    /// Display title.
+    // MARK: - Published state
+
     @Published public var title: String = "Untitled"
-
-    /// All messages in the thread.
-    @Published public var messages: [ThreadMessage] = []
-
-    /// Current thread state.
+    @Published public var messages: [AgentMessage] = []
     @Published public var state: ThreadState = .idle
-
-    /// Selected model for this thread.
-    @Published public var selectedModel: DeepSeekModel = .v4Pro
-
-    /// Reasoning strength (for display, maps to model choice for DeepSeek).
-    @Published public var reasoningStrength: ReasoningStrength = .high
-
-    /// Reuse state (§7.2).
-    @Published public var reuseState: ThreadReuseState = .new
-
-    /// Thread mode (code, plan, goal, side).
+    @Published public var selectedModel: String = "claude-sonnet-4-6"
     @Published public var mode: String = "code"
-
-    /// Sandbox mode.
     @Published public var sandboxMode: String = "workspace-write"
-
-    /// Execution environment.
     @Published public var executionEnv: String = "local"
-
-    /// When this thread was last updated.
     @Published public var updatedAt: Date = Date()
-
-    /// The time when execution started (for "Thought for Xs" display).
     @Published public var executionStartTime: Date?
-
-    /// Elapsed thought time string.
     @Published public var thoughtTimeString: String?
-
-    /// Whether reasoning content is expanded (for R1).
+    @Published public var hasUnread: Bool = false
+    /// Whether reasoning content is expanded (for R1/DeepSeek thinking chains).
     @Published public var reasoningExpanded: Bool = false
 
-    /// Reference to the app-level LLM provider.
-    private weak var llmProvider: AppLLMProvider?
+    // MARK: - Dependencies
 
-    /// Reference to the storage manager for auto-persist.
+    /// The agent session manager (shared across threads).
+    private weak var agentSession: AgentSessionManager?
+
+    /// Storage manager for persistence.
     private weak var storageManager: StorageManager?
 
-    /// Timer for updating "Thought for Xs".
+    /// Working directory for the agent (set by AppViewModel from project path).
+    public var workingDirectory: String = FileManager.default.currentDirectoryPath
+
+    // MARK: - Internal
+
+    private var streamingTask: Task<Void, Never>?
     private var thoughtTimer: Timer?
 
-    /// The current streaming task (allows cancellation).
-    private var streamingTask: Task<Void, Never>?
-
-    /// Optional callback fired when a stream finishes (whether
-    /// successfully or with an error). Wired by AppViewModel to
-    /// refresh the diff cache so the Review panel shows real numbers
-    /// instead of `+0 -0`.
+    /// Optional callbacks
     public var onStreamComplete: (() -> Void)?
-
-    /// Optional callback fired on the user's first `send`. Wired by
-    /// AppViewModel to promote the thread from a "pending" selection
-    /// (no sidebar entry, no DB row) into a real one the moment the
-    /// user actually types something. Without this, clicking
-    /// "New chat" would create a sidebar entry immediately.
     public var onFirstUserMessage: (() -> Void)?
 
-    /// Whether this thread has unread messages (purely UI concept, not persisted).
-    @Published public var hasUnread: Bool = false
+    // MARK: - Init
 
     public init(
         id: String = UUID().uuidString,
-        llmProvider: AppLLMProvider? = nil,
+        agentSession: AgentSessionManager? = nil,
         storageManager: StorageManager? = nil
     ) {
         self.id = id
-        self.llmProvider = llmProvider
+        self.agentSession = agentSession
         self.storageManager = storageManager
     }
 
-    /// Set the LLM provider reference.
-    public func setProvider(_ provider: AppLLMProvider?) {
-        self.llmProvider = provider
+    public func setAgentSession(_ session: AgentSessionManager?) {
+        self.agentSession = session
     }
 
     /// Update from a persisted thread record.
     public func update(from thread: PersistedThread) {
         self.title = thread.title
-        self.state = ThreadState(rawValue: thread.state) ?? .idle
-        self.reuseState = ThreadReuseState(rawValue: thread.reuseState) ?? .new
         self.mode = thread.mode
         self.sandboxMode = thread.sandboxMode
         self.executionEnv = thread.executionEnv
         self.updatedAt = thread.updatedAt
-        if let model = DeepSeekModel(rawValue: thread.model) {
-            self.selectedModel = model
-        }
+        self.selectedModel = thread.model
     }
 
     /// Load messages from persisted records.
     public func loadMessages(from persisted: [PersistedMessage]) {
         self.messages = persisted.compactMap { pm in
-            guard let role = MessageRole(rawValue: pm.role) else { return nil }
-            return ThreadMessage(
+            guard let role = AgentMessageRole(rawValue: pm.role) else { return nil }
+            return AgentMessage(
                 id: pm.id,
                 role: role,
-                content: pm.content,
-                isStreaming: false
+                blocks: [.text(pm.content)],
+                timestamp: pm.createdAt
             )
         }
     }
 
-    /// The persisted state string.
+    // MARK: - Persistence helpers
+
     public var persistedState: String {
         switch state {
         case .idle: return "idle"
@@ -221,7 +128,6 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         }
     }
 
-    /// Persist current state to the database.
     public func persistState() {
         guard let storage = storageManager, storage.isReady else { return }
         do {
@@ -231,7 +137,6 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         }
     }
 
-    /// Persist a message to the database.
     public func persistMessage(_ message: PersistedMessage) {
         guard let storage = storageManager, storage.isReady else { return }
         do {
@@ -241,11 +146,16 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         }
     }
 
-    // MARK: - Send
+    // MARK: - Send (Agent Loop)
 
-    /// Send a user message and stream the assistant response.
+    /// Send a user message and run the full agent loop.
     public func send(userText: String) {
-        guard let provider = llmProvider, state != .executing else {
+        let debugger = AgentDebugger.shared
+        debugger.logUI("Send: \"\(userText.truncated(to: 50))\"", metadata: ["threadId": id])
+
+        guard let session = agentSession, session.isBootstrapped else {
+            state = .failed("Agent session not ready")
+            debugger.logError("Send failed: agent session not ready", category: .lifecycle)
             return
         }
 
@@ -257,35 +167,23 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
 
         // Add user message
         let userMsgID = UUID().uuidString
-        let userMessage = ThreadMessage(
-            id: userMsgID,
-            role: .user,
-            content: trimmed,
-            isStreaming: false
-        )
+        let userMessage = AgentMessage.user(trimmed, id: userMsgID)
         messages.append(userMessage)
 
-        // Auto-persist user message
-        let pm = PersistedMessage(
+        // Persist user message
+        persistMessage(PersistedMessage(
             id: userMsgID,
             threadId: id,
             role: "user",
             content: trimmed
-        )
-        persistMessage(pm)
+        ))
 
-        // Promote a pending thread (created via the "New chat" button)
-        // into a real one the moment the user types something.
+        // Promote pending thread
         onFirstUserMessage?()
 
         // Create assistant placeholder
         let assistantID = UUID().uuidString
-        let assistantMessage = ThreadMessage(
-            id: assistantID,
-            role: .assistant,
-            content: "",
-            isStreaming: true
-        )
+        let assistantMessage = AgentMessage.assistantStreaming(id: assistantID)
         messages.append(assistantMessage)
 
         // Update state
@@ -294,46 +192,38 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         startThoughtTimer()
         persistState()
 
-        // Auto-set title from first message if still untitled
+        // Auto-title from first message
         if title == "Untitled" || title == "New Chat" {
             let snippet = String(trimmed.prefix(60))
             title = snippet
             _ = try? storageManager?.threadRepo.updateTitle(id: id, title: snippet)
         }
 
-        // Build Message array for the API
-        let apiMessages = buildAPIMessages()
+        // Build conversation from current messages
+        let conversation = buildConversation()
 
-        // Start streaming
+        // Find project working directory
+        let workingDir = workingDirectory
+
+        // Start agent loop
         streamingTask = Task { [weak self] in
             guard let self else { return }
 
             do {
-                let stream = provider.streamWithReasoning(
-                    messages: apiMessages,
-                    model: self.selectedModel
+                let result = try await session.run(
+                    userInput: trimmed,
+                    conversation: conversation,
+                    workingDirectory: workingDir,
+                    onEvent: { [weak self] event in
+                        Task { @MainActor [weak self] in
+                            self?.handleStreamEvent(event, assistantID: assistantID)
+                        }
+                    }
                 )
 
-                for try await event in stream {
-                    if Task.isCancelled { break }
-
-                    switch event {
-                    case .token(let token):
-                        self.appendToken(to: assistantID, token: token)
-                    case .reasoningToken(let token):
-                        self.appendReasoningToken(to: assistantID, token: token)
-                    case .done:
-                        self.finishStream(assistantID: assistantID)
-                    case .error(let error):
-                        self.handleStreamError(assistantID: assistantID, error: error)
-                    }
-                }
-
-                // Ensure completion if stream ends without .done
+                // Agent loop completed — finalize
                 await MainActor.run {
-                    if case .executing = self.state {
-                        self.finishStream(assistantID: assistantID)
-                    }
+                    self.handleRunResult(result, assistantID: assistantID)
                 }
             } catch {
                 if !Task.isCancelled {
@@ -345,76 +235,118 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         }
     }
 
-    /// Cancel the current streaming response.
+    /// Cancel the current agent run.
     public func cancel() {
         streamingTask?.cancel()
         streamingTask = nil
+        agentSession?.cancel()
         state = .idle
         stopThoughtTimer()
 
-        // Mark the last assistant message as done
+        // Mark last assistant message as done
         if let lastIndex = messages.lastIndex(where: { $0.role == .assistant && $0.isStreaming }) {
             messages[lastIndex].isStreaming = false
         }
     }
 
-    // MARK: - Private Helpers
+    // MARK: - Stream Event Handling
 
-    private func appendToken(to id: String, token: String) {
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        messages[index].content += token
-        messages[index].tokenCount += 1
-    }
-
-    private func appendReasoningToken(to id: String, token: String) {
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        if messages[index].reasoningContent == nil {
-            messages[index].reasoningContent = ""
-        }
-        messages[index].reasoningContent? += token
-    }
-
-    private func finishStream(assistantID: String) {
+    private func handleStreamEvent(_ event: StreamingQueryEvent, assistantID: String) {
+        let debugger = AgentDebugger.shared
         guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
-        messages[index].isStreaming = false
-        state = .done
-        stopThoughtTimer()
-        streamingTask = nil
 
-        // Persist assistant message
-        let content = messages[index].content
+        switch event {
+        case .textDelta(let text):
+            messages[index].appendText(text)
+
+        case .thinkingDelta(let text):
+            messages[index].appendThinking(text)
+
+        case .toolStarted(let toolUseID, let toolName, let inputSummary):
+            debugger.logTool("Tool started: \(toolName)", metadata: ["id": toolUseID, "summary": inputSummary ?? ""])
+            messages[index].addToolUse(ToolUseBlock(
+                toolUseID: toolUseID,
+                toolName: toolName,
+                inputSummary: inputSummary ?? toolName,
+                inputDetail: "",
+                status: .executing
+            ))
+
+        case .toolCompleted(let toolUseID, _, let content, let isError):
+            messages[index].updateToolUse(
+                toolUseID: toolUseID,
+                status: isError ? .error(content) : .completed
+            )
+            messages[index].addToolResult(ToolResultBlock(
+                toolUseID: toolUseID,
+                content: content,
+                isError: isError
+            ))
+
+        case .turnComplete, .assistantTextStreaming, .modelStreaming, .toolProgress:
+            break
+        }
+    }
+
+
+    private func handleRunResult(_ result: RunResult, assistantID: String) {
+        let debugger = AgentDebugger.shared
+        debugger.logLLM("Turn complete", metadata: [
+            "turns": "\(result.turns.count)",
+            "toolCalls": "\(result.totalToolCalls)",
+            "tokensIn": "\(result.tokenUsage.inputTokens)",
+            "tokensOut": "\(result.tokenUsage.outputTokens)"
+        ])
+        guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
+
+        // Rebuild the message list from the agent's turns to preserve
+        // tool_use blocks, tool results, and thinking in correct order.
+        // Remove the old streaming placeholder and user message, then
+        // append the canonical turn history.
+        let turnMessages = AgentMessage.fromTurns(result.turns, lastAssistantID: assistantID)
+        if !turnMessages.isEmpty {
+            // Find the user message that started this turn (last user message)
+            if let userIdx = messages.lastIndex(where: { $0.role == .user && $0.id != assistantID }) {
+                messages.removeSubrange(userIdx...)
+            } else {
+                // Fallback: just remove the assistant placeholder
+                messages.remove(at: index)
+            }
+            messages.append(contentsOf: turnMessages)
+        } else {
+            // No turns — just finalize the placeholder
+            messages[index].finalize(tokenUsage: result.tokenUsage)
+        }
+
+        // Persist full text for sidebar preview
+        let textContent = result.text
         let pm = PersistedMessage(
             id: assistantID,
             threadId: id,
             role: "assistant",
-            content: content
+            content: textContent
         )
         persistMessage(pm)
+
+        state = .done
+        stopThoughtTimer()
+        streamingTask = nil
         persistState()
 
-        // Refresh the diff summary on the main actor so the Review
-        // panel sees up-to-date file edits.
         onStreamComplete?()
     }
 
     private func handleStreamError(assistantID: String, error: Error) {
         guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
-        messages[index].isStreaming = false
 
-        let errorMessage: String
-        if let dsError = error as? DeepSeekError {
-            errorMessage = dsError.localizedDescription
-        } else {
-            errorMessage = error.localizedDescription
-        }
-
+        let errorMessage = error.localizedDescription
         let finalMessage = errorMessage.isEmpty ? "An error occurred" : errorMessage
-        messages[index].content = finalMessage
+
+        messages[index].markFailed(finalMessage)
         state = .failed(finalMessage)
         stopThoughtTimer()
         streamingTask = nil
 
-        // Persist error
         let pm = PersistedMessage(
             id: assistantID,
             threadId: id,
@@ -425,20 +357,54 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         persistState()
     }
 
-    private func buildAPIMessages() -> [Message] {
-        messages.compactMap { threadMsg in
-            guard !threadMsg.isStreaming || threadMsg.role != .assistant else {
-                // Don't include incomplete assistant messages
-                return nil
+    // MARK: - Conversation Building
+
+    /// Build a `Conversation` from the current message list.
+    private func buildConversation() -> Conversation {
+        let coreMessages: [Message] = messages.compactMap { agentMsg in
+            let contentBlocks: [ContentBlock] = agentMsg.blocks.compactMap { block in
+                switch block {
+                case .text(let text):
+                    return .text(text)
+                case .thinking(let text, _):
+                    return .thinking(text)
+                case .toolUse(let toolUse):
+                    // Round-trip back to ContentBlock.toolUse using stored rawInput
+                    if let input = toolUse.rawInput {
+                        return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)
+                    }
+                    // No rawInput — reconstruct from detail (best-effort fallback)
+                    return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: .object([:]))
+                case .toolResult(let result):
+                    return .toolResult(
+                        toolUseID: result.toolUseID,
+                        content: .string(result.content),
+                        isError: result.isError
+                    )
+                case .systemReminder(let text):
+                    return .text(text)
+                }
             }
-            guard !threadMsg.content.isEmpty || threadMsg.role == .user else {
-                return nil
+
+            guard !contentBlocks.isEmpty else { return nil }
+
+            let role: MessageRole
+            switch agentMsg.role {
+            case .user: role = .user
+            case .assistant: role = .assistant
+            case .system: role = .user
             }
+
             return Message(
-                type: threadMsg.role,
-                content: [.text(threadMsg.content)]
+                uuid: agentMsg.id,
+                type: role,
+                content: contentBlocks,
+                timestamp: agentMsg.timestamp,
+                usage: agentMsg.tokenUsage
             )
         }
+
+        return Conversation(id: id, flatMessages: coreMessages)
     }
 
     // MARK: - Thought Timer
@@ -464,21 +430,11 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         thoughtTimeString = "Thought for \(elapsed)s"
     }
 
-    /// Clean up resources. Call before the view model is deallocated.
+    /// Clean up resources.
     public func cleanup() {
         thoughtTimer?.invalidate()
         thoughtTimer = nil
         streamingTask?.cancel()
         streamingTask = nil
     }
-}
-
-// MARK: - ReasoningStrength
-
-/// Reasoning strength for the model picker menu (per §5.7, §11.5).
-public enum ReasoningStrength: String, CaseIterable, Sendable {
-    case low = "Low"
-    case medium = "Medium"
-    case high = "High"
-    case extraHigh = "Extra High"
 }
