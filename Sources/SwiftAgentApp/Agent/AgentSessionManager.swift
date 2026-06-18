@@ -97,7 +97,7 @@ public final class AgentSessionManager: ObservableObject {
             return false
         }
 
-        let cwd = workingDirectory ?? FileManager.default.currentDirectoryPath
+        let cwd = workingDirectory ?? NSHomeDirectory()
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 
         // ── 1. Register builtin tools ──
@@ -210,7 +210,7 @@ public final class AgentSessionManager: ObservableObject {
 
         let toolDefs = await toolRegistry.toolDefinitions()
         let debugger = AgentDebugger.shared
-        let wd = workingDirectory ?? FileManager.default.currentDirectoryPath
+        let wd = workingDirectory ?? NSHomeDirectory()
         debugger.logLLM("Agent run starting", metadata: [
             "model": provider.currentModel,
             "tools": "\(toolDefs.count)",
