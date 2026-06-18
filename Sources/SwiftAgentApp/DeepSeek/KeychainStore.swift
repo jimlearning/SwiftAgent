@@ -23,14 +23,14 @@ public enum KeychainStore {
 
         // Re-save with afterFirstUnlock to migrate old items that were created
         // with restrictive ACL. After one approval, prompts stop permanently.
-        let migratedKey = "deepseek-api-key-migrated"
-        if Keychain(service: service)[migratedKey] != "1" {
+        // Migration flag lives in UserDefaults — reading it from Keychain would
+        // trigger a second SecItemCopyMatching prompt on untrusted dev builds.
+        let migrationFlag = "com.swiftagent.api.keychain-migrated"
+        if !UserDefaults.standard.bool(forKey: migrationFlag) {
             try? Keychain(service: service)
                 .accessibility(.afterFirstUnlock)
                 .set(value, key: key)
-            try? Keychain(service: service)
-                .accessibility(.afterFirstUnlock)
-                .set("1", key: migratedKey)
+            UserDefaults.standard.set(true, forKey: migrationFlag)
         }
 
         return value
