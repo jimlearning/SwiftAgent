@@ -325,7 +325,7 @@ public final class AppViewModel: ObservableObject {
     public func createThread(title: String = "New Chat", projectId: String? = nil, persist: Bool = false) -> ThreadViewModel {
         let thread = ThreadViewModel(agentSession: agentSession, storageManager: storage)
         thread.workingDirectory = projectId.flatMap { pid in projects.first(where: { $0.id == pid })?.path }
-            ?? FileManager.default.currentDirectoryPath
+            ?? NSHomeDirectory()
         thread.title = title
 
         // Hook the diff refresh so the Review panel updates after each
