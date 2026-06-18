@@ -272,13 +272,17 @@ public final class AppViewModel: ObservableObject {
                 vmMap[pt.id] = vm
 
                 if pt.projectId == nil {
+                    // Global thread — default to home directory
+                    vm.workingDirectory = NSHomeDirectory()
                     globalList.append(vm)
                 } else {
-                    // Attach to its project
+                    // Attach to its project — inherit project path as working dir
                     if let project = projects.first(where: { $0.id == pt.projectId }) {
+                        vm.workingDirectory = project.path
                         project.threads.append(vm)
                     } else {
                         // Orphaned thread — put in global
+                        vm.workingDirectory = NSHomeDirectory()
                         globalList.append(vm)
                     }
                 }
