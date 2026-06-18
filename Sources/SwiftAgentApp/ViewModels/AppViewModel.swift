@@ -411,16 +411,11 @@ public final class AppViewModel: ObservableObject {
         }
     }
 
-    /// Select a thread, load its messages, and set the working directory.
+    /// Select a thread and load its messages.
     public func selectThread(_ thread: ThreadViewModel) {
         selectedThreadID = thread.id
-        // Set working directory from the thread's project (or default cwd)
-        if let pid = projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) })?.id,
-           let project = projects.first(where: { $0.id == pid }) {
-            thread.workingDirectory = project.path
-        } else {
-            thread.workingDirectory = FileManager.default.currentDirectoryPath
-        }
+        // workingDirectory is already set by loadAllData() / createThread().
+        // Do NOT override it here — the previous value is correct.
     }
 
     /// Persist thread state change immediately.
