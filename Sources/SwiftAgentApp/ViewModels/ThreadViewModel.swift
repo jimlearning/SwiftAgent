@@ -67,7 +67,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     private weak var storageManager: StorageManager?
 
     /// Working directory for the agent (set by AppViewModel from project path).
-    public var workingDirectory: String = FileManager.default.currentDirectoryPath
+    public var workingDirectory: String = NSHomeDirectory()
 
     // MARK: - Internal
 
