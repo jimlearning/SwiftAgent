@@ -101,8 +101,10 @@ public final class AgentDebugger: ObservableObject {
         // API key
         if let provider = appViewModel?.agentProvider {
             logLifecycle("API Key: configured (model: \(provider.currentModel), baseURL: \(provider.baseURL))")
-        } else {
+        } else if appViewModel != nil {
             logError("API Key: NOT CONFIGURED", category: .lifecycle)
+        } else {
+            logLifecycle("API Key: unknown (appViewModel not available during bootstrap)")
         }
 
         // Agent session

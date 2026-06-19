@@ -361,8 +361,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     private func handleStreamError(assistantID: String, error: Error) {
         guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
 
-        let errorMessage = error.localizedDescription
-        let finalMessage = errorMessage.isEmpty ? "An error occurred" : errorMessage
+        let finalMessage = userFriendlyMessage(for: error)
 
         messages[index].markFailed(finalMessage)
         state = .failed(finalMessage)
@@ -377,6 +376,55 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         )
         persistMessage(pm)
         persistState()
+    }
+
+    private func userFriendlyMessage(for error: Error) -> String {
+        // Map URLError codes to actionable messages
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorCannotConnectToHost:
+                return "Cannot connect to DeepSeek API. Check your network connection or VPN."
+            case NSURLErrorTimedOut:
+                return "Request timed out. The server may be busy — try again in a moment."
+            case NSURLErrorNotConnectedToInternet:
+                return "No internet connection. Check your network and try again."
+            case NSURLErrorNetworkConnectionLost:
+                return "Connection lost during request. Check your network stability."
+            case NSURLErrorDNSLookupFailed:
+                return "Cannot resolve server address. Check DNS or try a different network."
+            case NSURLErrorSecureConnectionFailed:
+                return "SSL connection failed. Check your system time and certificate settings."
+            case NSURLErrorCannotFindHost:
+                return "Server not found. Check the API endpoint in Settings."
+            default:
+                break
+            }
+        }
+
+        // Map LLMError to user-friendly messages
+        if let llmError = error as? LLMError {
+            switch llmError {
+            case .unauthorized:
+                return "API key invalid. Update it in Settings → General."
+            case .rateLimited(let retryAfter):
+                if let sec = retryAfter { return "Rate limited. Retrying in \(sec)s." }
+                return "Too many requests. Please wait before retrying."
+            case .overloaded:
+                return "Server is overloaded. Try again in a few seconds."
+            case .httpError(let status, _),
+                 .nonStreamingError(let status, _):
+                return "Server returned error \(status). Try again later."
+            case .parseError:
+                return "Failed to parse server response. Try again."
+            case .noData:
+                return "Server returned no data. Try again."
+            }
+        }
+
+        // Fallback: raw localized description
+        let desc = error.localizedDescription
+        return desc.isEmpty ? "An error occurred" : desc
     }
 
     // MARK: - Conversation Building
