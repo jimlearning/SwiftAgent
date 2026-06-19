@@ -118,7 +118,9 @@ struct SwiftAgentAppEntry: App {
             // Thread management
             CommandGroup(before: .newItem) {
                 Button("New Chat") {
-                    _ = appViewModel.createThread()
+                    // Create under the selected thread's project, if any
+                    let pid = appViewModel.selectedThread?.projectId
+                    _ = appViewModel.createThread(projectId: pid)
                 }
                 .keyboardShortcut("n", modifiers: .command)
 

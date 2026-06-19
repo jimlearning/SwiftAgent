@@ -97,9 +97,8 @@ public enum DiffService {
     /// the currently-selected thread's project. Call after the user
     /// sends a message and the agent has had a chance to modify files.
     public static func refresh(for app: AppViewModel) {
-        let projectPath = app.selectedThread.flatMap { thread in
-            app.projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) })?.path
-        } ?? FileManager.default.currentDirectoryPath
+        let projectPath = app.selectedThread?.workingDirectory
+            ?? NSHomeDirectory()
 
         let summary = compute(projectPath: projectPath)
         // Convert to EditSummary shape so the rest of the app keeps

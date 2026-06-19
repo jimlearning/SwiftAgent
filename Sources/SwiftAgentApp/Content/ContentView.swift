@@ -178,7 +178,7 @@ public struct ContentView: View {
                     }
                     Button {
                         // Copy current branch to clipboard (git symbolic-ref).
-                        if let branch = try? runGitSymbolicRef() {
+                        if let branch = try? runGitSymbolicRef(cwd: thread.workingDirectory) {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(branch, forType: .string)
                         }
@@ -244,11 +244,11 @@ public struct ContentView: View {
         .padding(.horizontal, 16)
     }
 
-    private func runGitSymbolicRef() throws -> String? {
+    private func runGitSymbolicRef(cwd: String) throws -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["git", "symbolic-ref", "--short", "HEAD"]
-        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()

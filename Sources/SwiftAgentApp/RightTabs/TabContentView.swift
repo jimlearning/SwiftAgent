@@ -58,8 +58,15 @@ struct TabContentView: View {
 
     private var currentProjectPath: String? {
         guard let thread = appViewModel.selectedThread else { return nil }
-        return appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) })?.path
-            ?? FileManager.default.currentDirectoryPath
+        // Use projectId lookup (works for pending threads) instead of
+        // searching projects[].threads (only works for promoted threads).
+        if let pid = thread.projectId,
+           let project = appViewModel.projects.first(where: { $0.id == pid }) {
+            return project.path
+        }
+        // Fall back to the thread's own computed workingDirectory
+        let wd = thread.workingDirectory
+        return wd != NSHomeDirectory() ? wd : nil
     }
 
     private var initialBrowserURL: URL {

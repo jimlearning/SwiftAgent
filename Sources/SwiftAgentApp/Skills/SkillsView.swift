@@ -4,6 +4,7 @@ import SwiftAgentCore
 /// The Skills library view showing all loaded skills.
 /// Per §10.1: loads from user/project/system scopes, shows as a library (not marketplace).
 public struct SkillsView: View {
+    @EnvironmentObject var appViewModel: AppViewModel
     @State private var skills: [SkillEntry] = []
     @State private var selectedSkill: SkillEntry?
     @State private var showCreator: Bool = false
@@ -168,7 +169,8 @@ public struct SkillsView: View {
 
     private func loadSkills() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let cwd = FileManager.default.currentDirectoryPath
+        let cwd = appViewModel.selectedThread?.workingDirectory
+            ?? NSHomeDirectory()
 
         let userDir = "\(home)/.swiftagent/skills"
         let projectDir = "\(cwd)/.swiftagent/skills"

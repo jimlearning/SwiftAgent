@@ -25,7 +25,7 @@ public struct TerminalPanelView: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.drawsBackground = true
 
-        let cwd = FileManager.default.currentDirectoryPath
+        let cwd = NSHomeDirectory()
 
         // Process setup
         let process = Process()
