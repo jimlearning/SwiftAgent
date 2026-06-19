@@ -91,13 +91,13 @@ public final class AgentSessionManager: ObservableObject {
     @discardableResult
     public func bootstrap(workingDirectory: String? = nil) async -> Bool {
         let debugger = AgentDebugger.shared
-        debugger.logLifecycle("Bootstrap starting...", metadata: ["cwd": workingDirectory ?? FileManager.default.currentDirectoryPath])
+        let cwd = workingDirectory ?? NSHomeDirectory()
+        print("[AgentSessionManager] bootstrap() workingDirectory param=\(workingDirectory ?? "nil") → resolved cwd=\(cwd)")
+        debugger.logLifecycle("Bootstrap starting...", metadata: ["cwd": cwd, "param": workingDirectory ?? "nil"])
         guard let client = provider.getClient() else {
             bootstrapError = "LLM client not configured — no API key"
             return false
         }
-
-        let cwd = workingDirectory ?? NSHomeDirectory()
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 
         // ── 1. Register builtin tools ──
@@ -211,6 +211,7 @@ public final class AgentSessionManager: ObservableObject {
         let toolDefs = await toolRegistry.toolDefinitions()
         let debugger = AgentDebugger.shared
         let wd = workingDirectory ?? NSHomeDirectory()
+        print("[AgentSessionManager] runAgent() workingDirectory param=\(workingDirectory ?? "nil") → resolved wd=\(wd)")
         debugger.logLLM("Agent run starting", metadata: [
             "model": provider.currentModel,
             "tools": "\(toolDefs.count)",

@@ -75,7 +75,7 @@ public struct QueryEngine: Sendable {
         let model = await state.settings.model.modelID
         let maxTokens = await state.settings.maxTokens
         let toolNames = tools?.map(\.name) ?? []
-        let systemPrompt = promptBuilder.build(for: conversation, toolNames: Set(toolNames), model: model)
+        let systemPrompt = promptBuilder.build(for: conversation, toolNames: Set(toolNames), model: model, workingDirectory: workingDirectory)
 
         // Build initial messages
         var messages = conversation.messages

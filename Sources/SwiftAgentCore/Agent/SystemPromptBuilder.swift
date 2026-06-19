@@ -46,8 +46,11 @@ public struct SystemPromptBuilder: Sendable {
         toolNames: Set<String> = [],
         model: String? = nil,
         additionalWorkingDirectories: [String]? = nil,
-        language: String? = nil
+        language: String? = nil,
+        workingDirectory: String? = nil
     ) -> String {
+        let wd = workingDirectory ?? self.workingDirectory
+        print("[SystemPromptBuilder] build() workingDirectory=\(wd) (param=\(workingDirectory ?? "nil") stored=\(self.workingDirectory))")
         var parts: [String] = []
 
         // === Static prefix (cacheable) ===
@@ -70,7 +73,7 @@ public struct SystemPromptBuilder: Sendable {
         parts.append(systemRemindersSection())
 
         // CLAUDE.md instructions (hierarchical, with @include resolution)
-        if let claudeMdSection = loadClaudeMdSection() {
+        if let claudeMdSection = loadClaudeMdSection(workingDirectory: wd) {
             parts.append(claudeMdSection)
         }
 
@@ -90,7 +93,7 @@ public struct SystemPromptBuilder: Sendable {
         }
 
         // Memory files (MEMORY.md)
-        if let memorySection = loadMemorySection() {
+        if let memorySection = loadMemorySection(workingDirectory: wd) {
             parts.append(memorySection)
         }
 
@@ -98,7 +101,8 @@ public struct SystemPromptBuilder: Sendable {
         parts.append(environmentSection(
             model: model,
             additionalWorkingDirectories: additionalWorkingDirectories,
-            inject: inject
+            inject: inject,
+            workingDirectory: wd
         ))
 
         // MCP server instructions are now delivered as <system-reminder>
@@ -377,7 +381,7 @@ public struct SystemPromptBuilder: Sendable {
 
     // MARK: - Dynamic Section: CLAUDE.md Loading
 
-    private func loadClaudeMdSection() -> String? {
+    private func loadClaudeMdSection(workingDirectory: String) -> String? {
         guard let loader = claudeMdLoader else { return nil }
         let files = loader.loadAll(workingDirectory: workingDirectory)
         guard !files.isEmpty else { return nil }
@@ -393,7 +397,7 @@ public struct SystemPromptBuilder: Sendable {
 
     // MARK: - Dynamic Section: Memory Loading (matches CC loadMemoryPrompt)
 
-    private func loadMemorySection() -> String? {
+    private func loadMemorySection(workingDirectory: String) -> String? {
         let store = MemoryStore(projectDir: workingDirectory)
         return store.buildMemoryPromptSection()
     }
@@ -403,9 +407,11 @@ public struct SystemPromptBuilder: Sendable {
     private func environmentSection(
         model: String?,
         additionalWorkingDirectories: [String]?,
-        inject: [String: String]
+        inject: [String: String],
+        workingDirectory: String
     ) -> String {
         let cwd = workingDirectory
+        print("[SystemPromptBuilder] environmentSection() Primary working directory: \(cwd)")
         let isGit = isGitRepo(workingDirectory: cwd)
         let unameSR = unameSystemRelease()
         let shell = inject["shell"] ?? ProcessInfo.processInfo.environment["SHELL"] ?? "unknown"
