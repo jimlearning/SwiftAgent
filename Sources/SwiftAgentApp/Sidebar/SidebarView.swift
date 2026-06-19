@@ -62,8 +62,8 @@ struct SidebarView: View {
                 forName: .swiftAgentFocusSearch,
                 object: nil,
                 queue: .main
-            ) { [self] _ in
-                isSearchFocused = true
+            ) { _ in
+                DispatchQueue.main.async { [self] in isSearchFocused = true }
             }
         }
         .onDisappear {
@@ -79,7 +79,8 @@ struct SidebarView: View {
     private var topEntries: some View {
         VStack(alignment: .leading, spacing: 1) {
             topEntry(icon: "square.and.pencil", title: "New chat", shortcut: "⌘N") {
-                _ = appViewModel.createThread()
+                let pid = appViewModel.selectedThread?.projectId
+                _ = appViewModel.createThread(projectId: pid)
             }
             topEntry(icon: "magnifyingglass", title: "Search", shortcut: "⌘F") {
                 isSearchFocused = true
@@ -375,12 +376,15 @@ struct SidebarView: View {
 
 struct ProjectSectionView: View {
     @ObservedObject var project: ProjectViewModel
+    @EnvironmentObject var appViewModel: AppViewModel
 
     @Binding var renameTarget: RenameTarget?
     let onSelectThread: (ThreadViewModel) -> Void
     let onNewThread: () -> Void
     let onDeleteProject: () -> Void
     let onDeleteThread: (String) -> Void
+
+    @State private var isHovering: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -396,7 +400,7 @@ struct ProjectSectionView: View {
                 ForEach(project.threads) { thread in
                     ThreadRowView(
                         thread: thread,
-                        isSelected: false,
+                        isSelected: appViewModel.selectedThreadID == thread.id,
                         renameTarget: $renameTarget,
                         onSelect: { onSelectThread(thread) },
                         onDelete: { onDeleteThread(thread.id) }
@@ -407,27 +411,46 @@ struct ProjectSectionView: View {
     }
 
     private var projectRow: some View {
-        Button {
-            project.isExpanded.toggle()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: project.isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 14)
-                    .foregroundColor(.textTertiary)
-                Image(systemName: "folder")
-                    .font(.system(size: 12))
-                    .foregroundColor(.textSecondary)
-                Text(project.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.textPrimary)
-                Spacer()
+        HStack(spacing: 4) {
+            Image(systemName: project.isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .frame(width: 14)
+                .foregroundColor(.textTertiary)
+            Image(systemName: "folder")
+                .font(.system(size: 12))
+                .foregroundColor(.textSecondary)
+            Text(project.name)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.textPrimary)
+            Spacer()
+            // New Chat button — visible only on hover
+            if isHovering {
+                Button {
+                    onNewThread()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverHighlight(cornerRadius: 4, padding: EdgeInsets(top: 3, leading: 3, bottom: 3, trailing: 3))
+                .help("New chat in \(project.name)")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .cellHoverHighlight()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovering ? Color.white.opacity(0.08) : Color.clear)
+        )
+        .onTapGesture { project.isExpanded.toggle() }
         .contextMenu {
             Button("Rename") { renameTarget = .project(project.id) }
             Button("New Thread") { onNewThread() }

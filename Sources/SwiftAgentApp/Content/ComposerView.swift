@@ -240,7 +240,7 @@ public struct ComposerView: View {
                     // Phase 4 stub — opens an empty Swift file in the current project
                 }
                 Button("New Project") {
-                    appViewModel.createProject(name: "Untitled", path: FileManager.default.currentDirectoryPath)
+                    appViewModel.createProject(name: "Untitled", path: NSHomeDirectory())
                 }
             } label: {
                 Label("Create", systemImage: "plus.square")
@@ -456,11 +456,12 @@ public struct ComposerView: View {
         let text = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        composer.isSending = true
-        composer.clear()
-        isFocused = false
-
-        thread.send(userText: text)
+        DispatchQueue.main.async { [self] in
+            composer.isSending = true
+            composer.clear()
+            isFocused = false
+            thread.send(userText: text)
+        }
     }
 }
 

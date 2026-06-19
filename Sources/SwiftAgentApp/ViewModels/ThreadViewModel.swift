@@ -42,6 +42,11 @@ public enum ThreadState: Equatable, Sendable {
 public final class ThreadViewModel: ObservableObject, Identifiable {
     public let id: String
 
+    /// The project this thread belongs to (nil for global threads).
+    /// Set by AppViewModel at creation and load time. Used to resolve
+    /// workingDirectory and for pending-thread promotion.
+    public var projectId: String?
+
     // MARK: - Published state
 
     @Published public var title: String = "Untitled"
@@ -66,8 +71,21 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     /// Storage manager for persistence.
     private weak var storageManager: StorageManager?
 
-    /// Working directory for the agent (set by AppViewModel from project path).
-    public var workingDirectory: String = NSHomeDirectory()
+    /// Working directory resolved from parent project via projectId.
+    /// Same logic as TabContentView.currentProjectPath.
+    public var workingDirectory: String {
+        if let pid = projectId,
+           let appVM = appViewModel,
+           let project = appVM.projects.first(where: { $0.id == pid }) {
+            print("[ThreadVM] workingDirectory: found project path=\(project.path) for projectId=\(pid)")
+            return project.path
+        }
+        print("[ThreadVM] workingDirectory: FALLBACK projectId=\(projectId ?? "nil") appVM=\(appViewModel != nil ? "set" : "nil")")
+        return NSHomeDirectory()
+    }
+
+    /// Back-reference to AppViewModel for resolving project path.
+    weak var appViewModel: AppViewModel?
 
     // MARK: - Internal
 
@@ -102,6 +120,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         self.executionEnv = thread.executionEnv
         self.updatedAt = thread.updatedAt
         self.selectedModel = thread.model
+        self.projectId = thread.projectId
     }
 
     /// Load messages from persisted records.
@@ -186,11 +205,13 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         let assistantMessage = AgentMessage.assistantStreaming(id: assistantID)
         messages.append(assistantMessage)
 
-        // Update state
-        state = .executing
-        executionStartTime = Date()
-        startThoughtTimer()
-        persistState()
+        // Update state — defer to avoid publishing during view updates
+        DispatchQueue.main.async { [self] in
+            state = .executing
+            executionStartTime = Date()
+            startThoughtTimer()
+            persistState()
+        }
 
         // Auto-title from first message
         if title == "Untitled" || title == "New Chat" {
@@ -204,6 +225,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
 
         // Find project working directory
         let workingDir = workingDirectory
+        print("[ThreadVM] send() threadId=\(id) projectId=\(projectId ?? "nil") workingDir=\(workingDir)")
 
         // Start agent loop
         streamingTask = Task { [weak self] in
@@ -421,7 +443,9 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     private func stopThoughtTimer() {
         thoughtTimer?.invalidate()
         thoughtTimer = nil
-        thoughtTimeString = nil
+        DispatchQueue.main.async { [self] in
+            thoughtTimeString = nil
+        }
     }
 
     private func updateThoughtTime() {

@@ -34,8 +34,10 @@ public final class ComposerViewModel: ObservableObject {
 
     /// Clear the composer text.
     public func clear() {
-        text = ""
-        isSendEnabled = false
+        DispatchQueue.main.async { [self] in
+            text = ""
+            isSendEnabled = false
+        }
     }
 
     /// Update send-button enabled state based on text content.

@@ -196,8 +196,8 @@ public final class AppViewModel: ObservableObject {
         let userSkillsPath = ("~/.swiftagent/skills" as NSString).expandingTildeInPath
         collected.append(contentsOf: scanSkills(at: userSkillsPath, scope: .user))
 
-        // Project scope: walk current working directory for .swiftagent/skills/
-        let cwd = FileManager.default.currentDirectoryPath
+        // Project scope: use first project's path or home directory
+        let cwd = projects.first?.path ?? NSHomeDirectory()
         let projectSkillsPath = (cwd as NSString).appendingPathComponent(".swiftagent/skills")
         collected.append(contentsOf: scanSkills(at: projectSkillsPath, scope: .project))
 
@@ -263,6 +263,7 @@ public final class AppViewModel: ObservableObject {
                     agentSession: agentSession,
                     storageManager: storage
                 )
+                vm.appViewModel = self
                 vm.update(from: pt)
 
                 // Load messages for this thread
@@ -272,17 +273,13 @@ public final class AppViewModel: ObservableObject {
                 vmMap[pt.id] = vm
 
                 if pt.projectId == nil {
-                    // Global thread — default to home directory
-                    vm.workingDirectory = NSHomeDirectory()
                     globalList.append(vm)
                 } else {
-                    // Attach to its project — inherit project path as working dir
+                    // Attach to its project
                     if let project = projects.first(where: { $0.id == pt.projectId }) {
-                        vm.workingDirectory = project.path
                         project.threads.append(vm)
                     } else {
                         // Orphaned thread — put in global
-                        vm.workingDirectory = NSHomeDirectory()
                         globalList.append(vm)
                     }
                 }
@@ -306,7 +303,8 @@ public final class AppViewModel: ObservableObject {
             // First launch: if no threads exist at all, create a default one so
             // the chat UI is immediately visible instead of showing a placeholder.
             if threadViewModels.isEmpty {
-                _ = createThread()
+                // Create initial thread under the first project if available
+                _ = createThread(projectId: projects.first?.id)
             }
         } catch {
             print("[AppViewModel] Load failed: \(error)")
@@ -328,9 +326,10 @@ public final class AppViewModel: ObservableObject {
     @discardableResult
     public func createThread(title: String = "New Chat", projectId: String? = nil, persist: Bool = false) -> ThreadViewModel {
         let thread = ThreadViewModel(agentSession: agentSession, storageManager: storage)
-        thread.workingDirectory = projectId.flatMap { pid in projects.first(where: { $0.id == pid })?.path }
-            ?? NSHomeDirectory()
+        thread.projectId = projectId
+        thread.appViewModel = self
         thread.title = title
+        print("[AppVM] createThread projectId=\(projectId ?? "nil") thread.id=\(thread.id) workingDir=\(thread.workingDirectory)")
 
         // Hook the diff refresh so the Review panel updates after each
         // agent turn completes (whether success or error).
@@ -348,6 +347,7 @@ public final class AppViewModel: ObservableObject {
         // Always keep the thread in the in-memory registry so the
         // composer / message list can look it up by id.
         threadViewModels[thread.id] = thread
+
 
         if persist {
             promoteThreadToSidebar(thread, projectId: projectId)
@@ -375,14 +375,16 @@ public final class AppViewModel: ObservableObject {
             return
         }
 
-        // Pick a sensible project bucket. If the current selection is
-        // already in a project, share that project; otherwise global.
-        let projectId: String? = projects
-            .first(where: { $0.threads.contains(where: { $0.id == thread.id }) })
-            .map(\.id) ?? projects.first?.id
+        // Use the thread's stored projectId — set at creation time by
+        // createThread(). Previously this fell back to projects.first?.id,
+        // which ignored the project the user actually right-clicked on.
+        let projectId = thread.projectId
+        print("[AppVM] commitPending thread.id=\(thread.id) projectId=\(projectId ?? "nil")")
 
-        promoteThreadToSidebar(thread, projectId: projectId)
-        persistThreadToDB(thread, projectId: projectId)
+        DispatchQueue.main.async { [self] in
+            promoteThreadToSidebar(thread, projectId: projectId)
+            persistThreadToDB(thread, projectId: projectId)
+        }
     }
 
     /// Insert the thread into the right `projects[].threads` or
@@ -414,8 +416,6 @@ public final class AppViewModel: ObservableObject {
     /// Select a thread and load its messages.
     public func selectThread(_ thread: ThreadViewModel) {
         selectedThreadID = thread.id
-        // workingDirectory is already set by loadAllData() / createThread().
-        // Do NOT override it here — the previous value is correct.
     }
 
     /// Persist thread state change immediately.

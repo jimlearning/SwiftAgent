@@ -365,30 +365,27 @@ struct FileNode: Identifiable, Equatable, Hashable {
     /// (e.g. node_modules) from killing performance.
     static func buildTree(at url: URL, maxDepth: Int, maxEntriesPerDir: Int) -> [FileNode] {
         let fm = FileManager.default
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isHiddenKey]
-        guard let enumerator = fm.enumerator(
+        let keys: [URLResourceKey] = [.isDirectoryKey]
+        guard let entries = try? fm.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: keys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return [] }
 
-        var topLevel: [FileNode] = []
-        var count = 0
-        for case let entry as URL in enumerator {
-            if count >= maxEntriesPerDir { break }
-            count += 1
+        var nodes: [FileNode] = []
+        for entry in entries.prefix(maxEntriesPerDir) {
             let name = entry.lastPathComponent
-            // Skip noisy VCS/build dirs
             if name == "node_modules" || name == ".build" || name == "DerivedData" || name == ".git" { continue }
             let values = try? entry.resourceValues(forKeys: [.isDirectoryKey])
             let isDir = values?.isDirectory ?? false
-            // Depth tracking: count path components relative to root.
-            let depth = entry.pathComponents.count - url.pathComponents.count
-            if depth > maxDepth { continue }
-            let children = isDir ? buildTree(at: entry, maxDepth: maxDepth, maxEntriesPerDir: maxEntriesPerDir) : nil
-            topLevel.append(FileNode(url: entry, name: name, isDirectory: isDir, children: children))
+            let children: [FileNode]? = if isDir && maxDepth > 1 {
+                buildTree(at: entry, maxDepth: maxDepth - 1, maxEntriesPerDir: maxEntriesPerDir)
+            } else {
+                nil
+            }
+            nodes.append(FileNode(url: entry, name: name, isDirectory: isDir, children: children))
         }
-        return topLevel.sorted { lhs, rhs in
+        return nodes.sorted { lhs, rhs in
             if lhs.isDirectory != rhs.isDirectory {
                 return lhs.isDirectory // folders first
             }
@@ -499,12 +496,11 @@ struct FileTreeRow: View {
                 } else {
                     ForEach(availableApps, id: \.self) { appURL in
                         Button {
-                            try? NSWorkspace.shared.open(
+                            NSWorkspace.shared.open(
                                 [node.url],
                                 withApplicationAt: appURL,
-                                options: [],
-                                configuration: [:]
-                            )
+                                configuration: NSWorkspace.OpenConfiguration()
+                            ) { _, _ in }
                         } label: {
                             let isDefault = (appURL == defaultApp)
                             HStack {
