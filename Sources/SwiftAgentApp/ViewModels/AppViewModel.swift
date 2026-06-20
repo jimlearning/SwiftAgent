@@ -141,6 +141,7 @@ public final class AppViewModel: ObservableObject {
     /// Per-file Review entries backed by an in-memory git diff cache.
     /// Computed lazily on demand by `refreshDiffSummary()`.
     public func refreshDiffSummary() {
+        print("[AgentLoop] DIFF_REFRESH triggered — dispatching to background")
         DiffService.refresh(for: self)
     }
 
@@ -266,9 +267,13 @@ public final class AppViewModel: ObservableObject {
                 vm.appViewModel = self
                 vm.update(from: pt)
 
-                // Load messages for this thread
-                let messages = try storage.messageRepo.listByThread(threadId: pt.id)
+                // Load messages for this thread (most recent batch)
+                let messages = try storage.messageRepo.listByThread(threadId: pt.id, limit: 50, offset: 0)
                 vm.loadMessages(from: messages)
+
+                // Track total count for pagination
+                let totalCount = try storage.messageRepo.count(threadId: pt.id)
+                vm.setTotalMessageCount(totalCount)
 
                 vmMap[pt.id] = vm
 
@@ -381,9 +386,13 @@ public final class AppViewModel: ObservableObject {
         let projectId = thread.projectId
         print("[AppVM] commitPending thread.id=\(thread.id) projectId=\(projectId ?? "nil")")
 
+        // Persist the thread synchronously BEFORE the async sidebar promotion,
+        // so the first message's INSERT (which happens immediately on the same
+        // @MainActor run) doesn't hit a foreign key violation on thread_id.
+        persistThreadToDB(thread, projectId: projectId)
+
         DispatchQueue.main.async { [self] in
             promoteThreadToSidebar(thread, projectId: projectId)
-            persistThreadToDB(thread, projectId: projectId)
         }
     }
 
@@ -561,12 +570,17 @@ public final class AppViewModel: ObservableObject {
             // Bootstrap agent session async
             Task {
                 let session = AgentSessionManager(provider: provider)
-                let ok = await session.bootstrap()
-                if ok {
+                let result = await session.bootstrap()
+                if result.isBootstrapped {
                     self.agentSession = session
                     // Update all existing thread VMs
                     for vm in threadViewModels.values {
                         vm.setAgentSession(session)
+                    }
+                } else {
+                    // Surface bootstrap errors
+                    for error in result.errors {
+                        ErrorPresenter.shared.present(.skillLoadFailed(error.message))
                     }
                 }
             }
@@ -592,12 +606,16 @@ public final class AppViewModel: ObservableObject {
             // Bootstrap agent session async
             Task {
                 let session = AgentSessionManager(provider: provider)
-                let ok = await session.bootstrap()
-                if ok {
+                let result = await session.bootstrap()
+                if result.isBootstrapped {
                     self.agentSession = session
                     // Update all existing thread VMs
                     for vm in threadViewModels.values {
                         vm.setAgentSession(session)
+                    }
+                } else {
+                    for error in result.errors {
+                        ErrorPresenter.shared.present(.skillLoadFailed(error.message))
                     }
                 }
             }

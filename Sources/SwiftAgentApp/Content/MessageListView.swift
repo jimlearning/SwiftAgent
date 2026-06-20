@@ -7,17 +7,31 @@ import SwiftUI
 /// on macOS 26.0. VStack keeps all views in the hierarchy; the static render
 /// cache in MessageBubbleView ensures body re-evaluation is a cheap cache hit.
 ///
+/// Message pagination: by default shows the most recent 50 messages.
+/// A "Load earlier messages" button at the top fetches additional history
+/// from the database in batches of 50. This keeps the view hierarchy bounded
+/// while supporting arbitrarily long conversations.
+///
 /// `onScrollPhaseChange` is also removed — the API itself corrupts ScrollView
 /// internal state during the interacting→decelerating transition.
 public struct MessageListView: View {
     @EnvironmentObject var appViewModel: AppViewModel
     let threadID: String
 
+    /// Number of messages to show initially and per batch.
+    private static let batchSize = 50
+
     public var body: some View {
         if let thread = appViewModel.threadViewModels[threadID] {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 4) {
+                        // "Load earlier messages" button — shown when there are more
+                        // messages in the database than currently displayed.
+                        if thread.hasMoreMessages {
+                            loadEarlierButton(thread: thread)
+                        }
+
                         if thread.messages.isEmpty {
                             emptyState
                                 .id("empty-state")
@@ -63,6 +77,27 @@ public struct MessageListView: View {
         }
     }
 
+    // MARK: - Load Earlier
+
+    private func loadEarlierButton(thread: ThreadViewModel) -> some View {
+        Button {
+            thread.loadEarlierMessages(batchSize: Self.batchSize)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.circle")
+                    .font(.system(size: 12))
+                Text("Load earlier messages")
+                    .font(.uiCaption)
+            }
+            .foregroundColor(.accentPrimary)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cellHoverHighlightTight()
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Spacer().frame(height: 60)
@@ -78,11 +113,14 @@ public struct MessageListView: View {
 
     private func thoughtTimeFor(_ message: AgentMessage) -> String? {
         guard message.role == .assistant,
-              message.isStreaming,
-              message.blocks.allSatisfy({ $0.textContent?.isEmpty ?? true }),
               appViewModel.threadViewModels[threadID]?.messages.last?.id == message.id else {
             return nil
         }
+        // During streaming: toggle shows "Thinking..." independently.
+        if message.isStreaming { return nil }
+        // After streaming: show "Thought for Xs" if the message has thinking blocks.
+        let hasThinking = message.blocks.contains(where: { $0.thinkingContent != nil })
+        guard hasThinking else { return nil }
         return appViewModel.threadViewModels[threadID]?.thoughtTimeString
     }
 

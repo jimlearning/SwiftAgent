@@ -156,6 +156,8 @@ These docs form a hierarchy. When you add or change code, update the RIGHT doc:
 | `CLAUDE.md` | AI context (loaded every session) | Build commands change, new top-level module, key convention change |
 | `AGENTS.md` | Identical to CLAUDE.md (sub-agent context) | Same as CLAUDE.md — keep them identical |
 | `docs/ARCHITECTURE.md` | Module boundaries & design decisions | Module split/merge, new major subsystem, design decision change |
+| `docs/macApp_ARCHITECTURE.md` | macOS App target architecture (production-grade) | App module design, UI subsystem, new app capability, UX flow design |
+| `docs/TUI_ARCHITECTURE.md` | CLI/TUI rendering engine design | Terminal rendering, input handling, ANSI, Markdown, syntax highlighting |
 | `docs/ROADMAP.md` | Phase progress & priorities | Phase completes, new priority emerges, blocker found |
 | `docs/AI_HANDOFF.md` | Comprehensive alignment snapshot | After major alignment milestones (batch update, not per-change) |
 | `specs/*.md` | Executable feature specs | New feature spec written, acceptance criteria change |
@@ -185,5 +187,7 @@ Never amend published commits. Never skip hooks (`--no-verify`) unless explicitl
 ## Deeper Docs
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module boundaries, design decisions, detailed layout
+[docs/macApp_ARCHITECTURE.md](docs/macApp_ARCHITECTURE.md) — macOS App target architecture (production-grade)
+[docs/TUI_ARCHITECTURE.md](docs/TUI_ARCHITECTURE.md) — CLI/TUI rendering engine design
 [docs/ROADMAP.md](docs/ROADMAP.md) — phase progress, next priorities, blockers
 [docs/AI_HANDOFF.md](docs/AI_HANDOFF.md) — comprehensive alignment snapshot

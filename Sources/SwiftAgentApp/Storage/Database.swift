@@ -28,7 +28,7 @@ public enum DatabaseError: Error, LocalizedError {
 /// Designed to be used from @MainActor via StorageManager.
 public final class Database: @unchecked Sendable {
     private var db: OpaquePointer?
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
 
     /// Path to the database file.
     public let path: String
@@ -63,9 +63,9 @@ public final class Database: @unchecked Sendable {
         }
 
         // Enable WAL mode
-        try executeLocked("PRAGMA journal_mode=WAL")
+        try _execute("PRAGMA journal_mode=WAL")
         // Enable foreign keys
-        try executeLocked("PRAGMA foreign_keys=ON")
+        try _execute("PRAGMA foreign_keys=ON")
 
         isOpen = true
     }
@@ -87,36 +87,57 @@ public final class Database: @unchecked Sendable {
     public func execute(_ sql: String, _ params: [Any] = []) throws -> Int64 {
         lock.lock()
         defer { lock.unlock() }
-        return try executeLocked(sql, params)
+        return try _execute(sql, params)
     }
 
     /// Query rows as dictionaries.
     public func query(_ sql: String, _ params: [Any] = []) throws -> [[String: Any]] {
         lock.lock()
         defer { lock.unlock() }
-        return try queryLocked(sql, params)
+        return try _query(sql, params)
     }
 
     // MARK: - Transaction
 
+    /// Execute `block` in a single SQLite transaction.
+    ///
+    /// The block may call `execute` and `query` safely — internal calls use
+    /// unlocked variants while the transaction holds the outer lock.
     public func transaction<T>(_ block: () throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
-        try executeLocked("BEGIN TRANSACTION")
+        try _execute("BEGIN TRANSACTION")
         do {
             let result = try block()
-            try executeLocked("COMMIT")
+            try _execute("COMMIT")
             return result
         } catch {
-            _ = try? executeLocked("ROLLBACK")
+            _ = try? _execute("ROLLBACK")
             throw error
         }
     }
 
-    // MARK: - Private Locked Methods
+    /// Integrity check. Returns the PRAGMA result rows.
+    public func integrityCheck() throws -> [[String: Any]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return try _query("PRAGMA integrity_check")
+    }
+
+    /// Run a list of PRAGMA statements for configuration (e.g., busy_timeout, cache_size).
+    /// Safe to call after `open()`.
+    public func configure(_ pragmas: [String]) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        for pragma in pragmas {
+            try _execute(pragma)
+        }
+    }
+
+    // MARK: - Internal Unlocked Methods
 
     @discardableResult
-    private func executeLocked(_ sql: String, _ params: [Any] = []) throws -> Int64 {
+    private func _execute(_ sql: String, _ params: [Any] = []) throws -> Int64 {
         guard let db else { throw DatabaseError.openFailed("Database not open") }
 
         var stmt: OpaquePointer?
@@ -125,7 +146,7 @@ public final class Database: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
 
-        try bindLocked(stmt, params)
+        try _bind(stmt, params)
 
         let rc = sqlite3_step(stmt)
         if rc != SQLITE_DONE && rc != SQLITE_ROW {
@@ -135,7 +156,7 @@ public final class Database: @unchecked Sendable {
         return sqlite3_last_insert_rowid(db)
     }
 
-    private func queryLocked(_ sql: String, _ params: [Any] = []) throws -> [[String: Any]] {
+    private func _query(_ sql: String, _ params: [Any] = []) throws -> [[String: Any]] {
         guard let db else { throw DatabaseError.openFailed("Database not open") }
 
         var stmt: OpaquePointer?
@@ -144,7 +165,7 @@ public final class Database: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
 
-        try bindLocked(stmt, params)
+        try _bind(stmt, params)
 
         var rows: [[String: Any]] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -171,7 +192,7 @@ public final class Database: @unchecked Sendable {
         return rows
     }
 
-    private func bindLocked(_ stmt: OpaquePointer, _ params: [Any]) throws {
+    private func _bind(_ stmt: OpaquePointer, _ params: [Any]) throws {
         for (index, param) in params.enumerated() {
             let idx = Int32(index + 1)
             let rc: Int32

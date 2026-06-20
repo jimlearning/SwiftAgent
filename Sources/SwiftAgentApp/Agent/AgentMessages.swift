@@ -88,7 +88,14 @@ public struct AgentMessage: Identifiable, Equatable {
                 return
             }
         }
-        blocks.insert(.thinking(text), at: 0)
+        // Insert new thinking block before tool_use/tool_result blocks,
+        // after text blocks — same positioning as appendText.
+        let firstToolIdx = blocks.firstIndex(where: { $0.toolUse != nil || $0.toolResult != nil })
+        if let idx = firstToolIdx {
+            blocks.insert(.thinking(text), at: idx)
+        } else {
+            blocks.append(.thinking(text))
+        }
     }
 
     public mutating func addToolUse(_ block: ToolUseBlock) {
@@ -133,7 +140,7 @@ public enum AgentMessageRole: String, Equatable, Sendable {
 
 // MARK: - AgentMessageBlock
 
-public enum AgentMessageBlock: Equatable {
+public enum AgentMessageBlock: Equatable, Codable {
     case text(String)
     case thinking(String, isExpanded: Bool = false)
     case toolUse(ToolUseBlock)
@@ -163,7 +170,7 @@ public enum AgentMessageBlock: Equatable {
 
 // MARK: - ToolUseBlock
 
-public struct ToolUseBlock: Equatable {
+public struct ToolUseBlock: Equatable, Codable {
     public let toolUseID: String
     public let toolName: String
     public let inputSummary: String
@@ -189,7 +196,7 @@ public struct ToolUseBlock: Equatable {
     }
 }
 
-public enum ToolUseStatus: Equatable {
+public enum ToolUseStatus: Equatable, Codable {
     case pending
     case executing
     case completed
@@ -198,7 +205,7 @@ public enum ToolUseStatus: Equatable {
 
 // MARK: - ToolResultBlock
 
-public struct ToolResultBlock: Equatable {
+public struct ToolResultBlock: Equatable, Codable {
     public let toolUseID: String
     public let content: String
     public let isError: Bool
@@ -366,5 +373,40 @@ extension String {
     func truncated(to maxLength: Int) -> String {
         if count <= maxLength { return self }
         return String(prefix(maxLength)) + "\u{2026}"
+    }
+}
+
+// MARK: - Block Serialization
+
+extension [AgentMessageBlock] {
+    /// Encode blocks to JSON for persistence in the metadata column.
+    public func toJSONString() -> String? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Decode blocks from JSON stored in the metadata column.
+    public static func fromJSON(_ json: String) -> [AgentMessageBlock]? {
+        guard let data = json.data(using: .utf8),
+              let blocks = try? JSONDecoder().decode([AgentMessageBlock].self, from: data)
+        else { return nil }
+        return blocks
+    }
+
+    /// Extract plain text for the content column (sidebar preview).
+    public func extractText() -> String {
+        var parts: [String] = []
+        for block in self {
+            switch block {
+            case .text(let text): parts.append(text)
+            case .thinking: break
+            case .toolUse(let tu):
+                parts.append("[\(tu.toolName): \(tu.inputSummary)]")
+            case .toolResult(let tr):
+                if tr.isError { parts.append("[Error: \(tr.content.truncated(to: 200))]") }
+            case .systemReminder(let text): parts.append(text)
+            }
+        }
+        return parts.joined(separator: "\n")
     }
 }

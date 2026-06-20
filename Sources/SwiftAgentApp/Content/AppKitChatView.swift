@@ -46,13 +46,16 @@ public struct AppKitChatView: NSViewRepresentable {
             context.coordinator.scrollView = nsView
             context.coordinator.startObserving()
         }
-        // After SwiftUI sets the frame, sync layoutWidth and trigger layout if needed.
-        // setFrameSize already synced layoutWidth; we just need to ensure the document
-        // is laid out at the correct width.
-        if nsView.frame.width > 0 && nsView.chatDocument.layoutWidth > 0 {
-            nsView.chatDocument.needsLayout = true
-            nsView.layoutSubtreeIfNeeded()
-            BDLog("updateNSView post-layout docHeight=\(nsView.chatDocument.frame.height)")
+        // Sync layoutWidth from the current frame. Do NOT call
+        // layoutSubtreeIfNeeded() here — it triggers re-entrant layout
+        // during SwiftUI's update cycle, causing infinite refresh loops.
+        // AppKit's normal layout pass will handle it.
+        if nsView.frame.width > 0 {
+            let visibleWidth = nsView.contentView.bounds.width
+            if visibleWidth > 0 && visibleWidth != nsView.chatDocument.layoutWidth {
+                nsView.chatDocument.layoutWidth = visibleWidth
+                nsView.chatDocument.needsLayout = true
+            }
         }
     }
 
@@ -71,7 +74,6 @@ public struct AppKitChatView: NSViewRepresentable {
         private var messagesCancellable: AnyCancellable?
         private var stateCancellable: AnyCancellable?
         private var reasoningCancellable: AnyCancellable?
-        private var thoughtTimeCancellable: AnyCancellable?
 
         /// Track the last known message count for diffing.
         private var lastMessageCount: Int = 0
@@ -96,9 +98,11 @@ public struct AppKitChatView: NSViewRepresentable {
             guard let vm = resolveViewModel() else { return }
             stopObserving()
 
-            // Observe messages array
+            // Observe messages array — throttle to ~60fps to prevent
+            // streaming event storms from flooding the main thread with
+            // synchronous layoutSubtreeIfNeeded() calls.
             messagesCancellable = vm.$messages
-                .receive(on: DispatchQueue.main)
+                .throttle(for: .milliseconds(16), scheduler: DispatchQueue.main, latest: true)
                 .sink { [weak self] messages in
                     self?.handleMessagesChanged(messages)
                 }
@@ -117,13 +121,6 @@ public struct AppKitChatView: NSViewRepresentable {
                     self?.updateReasoningExpanded(expanded)
                 }
 
-            // Observe thought time string
-            thoughtTimeCancellable = vm.$thoughtTimeString
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    self?.refreshLastCellIfStreaming()
-                }
-
             // Initial load
             handleMessagesChanged(vm.messages, isInitial: true)
         }
@@ -132,11 +129,9 @@ public struct AppKitChatView: NSViewRepresentable {
             messagesCancellable?.cancel()
             stateCancellable?.cancel()
             reasoningCancellable?.cancel()
-            thoughtTimeCancellable?.cancel()
             messagesCancellable = nil
             stateCancellable = nil
             reasoningCancellable = nil
-            thoughtTimeCancellable = nil
             lastMessageCount = 0
             lastStreamingMessageID = nil
             lastStreamingBlockCount = 0
@@ -219,11 +214,17 @@ public struct AppKitChatView: NSViewRepresentable {
         ) {
             let thoughtTime: String? = {
                 guard message.role == .assistant,
-                      message.isStreaming,
-                      message.blocks.allSatisfy({ $0.textContent?.isEmpty ?? true }),
                       vm?.messages.last?.id == message.id else {
                     return nil
                 }
+                // During streaming with no text: show in toggle as "Thinking..."
+                // After streaming ends: show "Thought for Xs" if available
+                if message.isStreaming {
+                    return nil  // toggle shows "Thinking..." by itself
+                }
+                // Has thinking blocks and execution completed — show "Thought for Xs"
+                let hasThinking = message.blocks.contains(where: { $0.thinkingContent != nil })
+                guard hasThinking else { return nil }
                 return vm?.thoughtTimeString
             }()
 
@@ -266,13 +267,16 @@ public struct AppKitChatView: NSViewRepresentable {
                         _ = lastCell.updateBlockText(at: i, text: text)
                     }
                 }
-                // Synchronous layout needed: text width change → cell height change
-                // → document height change. Without this, autoScrollToBottom uses
-                // stale document dimensions and the UI shows mismatched frames.
+                // Deferred layout: mark dirty and scroll on the next runloop
+                // cycle. Synchronous layoutSubtreeIfNeeded() here causes an
+                // infinite layout loop during rapid streaming events (incoming
+                // text deltas pile up on the main queue while layout blocks).
                 lastCell.needsLayout = true
                 scrollView.chatDocument.needsLayout = true
-                scrollView.layoutSubtreeIfNeeded()
-                scrollView.autoScrollToBottom(animated: false)
+                DispatchQueue.main.async { [weak scrollView] in
+                    scrollView?.layoutSubtreeIfNeeded()
+                    scrollView?.autoScrollToBottom(animated: false)
+                }
                 return
             }
 
@@ -285,20 +289,6 @@ public struct AppKitChatView: NSViewRepresentable {
         private func replaceLastCell(_ cell: ChatMessageCell) {
             guard let scrollView = scrollView else { return }
             scrollView.updateLastCell(cell)
-        }
-
-        private func refreshLastCellIfStreaming() {
-            guard let scrollView = scrollView,
-                  let lastCell = scrollView.chatDocument.lastCell,
-                  let vm = resolveViewModel(),
-                  let lastMsg = vm.messages.last,
-                  lastMsg.isStreaming else { return }
-            // Only update the thought-time label directly — no full rebuild.
-            // The thought timer fires every second; full configure() + layout
-            // on every tick causes an infinite visual refresh loop.
-            if let thoughtTime = vm.thoughtTimeString {
-                lastCell.updateThoughtTime(thoughtTime)
-            }
         }
 
         private func updateReasoningExpanded(_ expanded: Bool) {

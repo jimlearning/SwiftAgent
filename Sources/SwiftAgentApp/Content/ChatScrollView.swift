@@ -394,7 +394,11 @@ public final class ChatScrollView: NSScrollView {
         SDLog("relayoutDocument")
         syncLayoutWidth()
         chatDocument.needsLayout = true
-        layoutSubtreeIfNeeded()
-        autoScrollToBottom(animated: false)
+        // Defer layout — synchronous layoutSubtreeIfNeeded() during streaming
+        // causes infinite layout loops (incoming events pile up on main queue).
+        DispatchQueue.main.async { [weak self] in
+            self?.layoutSubtreeIfNeeded()
+            self?.autoScrollToBottom(animated: false)
+        }
     }
 }

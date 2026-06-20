@@ -51,14 +51,7 @@ struct ErrorBannerView: View {
     }
 
     private var bannerColor: Color {
-        switch error {
-        case .networkReconnecting: return .warning
-        case .rateLimit429: return .warning
-        case .modelError5xx: return .danger
-        case .mcpDisconnected: return .warning
-        case .networkProxy: return .warning
-        default: return .danger
-        }
+        error.bannerColor
     }
 
     private var bannerBackground: Color {
@@ -66,13 +59,6 @@ struct ErrorBannerView: View {
     }
 
     private var actionTitle: String {
-        switch error {
-        case .invalidAPIKey401: return "Update key"
-        case .lowBalance402: return "Top up"
-        case .modelError5xx: return "Retry"
-        case .networkProxy: return "Configure"
-        case .mcpDisconnected: return "Reconnect"
-        default: return "Retry"
-        }
+        error.actionTitle ?? "Retry"
     }
 }

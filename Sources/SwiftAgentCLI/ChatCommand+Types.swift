@@ -104,6 +104,15 @@ final class AtomicBool: @unchecked Sendable {
     }
 }
 
+/// Thread-safe line buffer for queued messages typed during agent execution.
+final class LineBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    func push(_ line: String) { lock.withLock { lines.append(line) } }
+    func pop() -> String? { lock.withLock { lines.isEmpty ? nil : lines.removeFirst() } }
+    var isEmpty: Bool { lock.withLock { lines.isEmpty } }
+}
+
 /// Thread-safe tracker for currently executing tools.
 /// Written by the agent loop and read by the spinner Task.
 final class CurrentToolTracker: @unchecked Sendable {

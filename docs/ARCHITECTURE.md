@@ -61,6 +61,56 @@ Thin CLI layer. All UI/UX lives here.
 5. **Tool protocol** defined in `Types/Tool.swift`, all tools implement via struct
 6. **Tool descriptions** in `description()` method (LLM-visible); `prompt()` defined on protocol, not yet wired into SystemPromptBuilder
 
+## CC Tool Implementation Alignment
+
+Each tool must match CC's underlying mechanism, not just its API surface.
+The implementation strategy matters: file enumeration vs binary delegation,
+loop structure vs output slicing, etc.
+
+### GlobTool — `rg --files --glob` (not FileManager.enumerator)
+
+**CC** (`utils/glob.ts`): delegates to ripgrep via `rg --files --glob <pattern>
+--sort=modified --no-ignore --hidden <path>`. No filesystem traversal in JS —
+ripgrep handles everything in Rust and exits immediately when done.
+Results sliced: `absolutePaths.slice(offset, offset + limit)`.
+
+**Before**: `FileManager.default.enumerator(atPath:)` — deep recursive enumeration
+of every file in the search tree (O(all files)), then truncated to 100 at the end.
+`NSAllDescendantPathsEnumerator` traversed `Library`, `Caches`, `DerivedData`
+etc., causing multi-minute hangs on broad patterns like `**/*.swift` in home dir.
+
+**After** (aligned):
+- Primary: `rg --files --glob <pattern> --sort=modified --no-ignore --hidden`
+  with VCS exclusion via `--glob !.git` etc. Same args as CC.
+- Fallback: Foundation enumerator with early `break` at 100 results plus
+  `skipDirs` for `Library`, `Caches`, `node_modules`, `.swiftpm`, etc.
+- Result: milliseconds on any directory, never hangs.
+
+### GrepTool — `rg` with full parameter set (already aligned)
+
+Uses ripgrep for content search: `--hidden`, `--max-columns`, `-i`, `-n`,
+`-U --multiline-dotall`, `--glob`, `--type`, `-C/-B/-A` context lines.
+Falls back to `NSRegularExpression` when rg not installed.
+Matches CC's `GrepTool.ts` / `ripgrep.ts`.
+
+### AgentTool / SubAgentManager — conversation isolation
+
+Sub-agents get a fresh `Conversation` with only `systemPrompt` set — no
+parent conversation leaked. `disallowedTools` prevents recursive agent
+spawning (Explore agent can't call Agent). Tools filtered via
+`effectiveTools(allToolNames:)`.
+
+### QueryEngine — Turn.toolResults populated
+
+CC's `QueryEngine.ts` captures tool results in each `Turn` so the full
+conversation structure (user → assistant {tool_use} → user {tool_result})
+survives round-tripping through `fromTurns` → `buildConversation`.
+Previously `QueryEngine.run()` appended `toolResultMsg` to `messages` but
+not to `completedTurns[].toolResults`, causing `fromTurns` rebuilds to
+produce orphaned `tool_use` blocks without matching `tool_result` blocks —
+the API rejected this with HTTP 400 on subsequent sends. Fixed by
+populating `Turn.toolResults` before appending the turn.
+
 ## Detailed Module Layout
 
 ```

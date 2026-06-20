@@ -125,7 +125,8 @@ public struct FilesPanelView: View {
                             onSelect: handleSelect,
                             onAddToChat: { fileNode in
                                 appViewModel.addFileToComposer(fileNode.url)
-                            }
+                            },
+                            projectPath: projectPath
                         )
                     }
                 }
@@ -403,6 +404,7 @@ struct FileTreeRow: View {
     @Binding var selected: FileNode?
     let onSelect: (FileNode) -> Void
     let onAddToChat: (FileNode) -> Void
+    let projectPath: String?
 
     private var isExpanded: Bool { expanded.contains(node.url.path) }
     private var isSelected: Bool { selected?.url == node.url }
@@ -433,7 +435,8 @@ struct FileTreeRow: View {
                         expanded: $expanded,
                         selected: $selected,
                         onSelect: onSelect,
-                        onAddToChat: onAddToChat
+                        onAddToChat: onAddToChat,
+                        projectPath: projectPath
                     )
                 }
             }
@@ -528,7 +531,18 @@ struct FileTreeRow: View {
 
             Divider()
 
-            // 5. Add to chat — attach this file to the current thread's
+            // 5. Git operations (when in a git repo)
+            if let workingDir = projectPath {
+                Button("Git log") {
+                    gitLogForFile(node.url, workingDir: workingDir)
+                }
+                Button("Git diff") {
+                    gitDiffForFile(node.url, workingDir: workingDir)
+                }
+                Divider()
+            }
+
+            // 6. Add to chat — attach this file to the current thread's
             //    composer. The Files panel surfaces a placeholder
             //    message so the user can see the attachment in the
             //    conversation stream.
@@ -537,6 +551,46 @@ struct FileTreeRow: View {
             }
             .disabled(node.isDirectory)
         }
+    }
+
+    // MARK: - Git Helpers
+
+    /// Run `git log --oneline -5 <file>` and show in a temporary alert.
+    private func gitLogForFile(_ fileURL: URL, workingDir: String) {
+        let output = runGit(arguments: ["log", "--oneline", "-5", fileURL.path], cwd: workingDir)
+        let alert = NSAlert()
+        alert.messageText = "Git log — \(fileURL.lastPathComponent)"
+        alert.informativeText = output.isEmpty ? "No commits for this file." : output
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    /// Run `git diff <file>` and show in a temporary alert.
+    private func gitDiffForFile(_ fileURL: URL, workingDir: String) {
+        let output = runGit(arguments: ["diff", fileURL.path], cwd: workingDir)
+        let alert = NSAlert()
+        alert.messageText = "Git diff — \(fileURL.lastPathComponent)"
+        alert.informativeText = output.isEmpty ? "No changes to show." : output
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func runGit(arguments: [String], cwd: String) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git"] + arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return ""
+        }
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     private func iconForFile(_ url: URL) -> String {

@@ -82,17 +82,8 @@ public final class ChatMessageCell: NSView {
         didSet { updateStreamingState() }
     }
 
-    /// Directly update the thought-time label without rebuilding the cell.
-    /// Used by the timer-driven refresh to avoid full layout loops.
-    public func updateThoughtTime(_ text: String) {
-        for view in blockViews {
-            if let tf = view as? NSTextField, tf.identifier?.rawValue == "thoughtTime" {
-                tf.stringValue = text
-                tf.sizeToFit()
-                return
-            }
-        }
-    }
+    /// Final thought time string (e.g., "Thought for 2s") for the toggle title after streaming ends.
+    public var thoughtTimeString: String?
 
     /// Update streaming text in-place without rebuilding the entire cell.
     /// Finds the last NSTextField text block (not thoughtTime, not thinking content)
@@ -186,6 +177,7 @@ public final class ChatMessageCell: NSView {
         self.role = message.role
         self.isStreaming = isStreaming
         self.reasoningExpanded = reasoningExpanded
+        self.thoughtTimeString = thoughtTimeString
 
         let oldHeight = frame.height
         DLog("configure() role=\(role) blocks=\(message.blocks.count) streaming=\(isStreaming) oldHeight=\(oldHeight)")
@@ -197,18 +189,6 @@ public final class ChatMessageCell: NSView {
 
         // Build new block views
         var subviews: [NSView] = []
-
-        // Thought time status row (streaming assistant, before any text)
-        if role == .assistant, isStreaming, let thoughtTime = thoughtTimeString {
-            let statusLabel = makeLabel(
-                thoughtTime,
-                font: saCaptionFont,
-                color: .saTextSecondary
-            )
-            statusLabel.alignment = .left
-            statusLabel.identifier = NSUserInterfaceItemIdentifier("thoughtTime")
-            subviews.append(statusLabel)
-        }
 
         for block in message.blocks {
             switch block {
@@ -263,6 +243,7 @@ public final class ChatMessageCell: NSView {
         var totalHeight: CGFloat = kCellVerticalPadding
 
         for (i, view) in blockViews.enumerated() {
+            if view.isHidden { continue }
             let itemWidth: CGFloat
             if view is UserBubbleView {
                 itemWidth = min(contentWidth, kUserBubbleMaxWidth)
@@ -336,6 +317,10 @@ public final class ChatMessageCell: NSView {
         guard !blockViews.isEmpty else { return }
 
         for (i, view) in blockViews.enumerated() {
+            if view.isHidden {
+                view.frame = .zero
+                continue
+            }
             let itemWidth: CGFloat
             if view is UserBubbleView {
                 itemWidth = min(contentWidth, kUserBubbleMaxWidth)
@@ -374,6 +359,14 @@ public final class ChatMessageCell: NSView {
                     x: kCellHorizontalPadding,
                     y: y,
                     width: contentWidth,
+                    height: height
+                )
+            } else if view is NSButton {
+                // Buttons should shrink-wrap to content width, not stretch full width
+                frame = CGRect(
+                    x: kCellHorizontalPadding,
+                    y: y,
+                    width: size.width,
                     height: height
                 )
             } else {
@@ -490,6 +483,7 @@ public final class ChatMessageCell: NSView {
         // Always create content view; show/hide based on expansion state
         if !content.isEmpty {
             let contentLabel = makeLabel(content, font: saCaptionFont, color: .saTextTertiary)
+            contentLabel.alignment = .left
             contentLabel.identifier = NSUserInterfaceItemIdentifier("thinkingContent")
             contentLabel.isHidden = !reasoningExpanded
             views.append(contentLabel)
@@ -499,9 +493,16 @@ public final class ChatMessageCell: NSView {
     }
 
     private func makeThinkingToggleTitle(expanded: Bool) -> NSAttributedString {
-        let icon = expanded ? "▾" : "▸"
-        let thinkingText = isStreaming ? "Thinking..." : "Thinking"
-        let fullText = "\(icon)  \(thinkingText)"
+        let icon = expanded ? "\u{25BE}" : "\u{25B8}"
+        let label: String
+        if isStreaming {
+            label = "Thinking..."
+        } else if let thoughtTime = thoughtTimeString {
+            label = thoughtTime
+        } else {
+            label = "Thinking"
+        }
+        let fullText = "\(icon)  \(label)"
 
         let attr = NSMutableAttributedString(string: fullText)
         let range = NSRange(location: 0, length: fullText.utf16.count)

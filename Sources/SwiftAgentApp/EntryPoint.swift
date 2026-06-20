@@ -236,9 +236,8 @@ struct SwiftAgentAppEntry: App {
         case .invalidAPIKey401:
             openSettingsWindow()
         case .lowBalance402:
-            if let url = URL(string: "https://platform.deepseek.com/top_up") {
-                NSWorkspace.shared.open(url)
-            }
+            // Open the active provider's billing page; fall back to Settings.
+            openSettingsWindow()
         case .appshotPermissionDenied:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                 NSWorkspace.shared.open(url)

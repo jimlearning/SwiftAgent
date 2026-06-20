@@ -56,11 +56,9 @@ public struct ComposerView: View {
         .frame(minHeight: 80)
         .background(Color.bgContent)
         .onChange(of: thread.state) { _, newState in
-            if newState == .idle || newState == .done || newState.isError {
-                composer.isSending = false
-            }
-            if newState.isComposerDisabled {
-                composer.isSending = true
+            // Auto-focus composer when agent finishes and no queued messages remain
+            if newState != .executing && thread.queueCount == 0 {
+                isFocused = true
             }
         }
         .onReceive(composer.$text.debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)) { _ in
@@ -113,37 +111,62 @@ public struct ComposerView: View {
     // MARK: - Text Editor
 
     private func textEditorArea(thread: ThreadViewModel) -> some View {
-        ZStack(alignment: .topLeading) {
-            if composer.text.isEmpty && !isFocused {
-                Text("Ask for follow-up changes")
-                    .font(.uiBody)
-                    .foregroundColor(.textTertiary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 6)
-                    .allowsHitTesting(false)
-            }
+        ComposerTextViewWrapper(
+            text: $composer.text,
+            placeholder: "Ask for follow-up changes",
+            isFocused: isFocused,
+            onSend: { sendAction(thread: thread) },
+            mentionItems: mentionItems
+        )
+        .frame(minHeight: 28, maxHeight: 120)
+    }
 
-            TextEditor(text: $composer.text)
-                .font(.uiBody)
-                .foregroundColor(.textPrimary)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                .focused($isFocused)
-                .frame(minHeight: 28, maxHeight: 120)
-                .fixedSize(horizontal: false, vertical: true)
-                .disabled(thread.state.isComposerDisabled)
-                .onKeyPress(.return, phases: .down) { keyPress in
-                    if showSlashPalette {
-                        return .ignored
-                    }
-                    if keyPress.modifiers.contains(.shift) {
-                        composer.text.append("\n")
-                        return .handled
-                    }
-                    sendAction(thread: thread)
-                    return .handled
-                }
+    // MARK: - Mention Items
+
+    /// Build the list of @-mentionable items from current app state.
+    private var mentionItems: [MentionItem] {
+        var items: [MentionItem] = []
+
+        // Skills
+        if let session = appViewModel.agentSession {
+            for name in session.skillNames {
+                items.append(MentionItem(
+                    id: "skill:\(name)",
+                    mentionText: "@\(name)",
+                    displayName: name,
+                    detail: "Skill",
+                    kind: .skill
+                ))
+            }
         }
+
+        // MCP tools
+        if let session = appViewModel.agentSession {
+            for name in session.mcpServerNames {
+                items.append(MentionItem(
+                    id: "mcp:\(name)",
+                    mentionText: "@\(name)",
+                    displayName: name,
+                    detail: "MCP Server",
+                    kind: .mcp
+                ))
+            }
+        }
+
+        // Threads from sidebar
+        for vm in appViewModel.threadViewModels.values {
+            let title = vm.title
+            guard !title.isEmpty, title != "Untitled", title != "New Chat" else { continue }
+            items.append(MentionItem(
+                id: "thread:\(vm.id)",
+                mentionText: "@\(title)",
+                displayName: title,
+                detail: "Thread",
+                kind: .thread
+            ))
+        }
+
+        return items
     }
 
     // MARK: - Slash Command Detection
@@ -160,10 +183,10 @@ public struct ComposerView: View {
         }
     }
 
-    private func handleSlashCommand(_ cmd: SlashCommand, thread: ThreadViewModel) {
+    private func handleSlashCommand(_ cmd: SlashCommandDefinition, thread: ThreadViewModel) {
         switch cmd.command {
         case "/help":
-            let helpText = "Available commands: /help, /goal, /plan, /skills, /mcp, /status, /compact, /clear, /personality, /exit"
+            let helpText = "Available commands: /help, /goal, /plan, /skills, /mcp, /status, /compact, /clear, /personality, /model, /exit"
             let msg = ThreadMessage(role: .assistant, content: helpText, isStreaming: false)
             thread.messages.append(msg.agentMessage)
             composer.text = ""
@@ -198,6 +221,12 @@ public struct ComposerView: View {
             composer.text = ""
         case "/compact":
             let msg = ThreadMessage(role: .assistant, content: "Compacted 0 tokens (compaction engine pending).", isStreaming: false)
+            thread.messages.append(msg.agentMessage)
+            composer.text = ""
+        case "/model":
+            // The model command with argument — show available models
+            let models = appViewModel.agentProvider?.availableModels.map(\.modelInfo.id).joined(separator: ", ") ?? "No models available"
+            let msg = ThreadMessage(role: .assistant, content: "Available models: \(models)", isStreaming: false)
             thread.messages.append(msg.agentMessage)
             composer.text = ""
         case "/personality":
@@ -416,48 +445,75 @@ public struct ComposerView: View {
         .help("Model and reasoning strength")
     }
 
-    // MARK: - ↑ Send Button
+    // MARK: - ↑ Send / ■ Stop Button
 
     private func sendButton(thread: ThreadViewModel) -> some View {
-        let isEnabled = composer.isSendEnabled && !thread.state.isComposerDisabled
-        return Button(action: { sendAction(thread: thread) }) {
-            Group {
-                if composer.isSending || thread.state == .executing {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .scaleEffect(0.6)
-                } else {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 12, weight: .bold))
-                }
+        let isExecuting = thread.state == .executing
+        let isEnabled = composer.isSendEnabled
+
+        return HStack(spacing: 8) {
+            // Queue count badge
+            if thread.queueCount > 0 {
+                Text("\(thread.queueCount)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.textSecondary)
+                    .padding(.trailing, -2)
             }
-            .frame(width: 28, height: 28)
-            .contentShape(Rectangle())
+
+            // Stop button (visible during execution)
+            if isExecuting {
+                Button(action: { thread.cancel() }) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.danger)
+                .background(Circle().fill(Color.bgElevated))
+                .hoverHighlight(background: Color.danger.opacity(0.15), cornerRadius: 14, padding: EdgeInsets())
+                .help("Stop (Esc)")
+            }
+
+            // Send button
+            Button(action: { sendAction(thread: thread) }) {
+                Group {
+                    if isExecuting {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(0.6)
+                    } else {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                }
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(isEnabled ? .textPrimary : .textTertiary)
+            .background(
+                Circle()
+                    .fill(isEnabled ? Color.bgElevated : Color.bgElevated.opacity(0.5))
+            )
+            .hoverHighlight(
+                background: Color.white.opacity(0.08),
+                cornerRadius: 14,
+                padding: EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
+            )
+            .disabled(!isEnabled)
+            .help(isExecuting ? "Queue message (Enter)" : "Send (Enter)")
         }
-        .buttonStyle(.plain)
-        .foregroundColor(isEnabled ? .textPrimary : .textTertiary)
-        .background(
-            Circle()
-                .fill(isEnabled ? Color.bgElevated : Color.bgElevated.opacity(0.5))
-        )
-        .hoverHighlight(
-            background: Color.white.opacity(0.08),
-            cornerRadius: 14,  // half of 28 — full-circle hover
-            padding: EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
-        )
-        .disabled(!isEnabled)
-        .help("Send (Enter)")
     }
 
     // MARK: - Actions
 
     private func sendAction(thread: ThreadViewModel) {
-        guard composer.isSendEnabled, !thread.state.isComposerDisabled else { return }
+        guard composer.isSendEnabled else { return }
         let text = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
         DispatchQueue.main.async { [self] in
-            composer.isSending = true
             composer.clear()
             isFocused = false
             thread.send(userText: text)

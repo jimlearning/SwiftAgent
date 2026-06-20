@@ -245,6 +245,10 @@ public struct QueryEngine: Sendable {
                 onEvent?(.modelStreaming)
 
                 for try await event in stream {
+                    // Cooperative cancellation: bail out immediately so
+                    // tool results can still be collected and the loop exits cleanly.
+                    if Task.isCancelled { break }
+
                     // Feed every event to the accumulator for ordered block tracking
                     accumulator.feed(event)
 
@@ -416,6 +420,14 @@ public struct QueryEngine: Sendable {
                 // Drain progress messages into the message stream.
                 messages.append(contentsOf: progressCollector.drain())
 
+                // Assemble tool result message before appending to turns so
+                // toolResults are captured in the Turn for correct round-tripping
+                // through fromTurns → buildConversation on subsequent sends.
+                let toolResultMsg = Message(
+                    type: .user,
+                    content: appendToolResultCacheBreakpointReminder(to: toolResultBlocks)
+                )
+
                 // Append assistant message (with tool_use blocks) to conversation history.
                 // Matches CC's behavior: the assistant message that triggered tool calls
                 // must be part of the message history so the LLM sees its own tool_use blocks.
@@ -428,14 +440,9 @@ public struct QueryEngine: Sendable {
                 messages.append(assistantMsg)
                 completedTurns.append(Turn(
                     userMessage: Message(type: .user, content: [.text(userInput)]),
-                    assistantMessage: assistantMsg
+                    assistantMessage: assistantMsg,
+                    toolResults: [toolResultMsg]
                 ))
-
-                // Assemble tool result message
-                let toolResultMsg = Message(
-                    type: .user,
-                    content: appendToolResultCacheBreakpointReminder(to: toolResultBlocks)
-                )
                 messages.append(toolResultMsg)
 
                 // Yield turn completion to caller for UI updates.
@@ -528,6 +535,13 @@ public struct QueryEngine: Sendable {
             tokenUsage: await state.tokenUsage,
             structuredOutput: structuredOutputFromTool
         )
+    }
+
+    /// Cancel the currently active LLM stream, releasing the URLSession connection.
+    /// Must be called when the agent run is cancelled to prevent the old connection
+    /// from blocking subsequent requests.
+    public func cancelActiveStream() {
+        client.cancelActiveStream()
     }
 }
 

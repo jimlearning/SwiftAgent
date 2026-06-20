@@ -12,10 +12,6 @@ public struct MessageBubbleView: View {
 
     public var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
-            if message.role == .assistant, let thoughtTime = thoughtTimeString, message.isStreaming {
-                statusRow(thoughtTime)
-            }
-
             ForEach(Array(message.blocks.enumerated()), id: \.offset) { _, block in
                 blockView(for: block)
             }
@@ -87,7 +83,7 @@ public struct MessageBubbleView: View {
                 HStack(spacing: 4) {
                     Image(systemName: reasoningExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10, weight: .bold))
-                    Text("Thinking\(message.isStreaming ? "..." : "")")
+                    Text(thinkingLabel)
                         .font(.uiCaption)
                 }
                 .foregroundColor(.textSecondary)
@@ -103,6 +99,16 @@ public struct MessageBubbleView: View {
                     .textSelection(.enabled)
             }
         }
+    }
+
+    private var thinkingLabel: String {
+        if message.isStreaming {
+            return "Thinking..."
+        }
+        if let thoughtTime = thoughtTimeString {
+            return thoughtTime
+        }
+        return "Thinking"
     }
 
     // MARK: - Tool Use Card
@@ -199,15 +205,6 @@ public struct MessageBubbleView: View {
             .font(.system(size: 10))
             .foregroundColor(.textTertiary.opacity(0.6))
             .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    // MARK: - Status Row
-
-    private func statusRow(_ text: String) -> some View {
-        Text(text)
-            .font(.uiCaption)
-            .foregroundColor(.textSecondary)
-            .padding(.leading, 4)
     }
 
     // MARK: - Tool icon mapping

@@ -9,9 +9,6 @@ public final class ComposerViewModel: ObservableObject {
     /// Whether the send button should be enabled.
     @Published public var isSendEnabled: Bool = false
 
-    /// Whether the composer is showing the sending state.
-    @Published public var isSending: Bool = false
-
     /// The currently selected permission mode.
     @Published public var permissionMode: PermissionMode = .custom
 

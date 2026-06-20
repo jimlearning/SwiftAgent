@@ -49,20 +49,10 @@ struct ErrorModalView: View {
     }
 
     private var actionTitle: String {
-        switch error {
-        case .sandboxDenied: return "Approve"
-        case .worktreeConflict: return "Choose Base"
-        case .invalidAPIKey401: return "Open Settings"
-        case .lowBalance402: return "Top Up"
-        case .diffMergeFailed: return "Manual Merge"
-        default: return "OK"
-        }
+        error.actionTitle ?? "OK"
     }
 
     private var actionColor: Color {
-        switch error {
-        case .sandboxDenied: return .success
-        default: return .accentPrimary
-        }
+        error.actionColor
     }
 }

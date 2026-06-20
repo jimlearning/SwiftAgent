@@ -130,6 +130,49 @@ public final class LineEditor: @unchecked Sendable {
         return false
     }
 
+    /// Background line reader that yields complete lines during agent execution.
+    /// Bare ESC calls `onCancel`; regular characters accumulate into a line buffer;
+    /// Enter completes and yields a line. Replaces the separate ESC watcher.
+    func backgroundLineReader(onCancel: @escaping @Sendable () -> Void) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            Task {
+                let fd = STDIN_FILENO
+                var buffer = ""
+                while !Task.isCancelled {
+                    var fds = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                    let ret = poll(&fds, 1, 100)
+                    guard ret > 0 else { continue }
+                    var byte: UInt8 = 0
+                    let n = Darwin.read(fd, &byte, 1)
+                    guard n > 0 else { break }
+
+                    if byte == 27 {
+                        var fds2 = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                        if poll(&fds2, 1, 50) == 0 {
+                            onCancel()
+                            buffer = ""
+                            while poll(&fds2, 1, 10) > 0 { _ = Darwin.read(fd, &byte, 1) }
+                            continue
+                        }
+                        while poll(&fds2, 1, 10) > 0 { _ = Darwin.read(fd, &byte, 1) }
+                        continue
+                    }
+
+                    if byte == 13 || byte == 10 {
+                        let line = buffer
+                        buffer = ""
+                        if !line.isEmpty { continuation.yield(line) }
+                        continue
+                    }
+
+                    if byte == 127 { _ = buffer.popLast(); continue }
+                    if byte >= 32, byte < 127 { buffer.append(Character(UnicodeScalar(byte))) }
+                }
+                continuation.finish()
+            }
+        }
+    }
+
     /// Restore terminal settings.
     public func restoreTerminal() {
         terminal.restore()

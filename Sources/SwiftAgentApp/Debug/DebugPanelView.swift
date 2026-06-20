@@ -13,6 +13,7 @@ public struct DebugPanelView: View {
     @ObservedObject private var debugLog = DebugLog.shared
     @ObservedObject private var debugger = AgentDebugger.shared
     @State private var showCopyConfirmation = false
+    @State private var selectedEntry: DebugEntry?
 
     public var body: some View {
         if !debugger.isEnabled {
@@ -162,6 +163,10 @@ public struct DebugPanelView: View {
                     .id(entry.id)
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
                     .listRowBackground(Color.clear)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedEntry = entry
+                    }
             }
             .listStyle(.plain)
             .onChange(of: debugLog.filteredEntries.last?.id) { _, _ in
@@ -176,6 +181,9 @@ public struct DebugPanelView: View {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
+        }
+        .popover(item: $selectedEntry, arrowEdge: .trailing) { entry in
+            DebugEntryDetailView(entry: entry)
         }
     }
 
@@ -297,6 +305,111 @@ public struct DebugPanelView: View {
         case .streaming: return .accentPrimary
         case .ui: return .textTertiary
         case .general: return .textSecondary
+        }
+    }
+}
+
+// MARK: - DebugEntryDetailView
+
+/// Popover detail view for a debug log entry, showing all fields.
+private struct DebugEntryDetailView: View {
+    let entry: DebugEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack(spacing: 6) {
+                Image(systemName: entry.category.icon)
+                    .font(.system(size: 14))
+                Text(entry.category.rawValue)
+                    .font(.headline)
+                Spacer()
+                severityBadge
+            }
+
+            Divider()
+
+            // Timestamp
+            labeledRow("Timestamp", entry.timestamp.formatted(Date.FormatStyle
+                .dateTime.hour().minute().second().secondFraction(.fractional(3))))
+
+            // Severity
+            labeledRow("Severity", entry.severity.rawValue)
+
+            // Subsystem
+            labeledRow("Subsystem", entry.subsystem)
+
+            // Message
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Message")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.textTertiary)
+                Text(entry.message)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Metadata
+            if !entry.metadata.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Metadata")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.textTertiary)
+                    ForEach(Array(entry.metadata.keys.sorted()), id: \.self) { key in
+                        HStack(spacing: 4) {
+                            Text("\(key):")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.textSecondary)
+                            Text(entry.metadata[key] ?? "")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.textPrimary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+
+            // ID footer
+            Text("ID: \(entry.id.uuidString)")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(.textTertiary.opacity(0.5))
+        }
+        .padding(16)
+        .frame(width: 420)
+    }
+
+    private var severityBadge: some View {
+        Text(entry.severity.rawValue)
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(severityColor.opacity(0.2))
+            .foregroundColor(severityColor)
+            .cornerRadius(4)
+    }
+
+    private func labeledRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.textTertiary)
+                .frame(width: 64, alignment: .trailing)
+            Text(value)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.textPrimary)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var severityColor: Color {
+        switch entry.severity {
+        case .debug: return .textTertiary
+        case .info: return .accentPrimary
+        case .warn: return .warning
+        case .error: return .danger
         }
     }
 }

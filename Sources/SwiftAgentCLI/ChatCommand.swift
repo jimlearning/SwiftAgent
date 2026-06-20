@@ -272,14 +272,21 @@ struct ChatCommand: AsyncParsableCommand {
 
 
         // Nanobot-style REPL
+        /// Thread-safe queue for messages typed during agent execution.
+        let lineBuffer = LineBuffer()
+
         while true {
             // Drain any keystrokes typed while the model was generating
             renderer.drainTTYInput()
 
             // In non-interactive mode (--prompt), use the provided string.
-            // Otherwise read from the terminal editor.
+            // Otherwise read from the terminal editor, unless there are
+            // queued messages from background input during agent run.
             let inputLine: String
-            if let promptArg = self.prompt {
+            if !lineBuffer.isEmpty {
+                inputLine = lineBuffer.pop()!
+                print("\r\u{001B}[KYou: \(inputLine)")
+            } else if let promptArg = self.prompt {
                 inputLine = promptArg
                 // Echo the prompt so the user sees what was sent
                 print("You: \(promptArg)")
@@ -454,13 +461,16 @@ struct ChatCommand: AsyncParsableCommand {
             }
             conversationHistory.append(Message(type: .user, content: userContent))
 
-            // Shared cancellation flag: escape watcher sets it, agent loop checks it
+            // Shared cancellation flag: ESC sets it, agent loop checks it
             let isCancelled = AtomicBool()
 
-            // Escape watcher — runs in background, sets flag on bare ESC
-            currentEscapeTask.task = Task { [isCancelled] in
-                if await editor.interceptEscape() {
+            // Background line reader — collects full lines during agent execution.
+            // Bare ESC → cancel; typed text + Enter → queued message.
+            currentEscapeTask.task = Task { [isCancelled, lineBuffer] in
+                for await line in editor.backgroundLineReader(onCancel: {
                     isCancelled.value = true
+                }) {
+                    lineBuffer.push(line)
                 }
             }
 

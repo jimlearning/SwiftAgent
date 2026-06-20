@@ -24,6 +24,10 @@ public final class LLMClient: Sendable {
     private let provider: APIProvider
     private let debugLogger: (any LLMDebugLogger)?
 
+    /// The currently active streaming task, if any. Cancelled when the run is aborted.
+    /// Access is confined to structured concurrency contexts; safe for Sendable use.
+    nonisolated(unsafe) private var activeStreamTask: Task<Void, Never>?
+
     public init(
         apiKey: String,
         baseURL: String = "https://api.anthropic.com",
@@ -58,7 +62,7 @@ public final class LLMClient: Sendable {
         toolChoice: String? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     try await self.streamRequest(
                         messages: messages,
@@ -77,6 +81,7 @@ public final class LLMClient: Sendable {
                     continuation.finish(throwing: error)
                 }
             }
+            self.activeStreamTask = task
         }
     }
 
@@ -103,7 +108,7 @@ public final class LLMClient: Sendable {
         )
 
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 var consecutive529Errors = retryOptions.initialConsecutive529Errors
                 var lastError: Error?
 
@@ -215,7 +220,16 @@ public final class LLMClient: Sendable {
                     continuation.finish()
                 }
             }
+            self.activeStreamTask = task
         }
+    }
+
+    /// Cancel the currently active streaming task, if any.
+    /// Releases the URLSession connection so a new request can proceed immediately.
+    public func cancelActiveStream() {
+        guard let task = activeStreamTask else { return }
+        task.cancel()
+        activeStreamTask = nil
     }
 
     /// Non-streaming API call, wrapped as StreamEvent values.
@@ -431,7 +445,19 @@ public final class LLMClient: Sendable {
             logger.logResponse(status: httpResponse.statusCode, headers: respHeaders)
         }
 
+        // Track whether we've received message_delta to detect stream completion
+        // when message_stop is not sent (DeepSeek keeps connection alive).
+        var receivedMessageDelta = false
+        /// Maximum idle time after message_delta before we break (seconds).
+        let postDeltaTimeout = Duration.seconds(10)
+        var lastEventTime = ContinuousClock.now
+
+        /// Inner event-processing loop. Checks for cancellation on each line.
         for try await line in bytes.lines {
+            // Cooperative cancellation — if the parent Task was cancelled,
+            // break out immediately so the URLSession connection is released.
+            if Task.isCancelled { break }
+
             guard line.hasPrefix("data: ") else { continue }
             let jsonStr = String(line.dropFirst(6))
 
@@ -446,12 +472,29 @@ public final class LLMClient: Sendable {
             }
 
             if let event = parser.parse(data: data) {
+                lastEventTime = ContinuousClock.now
+
+                // Track message_delta — it always precedes message_stop.
+                if case .messageDelta = event {
+                    receivedMessageDelta = true
+                }
+
                 continuation.yield(event)
+
                 // message_stop signals the end of the SSE stream. Break out
                 // immediately instead of waiting for the connection to close.
                 // Some providers (DeepSeek) may keep the connection alive after
                 // the final event, causing bytes.lines to block indefinitely.
                 if case .messageStop = event { break }
+            }
+
+            // After message_delta, if the connection stays idle with no
+            // message_stop, break after the post-delta timeout.
+            if receivedMessageDelta {
+                let idleDuration = ContinuousClock.now - lastEventTime
+                if idleDuration >= postDeltaTimeout {
+                    break
+                }
             }
         }
     }
