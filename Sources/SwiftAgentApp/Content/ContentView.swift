@@ -36,6 +36,11 @@ public struct ContentView: View {
                 // Message list (main content area) — AppKit-native for performance
                 AppKitChatView(threadID: thread.id)
                     .id(thread.id)  // Force-rebuild on thread switch so scroll position resets cleanly
+                    .overlay(alignment: .bottomTrailing) {
+                        if !thread.isNearBottom {
+                            scrollToBottomButton
+                        }
+                    }
 
                 // Composer at bottom
                 ComposerView(threadID: thread.id)
@@ -357,5 +362,28 @@ public struct ContentView: View {
             .keyboardShortcut("n", modifiers: .command)
             Spacer()
         }
+    }
+
+    // MARK: - Scroll-to-Bottom Button
+
+    private var scrollToBottomButton: some View {
+        Button {
+            NotificationCenter.default.post(name: .chatScrollToBottom, object: nil)
+        } label: {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(Color.black.opacity(0.6))
+                        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 12)
+        .padding(.bottom, 12)
+        .transition(.opacity.combined(with: .scale(scale: 0.8)))
+        .animation(.easeOut(duration: 0.2), value: true)
     }
 }

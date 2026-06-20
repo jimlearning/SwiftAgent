@@ -60,6 +60,8 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     @Published public var hasUnread: Bool = false
     /// Whether reasoning content is expanded (for R1/DeepSeek thinking chains).
     @Published public var reasoningExpanded: Bool = false
+    /// Whether the chat scroll position is near the bottom (controls scroll-to-bottom button visibility).
+    @Published public var isNearBottom: Bool = true
     /// Number of user messages queued while agent is running.
     @Published public var queueCount: Int = 0
     /// Counter to throttle persistence of streaming text/thinking deltas.

@@ -60,22 +60,14 @@ public final class ChatMessageCell: NSView {
     public private(set) var messageID: String = ""
     public private(set) var role: AgentMessageRole = .user
     private var blockViews: [NSView] = []
-    private var thinkingToggleButton: NSButton?
+    private var thinkingToggleButtons: [NSButton] = []
 
     /// Number of block views currently displayed (for diffing during streaming).
     public var blockCount: Int { blockViews.count }
 
-    /// Called when the reasoning toggle is clicked.
-    public var onToggleReasoning: (() -> Void)?
-
-    /// Whether reasoning blocks are expanded (driven externally from ThreadViewModel).
-    public var reasoningExpanded: Bool = false {
-        didSet {
-            if oldValue != reasoningExpanded {
-                updateReasoningVisibility()
-            }
-        }
-    }
+    /// Per-block thinking expanded state. Index aligns with thinking blocks
+    /// in the message (not with blockViews, which includes decorators).
+    private var thinkingExpanded: [Bool] = []
 
     /// True during streaming — used for "Thinking..." animation text.
     public var isStreaming: Bool = false {
@@ -111,15 +103,7 @@ public final class ChatMessageCell: NSView {
             // Skip decorative views
             if let tf = view as? NSTextField {
                 let id = tf.identifier?.rawValue ?? ""
-                if id == "thoughtTime" { continue }
-                if id == "thinkingContent" {
-                    if skipCount == messageBlockIndex {
-                        tf.stringValue = text
-                        return true
-                    }
-                    skipCount += 1
-                    continue
-                }
+                if id.hasPrefix("thinkingContent_") || id == "thoughtTime" { continue }
                 // Regular text block or spacer
                 if skipCount == messageBlockIndex {
                     tf.stringValue = text
@@ -166,18 +150,21 @@ public final class ChatMessageCell: NSView {
     ///   - message: The message to display.
     ///   - isStreaming: Whether this message is currently streaming.
     ///   - thoughtTimeString: Optional "Thought for Xs" status text.
-    ///   - reasoningExpanded: Whether thinking blocks should be expanded.
     public func configure(
         with message: AgentMessage,
         isStreaming: Bool,
-        thoughtTimeString: String?,
-        reasoningExpanded: Bool
+        thoughtTimeString: String?
     ) {
         self.messageID = message.id
         self.role = message.role
         self.isStreaming = isStreaming
-        self.reasoningExpanded = reasoningExpanded
         self.thoughtTimeString = thoughtTimeString
+
+        // Initialize per-block expanded state from the message's thinking blocks
+        self.thinkingExpanded = message.blocks.compactMap { block -> Bool? in
+            if case .thinking(_, let exp) = block { return exp }
+            return nil
+        }
 
         let oldHeight = frame.height
         DLog("configure() role=\(role) blocks=\(message.blocks.count) streaming=\(isStreaming) oldHeight=\(oldHeight)")
@@ -185,10 +172,11 @@ public final class ChatMessageCell: NSView {
         // Remove old block views
         blockViews.forEach { $0.removeFromSuperview() }
         blockViews.removeAll()
-        thinkingToggleButton = nil
+        thinkingToggleButtons.removeAll()
 
         // Build new block views
         var subviews: [NSView] = []
+        var thinkingIdx = 0
 
         for block in message.blocks {
             switch block {
@@ -200,8 +188,9 @@ public final class ChatMessageCell: NSView {
                 }
 
             case .thinking(let text, let isExpanded):
-                let thinkingViews = makeThinkingBlock(text, isExpanded: isExpanded)
+                let thinkingViews = makeThinkingBlock(text, isExpanded: isExpanded, thinkingIndex: thinkingIdx)
                 subviews.append(contentsOf: thinkingViews)
+                thinkingIdx += 1
 
             case .toolUse(let toolUse):
                 subviews.append(makeToolUseCard(toolUse))
@@ -464,7 +453,7 @@ public final class ChatMessageCell: NSView {
 
     // MARK: Thinking Block
 
-    private func makeThinkingBlock(_ content: String, isExpanded: Bool) -> [NSView] {
+    private func makeThinkingBlock(_ content: String, isExpanded: Bool, thinkingIndex: Int) -> [NSView] {
         var views: [NSView] = []
 
         // Toggle button
@@ -474,18 +463,20 @@ public final class ChatMessageCell: NSView {
         btn.isBordered = false
         btn.imagePosition = .imageLeading
         btn.target = self
-        btn.action = #selector(thinkingToggled)
-        btn.attributedTitle = makeThinkingToggleTitle(expanded: reasoningExpanded)
+        btn.action = #selector(thinkingToggled(_:))
+        btn.tag = thinkingIndex
+        let expanded = thinkingIndex < thinkingExpanded.count ? thinkingExpanded[thinkingIndex] : false
+        btn.attributedTitle = makeThinkingToggleTitle(expanded: expanded)
         btn.sizeToFit()
-        thinkingToggleButton = btn
+        thinkingToggleButtons.append(btn)
         views.append(btn)
 
         // Always create content view; show/hide based on expansion state
         if !content.isEmpty {
             let contentLabel = makeLabel(content, font: saCaptionFont, color: .saTextTertiary)
             contentLabel.alignment = .left
-            contentLabel.identifier = NSUserInterfaceItemIdentifier("thinkingContent")
-            contentLabel.isHidden = !reasoningExpanded
+            contentLabel.identifier = NSUserInterfaceItemIdentifier("thinkingContent_\(thinkingIndex)")
+            contentLabel.isHidden = !expanded
             views.append(contentLabel)
         }
 
@@ -511,31 +502,37 @@ public final class ChatMessageCell: NSView {
         return attr
     }
 
-    @objc private func thinkingToggled() {
+    @objc private func thinkingToggled(_ sender: NSButton) {
+        let idx = sender.tag
+        guard idx >= 0, idx < thinkingExpanded.count else { return }
         let oldHeight = frame.height
-        DLog("🔘 thinkingToggled — old cell height=\(oldHeight) reasoningExpanded=\(reasoningExpanded)")
-        onToggleReasoning?()
-        // Height will update when configure() is called next
+        DLog("🔘 thinkingToggled idx=\(idx) — old cell height=\(oldHeight) wasExpanded=\(thinkingExpanded[idx])")
+        thinkingExpanded[idx].toggle()
+        updateSingleThinkingBlock(idx)
+        // Height will adjust when layout runs
     }
 
-    private func updateReasoningVisibility() {
-        guard let btn = thinkingToggleButton else { return }
-        let oldHeight = frame.height
-        btn.attributedTitle = makeThinkingToggleTitle(expanded: reasoningExpanded)
+    private func updateSingleThinkingBlock(_ idx: Int) {
+        guard idx < thinkingExpanded.count, idx < thinkingToggleButtons.count else { return }
+        let expanded = thinkingExpanded[idx]
+        let btn = thinkingToggleButtons[idx]
+        btn.attributedTitle = makeThinkingToggleTitle(expanded: expanded)
+        btn.sizeToFit()
 
-        let contentID = NSUserInterfaceItemIdentifier("thinkingContent")
+        let contentID = NSUserInterfaceItemIdentifier("thinkingContent_\(idx)")
         for view in blockViews where view.identifier == contentID {
-            view.isHidden = !reasoningExpanded
+            view.isHidden = !expanded
         }
 
-        DLog("🔘 updateReasoningVisibility expanded=\(reasoningExpanded) oldHeight=\(oldHeight) — marking dirty")
         needsLayout = true
         superview?.needsLayout = true
     }
 
     private func updateStreamingState() {
-        guard let btn = thinkingToggleButton else { return }
-        btn.attributedTitle = makeThinkingToggleTitle(expanded: reasoningExpanded)
+        for (idx, btn) in thinkingToggleButtons.enumerated() {
+            let expanded = idx < thinkingExpanded.count ? thinkingExpanded[idx] : false
+            btn.attributedTitle = makeThinkingToggleTitle(expanded: expanded)
+        }
     }
 
     // MARK: Tool Use Card

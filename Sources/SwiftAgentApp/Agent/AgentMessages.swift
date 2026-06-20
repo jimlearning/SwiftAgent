@@ -79,23 +79,17 @@ public struct AgentMessage: Identifiable, Equatable {
 
     public mutating func appendThinking(_ text: String) {
         renderToken &+= 1
-        if let lastIdx = blocks.lastIndex(where: {
-            if case .thinking = $0 { return true }
-            return false
-        }) {
-            if case .thinking(let existing, let expanded) = blocks[lastIdx] {
-                blocks[lastIdx] = .thinking(existing + text, isExpanded: expanded)
-                return
-            }
+        // Only merge into the last thinking block if it is the LAST block
+        // in the array. If tool_use, tool_result, or text blocks have been
+        // inserted after the last thinking block, the new thinking content
+        // belongs to a NEW thinking block that should appear after them.
+        if let lastBlock = blocks.last, case .thinking(let existing, let expanded) = lastBlock {
+            blocks[blocks.count - 1] = .thinking(existing + text, isExpanded: expanded)
+            return
         }
-        // Insert new thinking block before tool_use/tool_result blocks,
-        // after text blocks — same positioning as appendText.
-        let firstToolIdx = blocks.firstIndex(where: { $0.toolUse != nil || $0.toolResult != nil })
-        if let idx = firstToolIdx {
-            blocks.insert(.thinking(text), at: idx)
-        } else {
-            blocks.append(.thinking(text))
-        }
+        // Create a new thinking block at the end of the blocks array,
+        // preserving interleaved think→tool→think ordering.
+        blocks.append(.thinking(text))
     }
 
     public mutating func addToolUse(_ block: ToolUseBlock) {
@@ -283,16 +277,27 @@ extension AgentMessage {
     }
 
     /// Rebuild AgentMessage list from RunResult.turns after agent loop completes.
+    ///
+    /// All turns in a single agent run share the same user input (QueryEngine reuses
+    /// the original `userInput` for every Turn). The user message is only emitted for
+    /// the FIRST turn to avoid duplication; subsequent turns contribute only their
+    /// assistant message and tool results.
     public static func fromTurns(_ turns: [Turn], lastAssistantID: String? = nil) -> [AgentMessage] {
         var result: [AgentMessage] = []
+        var isFirstTurn = true
         for turn in turns {
-            let userText = turn.userMessage.content.compactMap { block -> String? in
-                if case .text(let text) = block { return text }
-                return nil
-            }.joined()
-            if !userText.isEmpty {
-                result.append(AgentMessage(id: turn.userMessage.uuid, role: .user,
-                                           blocks: [.text(userText)], timestamp: turn.userMessage.timestamp))
+            // Only emit user message for the first turn — all turns in a run
+            // share the same user input, so repeating it causes duplication.
+            if isFirstTurn {
+                let userText = turn.userMessage.content.compactMap { block -> String? in
+                    if case .text(let text) = block { return text }
+                    return nil
+                }.joined()
+                if !userText.isEmpty {
+                    result.append(AgentMessage(id: turn.userMessage.uuid, role: .user,
+                                               blocks: [.text(userText)], timestamp: turn.userMessage.timestamp))
+                }
+                isFirstTurn = false
             }
             if let assistant = turn.assistantMessage {
                 result.append(AgentMessage(

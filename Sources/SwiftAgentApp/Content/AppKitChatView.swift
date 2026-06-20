@@ -2,6 +2,13 @@ import SwiftUI
 import AppKit
 import Combine
 
+// MARK: - Scroll-to-Bottom Notification
+
+extension Notification.Name {
+    /// Posted when the SwiftUI overlay button requests a scroll-to-bottom.
+    static let chatScrollToBottom = Notification.Name("chatScrollToBottom")
+}
+
 // MARK: - Debug Logging
 
 private let kDebugBridge = true
@@ -73,7 +80,6 @@ public struct AppKitChatView: NSViewRepresentable {
 
         private var messagesCancellable: AnyCancellable?
         private var stateCancellable: AnyCancellable?
-        private var reasoningCancellable: AnyCancellable?
 
         /// Track the last known message count for diffing.
         private var lastMessageCount: Int = 0
@@ -81,6 +87,11 @@ public struct AppKitChatView: NSViewRepresentable {
         private var lastStreamingMessageID: String?
         /// Track the block count of the streaming message for in-place vs full-rebuild decision.
         private var lastStreamingBlockCount: Int = 0
+
+        /// Observer for clip view bounds changes (scroll-to-bottom button visibility).
+        private var clipViewBoundsObserver: NSKeyValueObservation?
+        /// Observer for the scroll-to-bottom notification from SwiftUI overlay.
+        private var scrollToBottomObserver: NSObjectProtocol?
 
         init(threadID: String, appViewModel: AppViewModel) {
             self.currentThreadID = threadID
@@ -114,12 +125,26 @@ public struct AppKitChatView: NSViewRepresentable {
                     self?.handleStateChanged(state)
                 }
 
-            // Observe reasoning expanded toggle
-            reasoningCancellable = vm.$reasoningExpanded
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] expanded in
-                    self?.updateReasoningExpanded(expanded)
+            // Observe scroll position for the floating scroll-to-bottom button
+            if let clipView = scrollView?.contentView {
+                clipView.postsBoundsChangedNotifications = true
+                clipViewBoundsObserver = clipView.observe(\.bounds, options: [.new, .old]) { [weak self] _, change in
+                    guard let self, let vm = self.resolveViewModel() else { return }
+                    let newNearBottom = self.scrollView?.isNearBottom ?? true
+                    if vm.isNearBottom != newNearBottom {
+                        vm.isNearBottom = newNearBottom
+                    }
                 }
+            }
+
+            // Listen for scroll-to-bottom requests from the SwiftUI overlay button
+            scrollToBottomObserver = NotificationCenter.default.addObserver(
+                forName: .chatScrollToBottom,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scrollView?.scrollToBottom(animated: true)
+            }
 
             // Initial load
             handleMessagesChanged(vm.messages, isInitial: true)
@@ -128,10 +153,14 @@ public struct AppKitChatView: NSViewRepresentable {
         func stopObserving() {
             messagesCancellable?.cancel()
             stateCancellable?.cancel()
-            reasoningCancellable?.cancel()
+            clipViewBoundsObserver?.invalidate()
+            if let observer = scrollToBottomObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
             messagesCancellable = nil
             stateCancellable = nil
-            reasoningCancellable = nil
+            clipViewBoundsObserver = nil
+            scrollToBottomObserver = nil
             lastMessageCount = 0
             lastStreamingMessageID = nil
             lastStreamingBlockCount = 0
@@ -231,13 +260,8 @@ public struct AppKitChatView: NSViewRepresentable {
             cell.configure(
                 with: message,
                 isStreaming: message.isStreaming,
-                thoughtTimeString: thoughtTime,
-                reasoningExpanded: vm?.reasoningExpanded ?? false
+                thoughtTimeString: thoughtTime
             )
-
-            cell.onToggleReasoning = { [weak vm] in
-                vm?.reasoningExpanded.toggle()
-            }
         }
 
         private func rebuildAllCells(messages: [AgentMessage]) {
@@ -289,15 +313,6 @@ public struct AppKitChatView: NSViewRepresentable {
         private func replaceLastCell(_ cell: ChatMessageCell) {
             guard let scrollView = scrollView else { return }
             scrollView.updateLastCell(cell)
-        }
-
-        private func updateReasoningExpanded(_ expanded: Bool) {
-            guard let scrollView = scrollView else { return }
-            for cell in scrollView.chatDocument.cells {
-                cell.reasoningExpanded = expanded
-            }
-            scrollView.chatDocument.needsLayout = true
-            scrollView.needsLayout = true
         }
 
         // MARK: - Helpers
