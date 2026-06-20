@@ -1,5 +1,12 @@
 import Foundation
 
+/// Extract a TimeInterval from a database row, accepting both Double and Int64.
+private func timeInterval(from row: [String: Any], _ key: String) -> Double? {
+    if let d = row[key] as? Double { return d }
+    if let i = row[key] as? Int64 { return Double(i) }
+    return nil
+}
+
 // MARK: - Persisted Project
 
 public struct PersistedProject: Identifiable, Equatable, Sendable {
@@ -28,8 +35,8 @@ public struct PersistedProject: Identifiable, Equatable, Sendable {
         guard let id = row["id"] as? String,
               let name = row["name"] as? String,
               let path = row["path"] as? String,
-              let createdAt = row["created_at"] as? Double,
-              let updatedAt = row["updated_at"] as? Double
+              let createdAt = timeInterval(from: row, "created_at"),
+              let updatedAt = timeInterval(from: row, "updated_at")
         else { return nil }
         self.id = id
         self.name = name
@@ -37,6 +44,7 @@ public struct PersistedProject: Identifiable, Equatable, Sendable {
         self.createdAt = Date(timeIntervalSince1970: createdAt)
         self.updatedAt = Date(timeIntervalSince1970: updatedAt)
     }
+
 }
 
 // MARK: - Persisted Thread
@@ -90,8 +98,8 @@ public struct PersistedThread: Identifiable, Equatable, Sendable {
               let sandboxMode = row["sandbox_mode"] as? String,
               let executionEnv = row["execution_env"] as? String,
               let model = row["model"] as? String,
-              let createdAt = row["created_at"] as? Double,
-              let updatedAt = row["updated_at"] as? Double
+              let createdAt = timeInterval(from: row, "created_at"),
+              let updatedAt = timeInterval(from: row, "updated_at")
         else { return nil }
         self.id = id
         self.projectId = row["project_id"] as? String
@@ -104,6 +112,35 @@ public struct PersistedThread: Identifiable, Equatable, Sendable {
         self.model = model
         self.createdAt = Date(timeIntervalSince1970: createdAt)
         self.updatedAt = Date(timeIntervalSince1970: updatedAt)
+    }
+}
+
+// MARK: - FTS Search Result
+
+/// A message match from FTS5 full-text search.
+public struct FTSearchResult: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let threadId: String
+    public let role: String
+    public let content: String
+    /// Snippet with `<b>...</b>` highlight markers from FTS5.
+    public let snippet: String
+    public let createdAt: Date
+
+    public init(
+        id: String,
+        threadId: String,
+        role: String,
+        content: String,
+        snippet: String,
+        createdAt: Date
+    ) {
+        self.id = id
+        self.threadId = threadId
+        self.role = role
+        self.content = content
+        self.snippet = snippet
+        self.createdAt = createdAt
     }
 }
 
@@ -139,7 +176,7 @@ public struct PersistedMessage: Identifiable, Equatable, Sendable {
               let threadId = row["thread_id"] as? String,
               let role = row["role"] as? String,
               let content = row["content"] as? String,
-              let createdAt = row["created_at"] as? Double
+              let createdAt = timeInterval(from: row, "created_at")
         else { return nil }
         self.id = id
         self.threadId = threadId
