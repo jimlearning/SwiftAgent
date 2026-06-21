@@ -114,12 +114,23 @@ public final class TranscriptStore: @unchecked Sendable {
 
     /// Read only transcript (message) entries from the file, excluding metadata entries
     /// like last-prompt, custom-title, summary, etc.
+    ///
+    /// Streaming deltas write the same message UUID multiple times as content accumulates
+    /// (every ~5 text deltas, every tool event). On read, we deduplicate by keeping only
+    /// the LAST occurrence of each UUID — that snapshot has the most complete content.
     public func readMessages(sessionId: String, projectPath: String) throws -> [SerializedMessage] {
         let entries = try readAll(sessionId: sessionId, projectPath: projectPath)
-        return entries.compactMap { entry in
+        let messages = entries.compactMap { entry -> SerializedMessage? in
             if case .transcript(let msg) = entry { return msg }
             return nil
         }
+        // Deduplicate: keep last occurrence of each UUID (latest streaming snapshot)
+        var seen = [String: Int]()  // uuid → index
+        for (i, msg) in messages.enumerated() {
+            seen[msg.uuid] = i
+        }
+        let deduplicated = seen.values.sorted().map { messages[$0] }
+        return deduplicated
     }
 
     /// Read only metadata entries (non-transcript) from the file.
