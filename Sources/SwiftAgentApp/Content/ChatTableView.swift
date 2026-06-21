@@ -128,7 +128,7 @@ public final class ChatTableView: NSTableView {
         items[index] = message
         self.foldState = foldState
         self.thoughtTime = thoughtTime
-        cachedRowHeights.removeValue(forKey: message.id)
+        cachedRowHeights[message.id] = nil
 
         if let cell = view(atColumn: 0, row: index, makeIfNecessary: false) as? ChatTableRowView {
             cell.configure(
@@ -148,6 +148,9 @@ public final class ChatTableView: NSTableView {
         items[rowIndex] = message
         isStreaming = true
         lastStreamingBlockCount = message.blocks.count
+
+        // Clear stale height — streaming text grows every frame.
+        cachedRowHeights[message.id] = nil
 
         if let cell = view(atColumn: 0, row: rowIndex, makeIfNecessary: false) as? ChatTableRowView {
             _ = cell.updateStreamingBlocks(message.blocks)
@@ -277,13 +280,22 @@ extension ChatTableView: NSTableViewDataSource {
         guard row < items.count else { return 40 }
         let message = items[row]
 
-        let cacheKey = "\(message.id):\(message.blocks.count):\(message.isStreaming)"
-        if let cached = cachedRowHeights[cacheKey] {
+        // Never cache during streaming — text grows every frame so height is stale immediately.
+        if !message.isStreaming, let cached = cachedRowHeights[message.id] {
             return cached
         }
 
-        let height = ChatTableRowView.estimatedHeight(for: message)
-        cachedRowHeights[cacheKey] = height
+        let width = tableColumns.first?.width ?? lastLayoutWidth
+        let contentWidth = max(width - kBlockHPadding * 2, 100)
+        let height = ChatTableRowView.measureHeight(
+            for: message,
+            contentWidth: contentWidth,
+            foldState: foldState
+        )
+
+        if !message.isStreaming {
+            cachedRowHeights[message.id] = height
+        }
         return height
     }
 }

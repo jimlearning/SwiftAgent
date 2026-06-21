@@ -43,6 +43,8 @@ public final class ChatTableRowView: NSTableCellView {
     }
 
     private func setupStack() {
+        clipsToBounds = true
+
         blockStack.orientation = .vertical
         blockStack.alignment = .leading
         blockStack.distribution = .fill
@@ -118,8 +120,14 @@ public final class ChatTableRowView: NSTableCellView {
         blockViews.forEach { blockStack.removeView($0) }
         blockViews.removeAll()
 
+        // Available width for block content inside the stack (accounts for edge insets).
+        let layoutWidth = max(bounds.width - kBlockHPadding * 2, 100)
+
         for (index, block) in message.blocks.enumerated() {
-            if let view = makeBlockView(for: block, message: message, index: index, isStreaming: isStreaming, thoughtTimeString: thoughtTimeString) {
+            if let view = makeBlockView(for: block, message: message, index: index,
+                                        isStreaming: isStreaming,
+                                        thoughtTimeString: thoughtTimeString,
+                                        layoutWidth: layoutWidth) {
                 blockViews.append(view)
                 blockStack.addView(view, in: .bottom)
             }
@@ -142,12 +150,13 @@ public final class ChatTableRowView: NSTableCellView {
         message: AgentMessage,
         index: Int,
         isStreaming: Bool,
-        thoughtTimeString: String?
+        thoughtTimeString: String?,
+        layoutWidth: CGFloat
     ) -> (NSView & ChatBlockView)? {
         switch block {
         case .text(let text):
             let view = TextBlockView()
-            view.configure(text: text, role: message.role)
+            view.configure(text: text, role: message.role, layoutWidth: layoutWidth)
             return view
 
         case .thinking(let content, _):
@@ -158,6 +167,7 @@ public final class ChatTableRowView: NSTableCellView {
                 expanded: expanded,
                 isStreaming: isStreaming,
                 thoughtTimeString: thoughtTimeString,
+                layoutWidth: layoutWidth,
                 onToggle: { [weak self] in
                     self?.handleFoldToggle(.thinking(messageID: message.id, blockIndex: index))
                 }
@@ -172,7 +182,7 @@ public final class ChatTableRowView: NSTableCellView {
         case .toolResult(let result):
             let view = ToolResultBlockView()
             let expanded = !(foldState?.isCollapsed(.toolResult(messageID: message.id, toolUseID: result.toolUseID)) ?? false)
-            view.configure(result: result, expanded: expanded)
+            view.configure(result: result, expanded: expanded, layoutWidth: layoutWidth)
             return view
 
         case .systemReminder(let text):
@@ -193,6 +203,7 @@ public final class ChatTableRowView: NSTableCellView {
     /// Re-apply fold state to all block views.
     public func applyFoldState() {
         guard let message = currentMessage, let fs = foldState else { return }
+        let layoutWidth = max(bounds.width - kBlockHPadding * 2, 100)
 
         for (index, view) in blockViews.enumerated() {
             guard index < message.blocks.count else { continue }
@@ -207,6 +218,7 @@ public final class ChatTableRowView: NSTableCellView {
                         expanded: shouldExpand,
                         isStreaming: message.isStreaming,
                         thoughtTimeString: nil,
+                        layoutWidth: layoutWidth,
                         onToggle: { [weak self] in
                             self?.handleFoldToggle(.thinking(messageID: message.id, blockIndex: index))
                         }
@@ -215,12 +227,10 @@ public final class ChatTableRowView: NSTableCellView {
             case .toolResult(let result):
                 if let resultBlock = view as? ToolResultBlockView {
                     let shouldExpand = !fs.isCollapsed(.toolResult(messageID: message.id, toolUseID: result.toolUseID))
-                    resultBlock.configure(result: result, expanded: shouldExpand)
+                    resultBlock.configure(result: result, expanded: shouldExpand, layoutWidth: layoutWidth)
                 }
             case .toolUse(let toolUse):
                 if let toolBlock = view as? ToolUseBlockView {
-                    // Tool use doesn't have expand/collapse in the new design,
-                    // but we keep the status updated
                     toolBlock.updateStatus(toolUse.status)
                 }
             default: break
@@ -246,12 +256,87 @@ public final class ChatTableRowView: NSTableCellView {
         }
     }
 
-    // MARK: - Height Estimation
+    // MARK: - Height Measurement
 
-    /// Estimated row height for incremental layout.
-    public static func estimatedHeight(for message: AgentMessage) -> CGFloat {
-        let basePerBlock: CGFloat = 24
-        return CGFloat(message.blocks.count) * basePerBlock + 20
+    /// Compute the actual row height for a message, given the available content width.
+    /// Used by `ChatTableView.heightOfRow` instead of the old rough estimate that
+    /// ignored text length and caused cell stacking.
+    public static func measureHeight(
+        for message: AgentMessage,
+        contentWidth: CGFloat,
+        foldState: FoldState
+    ) -> CGFloat {
+        // Stack edge insets: top + bottom = kBlockVSpacing * 2
+        var total: CGFloat = kBlockVSpacing * 2
+
+        for (index, block) in message.blocks.enumerated() {
+            total += blockHeight(block, message: message, index: index,
+                                 contentWidth: contentWidth, foldState: foldState)
+            // NSStackView.spacing between arranged views
+            if index < message.blocks.count - 1 {
+                total += kBlockVSpacing
+            }
+        }
+
+        return max(total, 36)
+    }
+
+    /// Height of a single block, accounting for its type and fold state.
+    private static func blockHeight(
+        _ block: AgentMessageBlock,
+        message: AgentMessage,
+        index: Int,
+        contentWidth: CGFloat,
+        foldState: FoldState
+    ) -> CGFloat {
+        switch block {
+        case .text(let text):
+            let role: AgentMessageRole = message.role
+            let maxW: CGFloat = role == .user
+                ? kUserBubbleMaxW - kUserBubbleHPad * 2
+                : contentWidth
+            return measureTextHeight(text, font: cbBodyFont, width: maxW)
+
+        case .thinking(let content, _):
+            let headerH: CGFloat = 22
+            let isCollapsed = foldState.isCollapsed(.thinking(messageID: message.id, blockIndex: index))
+            if isCollapsed || content.isEmpty {
+                return headerH
+            }
+            // contentLabel has 16pt indent, so available width = layoutWidth - 16
+            return headerH + kBlockVSpacing + measureTextHeight(content, font: cbCaptionFont, width: contentWidth - 16)
+
+        case .toolUse:
+            // icon + name row + summary row ≈ ~34pt (kToolCardVPad * 2 + line + gap + line)
+            return 36
+
+        case .toolResult(let result):
+            let headerH: CGFloat = 16
+            // contentLabel wraps at layoutWidth (same as contentWidth passed to configure).
+            let truncated = String(result.content.prefix(500))
+            let textH = measureTextHeight(truncated, font: NSFont.systemFont(ofSize: 10), width: contentWidth)
+            return headerH + 4 + textH
+
+        case .systemReminder(let text):
+            return measureTextHeight(text, font: cbSmallFont, width: contentWidth) + 4
+        }
+    }
+
+    /// Measure the height of a string when rendered with the given font and width.
+    private static let _sizingLabel: NSTextField = {
+        let tf = NSTextField(labelWithString: "")
+        tf.lineBreakMode = .byWordWrapping
+        tf.maximumNumberOfLines = 0
+        return tf
+    }()
+
+    private static func measureTextHeight(_ text: String, font: NSFont, width: CGFloat) -> CGFloat {
+        guard width > 0, !text.isEmpty else { return 0 }
+        _sizingLabel.font = font
+        _sizingLabel.stringValue = text
+        _sizingLabel.preferredMaxLayoutWidth = width
+        let fit = _sizingLabel.sizeThatFits(CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
+        return ceil(fit.height)
     }
 
     // MARK: - Overrides

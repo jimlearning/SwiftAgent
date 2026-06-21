@@ -16,10 +16,10 @@ extension NSColor {
 
 // MARK: - Font Tokens
 
-private nonisolated(unsafe) let cbBodyFont    = NSFont.systemFont(ofSize: 13)
-private nonisolated(unsafe) let cbCaptionFont = NSFont.systemFont(ofSize: 12)
-private nonisolated(unsafe) let cbSmallFont   = NSFont.systemFont(ofSize: 10)
-private nonisolated(unsafe) let cbCodeFont    = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+nonisolated(unsafe) let cbBodyFont    = NSFont.systemFont(ofSize: 13)
+nonisolated(unsafe) let cbCaptionFont = NSFont.systemFont(ofSize: 12)
+nonisolated(unsafe) let cbSmallFont   = NSFont.systemFont(ofSize: 10)
+nonisolated(unsafe) let cbCodeFont    = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
 // MARK: - Layout Constants
 
@@ -76,6 +76,7 @@ extension AgentMessageBlock {
 public final class TextBlockView: NSView, ChatBlockView {
     public private(set) var blockKind: AgentMessageBlock.BlockKind = .text
     private var role: AgentMessageRole = .assistant
+    private var layoutWidth: CGFloat = 600
 
     private let label = NSTextField(labelWithString: "")
 
@@ -86,7 +87,6 @@ public final class TextBlockView: NSView, ChatBlockView {
         label.isSelectable = true
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 0
-        label.preferredMaxLayoutWidth = 600
         addSubview(label)
     }
 
@@ -94,8 +94,11 @@ public final class TextBlockView: NSView, ChatBlockView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    public func configure(text: String, role: AgentMessageRole) {
+    /// - Parameter layoutWidth: The width this view will occupy in the stack,
+    ///   used to compute correct wrapping height.
+    public func configure(text: String, role: AgentMessageRole, layoutWidth: CGFloat = 600) {
         self.role = role
+        self.layoutWidth = layoutWidth
         label.stringValue = text
 
         switch role {
@@ -108,7 +111,7 @@ public final class TextBlockView: NSView, ChatBlockView {
             label.font = cbBodyFont
             label.textColor = .cbTextPrimary
             label.alignment = .left
-            label.preferredMaxLayoutWidth = 600
+            label.preferredMaxLayoutWidth = layoutWidth
         }
 
         invalidateIntrinsicContentSize()
@@ -133,7 +136,7 @@ public final class TextBlockView: NSView, ChatBlockView {
         let maxW: CGFloat
         switch role {
         case .user: maxW = kUserBubbleMaxW - kUserBubbleHPad * 2
-        case .assistant, .system: maxW = 600
+        case .assistant, .system: maxW = layoutWidth
         }
         let fit = label.sizeThatFits(CGSize(width: maxW, height: CGFloat.greatestFiniteMagnitude))
         return CGSize(width: maxW, height: fit.height)
@@ -152,6 +155,7 @@ public final class ThinkingBlockView: NSView, ChatBlockView {
     private let container = NSView()
 
     private var isExpanded: Bool = false
+    private var layoutWidth: CGFloat = 600
     private var onToggle: (() -> Void)?
 
     public override init(frame: NSRect) {
@@ -173,6 +177,7 @@ public final class ThinkingBlockView: NSView, ChatBlockView {
         contentLabel.textColor = .cbTextTertiary
         contentLabel.lineBreakMode = .byWordWrapping
         contentLabel.maximumNumberOfLines = 0
+        contentLabel.preferredMaxLayoutWidth = layoutWidth - 16
         contentLabel.isHidden = true
         addSubview(contentLabel)
     }
@@ -182,20 +187,16 @@ public final class ThinkingBlockView: NSView, ChatBlockView {
     }
 
     /// Configure or reconfigure the thinking block.
-    /// - Parameters:
-    ///   - content: The thinking text (may be empty during streaming).
-    ///   - expanded: Whether the content is currently expanded.
-    ///   - isStreaming: True while the assistant is still generating.
-    ///   - thoughtTimeString: "Thought for Xs" after streaming completes, nil if not yet known.
-    ///   - onToggle: Called when the user clicks the toggle button.
     public func configure(
         content: String,
         expanded: Bool,
         isStreaming: Bool,
         thoughtTimeString: String?,
+        layoutWidth: CGFloat = 600,
         onToggle: @escaping () -> Void
     ) {
         self.isExpanded = expanded
+        self.layoutWidth = layoutWidth
         self.onToggle = onToggle
 
         let title: String
@@ -212,6 +213,7 @@ public final class ThinkingBlockView: NSView, ChatBlockView {
         toggleButton.sizeToFit()
 
         contentLabel.stringValue = content
+        contentLabel.preferredMaxLayoutWidth = layoutWidth - 16
         contentLabel.isHidden = !expanded || content.isEmpty
 
         invalidateIntrinsicContentSize()
@@ -253,13 +255,14 @@ public final class ThinkingBlockView: NSView, ChatBlockView {
         var h = toggleButton.bounds.height
 
         if isExpanded && !contentLabel.stringValue.isEmpty {
+            let w = max(layoutWidth - 16, 100)
             let fit = contentLabel.sizeThatFits(
-                CGSize(width: CGFloat(600 - 16), height: CGFloat.greatestFiniteMagnitude)
+                CGSize(width: w, height: CGFloat.greatestFiniteMagnitude)
             )
             h += kBlockVSpacing + fit.height
         }
 
-        return CGSize(width: 600, height: h)
+        return CGSize(width: layoutWidth, height: h)
     }
 }
 
@@ -446,6 +449,7 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
     private let contentLabel = NSTextField(wrappingLabelWithString: "")
 
     private var isExpanded: Bool = false
+    private var layoutWidth: CGFloat = 400
     private var toolUseID: String = ""
 
     public override init(frame: NSRect) {
@@ -468,6 +472,7 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
         contentLabel.isSelectable = true
         contentLabel.lineBreakMode = .byWordWrapping
         contentLabel.maximumNumberOfLines = 6
+        contentLabel.preferredMaxLayoutWidth = layoutWidth
         addSubview(contentLabel)
     }
 
@@ -475,9 +480,10 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    public func configure(result: ToolResultBlock, expanded: Bool) {
+    public func configure(result: ToolResultBlock, expanded: Bool, layoutWidth: CGFloat = 400) {
         self.toolUseID = result.toolUseID
         self.isExpanded = expanded
+        self.layoutWidth = layoutWidth
 
         if result.isError {
             headerIcon.stringValue = "✕"
@@ -493,6 +499,7 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
 
         let truncated = String(result.content.prefix(500))
         contentLabel.stringValue = truncated
+        contentLabel.preferredMaxLayoutWidth = layoutWidth
         contentLabel.maximumNumberOfLines = expanded ? 0 : 6
 
         headerIcon.sizeToFit()
@@ -532,9 +539,9 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
         let headerH = max(headerIcon.bounds.height, headerLabel.bounds.height)
 
         let fit = contentLabel.sizeThatFits(
-            CGSize(width: 300, height: CGFloat.greatestFiniteMagnitude)
+            CGSize(width: layoutWidth, height: CGFloat.greatestFiniteMagnitude)
         )
-        return CGSize(width: 400, height: headerH + 4 + fit.height)
+        return CGSize(width: layoutWidth, height: headerH + 4 + fit.height)
     }
 }
 
