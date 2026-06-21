@@ -70,15 +70,15 @@ public final class ChatTableRowView: NSTableCellView {
 
     /// Configure (or reconfigure) this row for a given message.
     ///
-    /// - Parameter message: The AgentMessage to display.
-    /// - Parameter foldState: Current folding state.
-    /// - Parameter isStreaming: Whether this message is actively streaming.
-    /// - Parameter thoughtTimeString: "Thought for Xs" after streaming completes.
+    /// - Parameter layoutWidth: Available content width for block views.
+    ///   Must be the table column width minus horizontal padding, NOT bounds.width
+    ///   (which is zero for newly-created cells).
     public func configure(
         with message: AgentMessage,
         foldState: FoldState,
         isStreaming: Bool,
-        thoughtTimeString: String?
+        thoughtTimeString: String?,
+        layoutWidth: CGFloat
     ) {
         self.messageID = message.id
         self.role = message.role
@@ -86,12 +86,13 @@ public final class ChatTableRowView: NSTableCellView {
         self.foldState = foldState
 
         if isStreaming && message.blocks.count == blockViews.count {
-            // Same block count — try in-place update
             if !updateBlocksInPlace(for: message) {
-                rebuildBlocks(for: message, isStreaming: isStreaming, thoughtTimeString: thoughtTimeString)
+                rebuildBlocks(for: message, isStreaming: isStreaming,
+                              thoughtTimeString: thoughtTimeString, layoutWidth: layoutWidth)
             }
         } else {
-            rebuildBlocks(for: message, isStreaming: isStreaming, thoughtTimeString: thoughtTimeString)
+            rebuildBlocks(for: message, isStreaming: isStreaming,
+                          thoughtTimeString: thoughtTimeString, layoutWidth: layoutWidth)
         }
     }
 
@@ -114,14 +115,11 @@ public final class ChatTableRowView: NSTableCellView {
     private func rebuildBlocks(
         for message: AgentMessage,
         isStreaming: Bool,
-        thoughtTimeString: String?
+        thoughtTimeString: String?,
+        layoutWidth: CGFloat
     ) {
-        // Remove old block views
         blockViews.forEach { blockStack.removeView($0) }
         blockViews.removeAll()
-
-        // Available width for block content inside the stack (accounts for edge insets).
-        let layoutWidth = max(bounds.width - kBlockHPadding * 2, 100)
 
         for (index, block) in message.blocks.enumerated() {
             if let view = makeBlockView(for: block, message: message, index: index,
@@ -292,29 +290,28 @@ public final class ChatTableRowView: NSTableCellView {
         switch block {
         case .text(let text):
             let role: AgentMessageRole = message.role
-            let maxW: CGFloat = role == .user
-                ? kUserBubbleMaxW - kUserBubbleHPad * 2
-                : contentWidth
-            return measureTextHeight(text, font: cbBodyFont, width: maxW)
+            if role == .user {
+                let textH = measureTextHeight(text, font: cbBodyFont,
+                                              width: kUserBubbleMaxW - kUserBubbleHPad * 2)
+                return textH + kUserBubbleVPad * 2
+            }
+            return measureTextHeight(text, font: cbBodyFont, width: contentWidth)
 
         case .thinking(let content, _):
-            let headerH: CGFloat = 22
+            let headerH: CGFloat = 24
             let isCollapsed = foldState.isCollapsed(.thinking(messageID: message.id, blockIndex: index))
             if isCollapsed || content.isEmpty {
                 return headerH
             }
-            // contentLabel has 16pt indent, so available width = layoutWidth - 16
             return headerH + kBlockVSpacing + measureTextHeight(content, font: cbCaptionFont, width: contentWidth - 16)
 
         case .toolUse:
-            // icon + name row + summary row ≈ ~34pt (kToolCardVPad * 2 + line + gap + line)
-            return 36
+            return 40
 
         case .toolResult(let result):
-            let headerH: CGFloat = 16
-            // contentLabel wraps at layoutWidth (same as contentWidth passed to configure).
+            let headerH: CGFloat = 18
             let truncated = String(result.content.prefix(500))
-            let textH = measureTextHeight(truncated, font: NSFont.systemFont(ofSize: 10), width: contentWidth)
+            let textH = measureTextHeight(truncated, font: cbToolResultFont, width: contentWidth)
             return headerH + 4 + textH
 
         case .systemReminder(let text):

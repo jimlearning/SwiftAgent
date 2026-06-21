@@ -63,7 +63,7 @@ public final class ChatTableView: NSTableView {
         headerView = nil
         usesAlternatingRowBackgroundColors = false
         selectionHighlightStyle = .none
-        intercellSpacing = NSSize(width: 0, height: 0)
+        intercellSpacing = NSSize(width: 0, height: kCellSpacing)
         allowsColumnReordering = false
         allowsColumnResizing = false
         allowsColumnSelection = false
@@ -131,11 +131,14 @@ public final class ChatTableView: NSTableView {
         cachedRowHeights[message.id] = nil
 
         if let cell = view(atColumn: 0, row: index, makeIfNecessary: false) as? ChatTableRowView {
+            let colWidth = tableColumns.first?.width ?? lastLayoutWidth
+            let layoutWidth = max(colWidth - kBlockHPadding * 2, 100)
             cell.configure(
                 with: message,
                 foldState: foldState,
                 isStreaming: message.isStreaming,
-                thoughtTimeString: thoughtTime
+                thoughtTimeString: thoughtTime,
+                layoutWidth: layoutWidth
             )
         }
         noteHeightOfRows(withIndexesChanged: IndexSet(integer: index))
@@ -266,11 +269,16 @@ extension ChatTableView: NSTableViewDataSource {
         let isLastMessage = (row == items.count - 1)
         let thoughtTimeStr: String? = isLastMessage ? thoughtTime : nil
 
+        // Use column width (not bounds.width from the newly-created cell which is zero).
+        let colWidth = tableColumns.first?.width ?? lastLayoutWidth
+        let layoutWidth = max(colWidth - kBlockHPadding * 2, 100)
+
         cell.configure(
             with: message,
             foldState: foldState,
             isStreaming: message.isStreaming,
-            thoughtTimeString: thoughtTimeStr
+            thoughtTimeString: thoughtTimeStr,
+            layoutWidth: layoutWidth
         )
 
         return cell

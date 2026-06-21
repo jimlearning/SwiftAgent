@@ -16,16 +16,20 @@ extension NSColor {
 
 // MARK: - Font Tokens
 
-nonisolated(unsafe) let cbBodyFont    = NSFont.systemFont(ofSize: 13)
-nonisolated(unsafe) let cbCaptionFont = NSFont.systemFont(ofSize: 12)
-nonisolated(unsafe) let cbSmallFont   = NSFont.systemFont(ofSize: 10)
-nonisolated(unsafe) let cbCodeFont    = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+nonisolated(unsafe) let cbBodyFont    = NSFont.systemFont(ofSize: 15)
+nonisolated(unsafe) let cbCaptionFont = NSFont.systemFont(ofSize: 13)
+nonisolated(unsafe) let cbSmallFont   = NSFont.systemFont(ofSize: 11)
+nonisolated(unsafe) let cbCodeFont    = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+nonisolated(unsafe) let cbToolLabelFont = NSFont.systemFont(ofSize: 12)
+nonisolated(unsafe) let cbToolResultFont = NSFont.systemFont(ofSize: 11)
+nonisolated(unsafe) let cbToolResultHeaderFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
 // MARK: - Layout Constants
 
 public let kBlockHPadding: CGFloat = 16
-public let kBlockVSpacing: CGFloat = 4
-public let kUserBubbleMaxW: CGFloat = 320
+public let kBlockVSpacing: CGFloat = 6
+public let kCellSpacing: CGFloat = 6
+public let kUserBubbleMaxW: CGFloat = 460
 public let kUserBubbleHPad: CGFloat = 14
 public let kUserBubbleVPad: CGFloat = 10
 public let kUserBubbleRadius: CGFloat = 12
@@ -79,9 +83,17 @@ public final class TextBlockView: NSView, ChatBlockView {
     private var layoutWidth: CGFloat = 600
 
     private let label = NSTextField(labelWithString: "")
+    private let bubbleBg = NSView()
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
+
+        bubbleBg.wantsLayer = true
+        bubbleBg.layer?.cornerRadius = kUserBubbleRadius
+        bubbleBg.layer?.backgroundColor = NSColor.cbBgElevated.cgColor
+        bubbleBg.isHidden = true
+        addSubview(bubbleBg)
+
         label.isBezeled = false
         label.drawsBackground = false
         label.isSelectable = true
@@ -94,18 +106,17 @@ public final class TextBlockView: NSView, ChatBlockView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// - Parameter layoutWidth: The width this view will occupy in the stack,
-    ///   used to compute correct wrapping height.
     public func configure(text: String, role: AgentMessageRole, layoutWidth: CGFloat = 600) {
         self.role = role
         self.layoutWidth = layoutWidth
         label.stringValue = text
+        bubbleBg.isHidden = (role != .user)
 
         switch role {
         case .user:
             label.font = cbBodyFont
             label.textColor = .cbTextPrimary
-            label.alignment = .right
+            label.alignment = .left
             label.preferredMaxLayoutWidth = kUserBubbleMaxW - kUserBubbleHPad * 2
         case .assistant, .system:
             label.font = cbBodyFont
@@ -128,18 +139,34 @@ public final class TextBlockView: NSView, ChatBlockView {
 
     public override func layout() {
         super.layout()
-        let fit = label.sizeThatFits(CGSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude))
-        label.frame = CGRect(x: 0, y: 0, width: bounds.width, height: fit.height)
+        if role == .user {
+            let maxTextW = kUserBubbleMaxW - kUserBubbleHPad * 2
+            let fit = label.sizeThatFits(CGSize(width: maxTextW, height: CGFloat.greatestFiniteMagnitude))
+            let bubbleW = fit.width + kUserBubbleHPad * 2
+            let bubbleH = fit.height + kUserBubbleVPad * 2
+            bubbleBg.frame = CGRect(x: bounds.width - bubbleW, y: 0,
+                                    width: bubbleW, height: bubbleH)
+            bubbleBg.isHidden = false
+            label.frame = CGRect(x: bounds.width - bubbleW + kUserBubbleHPad,
+                                 y: kUserBubbleVPad,
+                                 width: fit.width, height: fit.height)
+        } else {
+            bubbleBg.isHidden = true
+            let fit = label.sizeThatFits(CGSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude))
+            label.frame = CGRect(x: 0, y: 0, width: bounds.width, height: fit.height)
+        }
     }
 
     public override var intrinsicContentSize: CGSize {
-        let maxW: CGFloat
         switch role {
-        case .user: maxW = kUserBubbleMaxW - kUserBubbleHPad * 2
-        case .assistant, .system: maxW = layoutWidth
+        case .user:
+            let maxTextW = kUserBubbleMaxW - kUserBubbleHPad * 2
+            let fit = label.sizeThatFits(CGSize(width: maxTextW, height: CGFloat.greatestFiniteMagnitude))
+            return CGSize(width: kUserBubbleMaxW, height: fit.height + kUserBubbleVPad * 2)
+        case .assistant, .system:
+            let fit = label.sizeThatFits(CGSize(width: layoutWidth, height: CGFloat.greatestFiniteMagnitude))
+            return CGSize(width: layoutWidth, height: fit.height)
         }
-        let fit = label.sizeThatFits(CGSize(width: maxW, height: CGFloat.greatestFiniteMagnitude))
-        return CGSize(width: maxW, height: fit.height)
     }
 }
 
@@ -289,13 +316,13 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
         layer?.borderColor = NSColor.cbBorder.cgColor
         layer?.backgroundColor = NSColor.cbBgElevated.withAlphaComponent(0.6).cgColor
 
-        iconLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        iconLabel.font = cbToolLabelFont
         iconLabel.textColor = .cbTextSecondary
         iconLabel.isBezeled = false
         iconLabel.drawsBackground = false
         addSubview(iconLabel)
 
-        nameLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         nameLabel.textColor = .cbTextSecondary
         nameLabel.isBezeled = false
         nameLabel.drawsBackground = false
@@ -363,7 +390,7 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
 
         case .completed:
             let check = NSTextField(labelWithString: "✓")
-            check.font = NSFont.systemFont(ofSize: 12)
+            check.font = cbBodyFont
             check.textColor = .cbSuccess
             check.isBezeled = false
             check.drawsBackground = false
@@ -373,7 +400,7 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
 
         case .error(let msg):
             let err = NSTextField(labelWithString: "✕ \(msg.truncated(to: 40))")
-            err.font = NSFont.systemFont(ofSize: 9)
+            err.font = cbSmallFont
             err.textColor = .cbDanger
             err.isBezeled = false
             err.drawsBackground = false
@@ -455,17 +482,17 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
     public override init(frame: NSRect) {
         super.init(frame: frame)
 
-        headerIcon.font = NSFont.systemFont(ofSize: 10)
+        headerIcon.font = cbToolResultHeaderFont
         headerIcon.isBezeled = false
         headerIcon.drawsBackground = false
         addSubview(headerIcon)
 
-        headerLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        headerLabel.font = cbToolResultHeaderFont
         headerLabel.isBezeled = false
         headerLabel.drawsBackground = false
         addSubview(headerLabel)
 
-        contentLabel.font = NSFont.systemFont(ofSize: 10)
+        contentLabel.font = cbToolResultFont
         contentLabel.textColor = .cbTextTertiary
         contentLabel.isBezeled = false
         contentLabel.drawsBackground = false
