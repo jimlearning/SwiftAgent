@@ -253,11 +253,12 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             queueCount = messageQueue.count
             print("[AgentLoop] QUEUED depth=\(queueCount) text=\"\(trimmed.truncated(to: 50))\"")
             debugger.logUI("Queued message (depth \(queueCount))", metadata: ["threadId": id])
-            // Still add user message to the list so user sees it immediately
+            // Add user message to the list so user sees it immediately,
+            // but don't persist yet — startAgentRun will do that when
+            // the queued message is processed, avoiding a duplicate.
             let userMsgID = UUID().uuidString
             let userMessage = AgentMessage.user(trimmed, id: userMsgID)
             messages.append(userMessage)
-            persistMessageWithBlocks(userMessage)
             return
         }
 
@@ -267,15 +268,24 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     }
 
     /// Actually start the agent loop for the given user text.
-    private func startAgentRun(userText trimmed: String) {
+    /// When `reuseUserMessageID` is set (queued message path), skips
+    /// creating/persisting a new user message — the queued message
+    /// was already added to the UI in send()'s early return.
+    private func startAgentRun(userText trimmed: String, reuseUserMessageID: String? = nil) {
         guard let session = agentSession else { return }
 
-        // Add user message
-        let userMsgID = UUID().uuidString
+        // Add user message (skip for queued messages — already in the list)
+        let userMsgID: String
+        if let reuseID = reuseUserMessageID {
+            userMsgID = reuseID
+        } else {
+            let newID = UUID().uuidString
+            userMsgID = newID
+            let userMessage = AgentMessage.user(trimmed, id: newID)
+            messages.append(userMessage)
+            persistMessageWithBlocks(userMessage)
+        }
         currentRunUserMessageID = userMsgID
-        let userMessage = AgentMessage.user(trimmed, id: userMsgID)
-        messages.append(userMessage)
-        persistMessageWithBlocks(userMessage)
 
         // Promote pending thread
         onFirstUserMessage?()
@@ -393,7 +403,12 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         guard !messageQueue.isEmpty else { return }
         let next = messageQueue.removeFirst()
         queueCount = messageQueue.count
-        startAgentRun(userText: next)
+        // Find the user message that send()'s early return pre-added so
+        // startAgentRun reuses its ID instead of creating a duplicate.
+        let existingUserID = messages.last(where: {
+            $0.role == .user && $0.blocks.first?.textContent == next
+        })?.id
+        startAgentRun(userText: next, reuseUserMessageID: existingUserID)
     }
 
     // MARK: - Stream Event Handling
@@ -501,8 +516,10 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             }
             messages.append(contentsOf: turnMessages)
 
-            // Persist every turn message with full block metadata
-            for msg in turnMessages {
+            // Persist turn messages, but skip user messages — they were
+            // already persisted in startAgentRun with a different UUID.
+            // Persisting them again from turns creates a duplicate.
+            for msg in turnMessages where msg.role != .user {
                 persistMessageWithBlocks(msg)
             }
         } else {
