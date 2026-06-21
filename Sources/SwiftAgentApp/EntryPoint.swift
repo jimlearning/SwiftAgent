@@ -118,15 +118,18 @@ struct SwiftAgentAppEntry: App {
             // Thread management
             CommandGroup(before: .newItem) {
                 Button("New Chat") {
-                    // Create under the selected thread's project, if any
+                    // Create under the selected thread's project, if any;
+                    // fall back to first project path, then Home directory.
                     let pid = appViewModel.selectedThread?.projectId
+                        ?? appViewModel.projects.first?.path
+                        ?? NSHomeDirectory()
                     _ = appViewModel.createThread(projectId: pid)
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
                 Button("New Quick Chat") {
                     let pid = appViewModel.selectedThread.flatMap { t in
-                        appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == t.id }) })?.id
+                        appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == t.id }) })?.path
                     }
                     _ = appViewModel.createThread(title: "Quick Chat", projectId: pid)
                 }

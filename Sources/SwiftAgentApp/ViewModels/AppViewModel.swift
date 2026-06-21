@@ -6,9 +6,10 @@ import SwiftAgentCore
 /// and owns the storage layer + project/thread tracking.
 @MainActor
 public final class AppViewModel: ObservableObject {
-    // MARK: - Storage
+    // MARK: - Storage (file-based, CC-compatible)
 
-    public let storage = StorageManager()
+    /// Primary persistence layer — reads/writes ~/.swift-agent/projects/.
+    public let store = SwiftAgentStore()
 
     // MARK: - LLM Provider
 
@@ -117,7 +118,11 @@ public final class AppViewModel: ObservableObject {
     /// The currently selected thread view model.
     public var selectedThread: ThreadViewModel? {
         guard let id = selectedThreadID else { return nil }
-        return threadViewModels[id]
+        let vm = threadViewModels[id]
+        if vm == nil {
+            print("[AppVM] WARNING: selectedThread — threadID=\(id.prefix(8)) NOT found in threadViewModels (count=\(threadViewModels.count))")
+        }
+        return vm
     }
 
     /// Search filter text.
@@ -174,15 +179,11 @@ public final class AppViewModel: ObservableObject {
 
     /// Initialize storage and load all data. Call on app launch.
     public func initializeStorage() {
-        do {
-            try storage.initialize()
-            loadAllData()
-            loadSkills()
-            loadMCPServers()
-            isStorageReady = true
-        } catch {
-            print("[AppViewModel] Storage init failed: \(error)")
-        }
+        // File-based storage requires no initialization — just load data.
+        loadAllData()
+        loadSkills()
+        loadMCPServers()
+        isStorageReady = true
     }
 
     // MARK: - Skills
@@ -240,79 +241,82 @@ public final class AppViewModel: ObservableObject {
         self.mcpServers = MCPConfigStore().servers
     }
 
-    // MARK: - Load from DB
+    // MARK: - Load from FS
 
-    /// Load all projects, threads, and messages from the database.
+    /// Load all projects and threads from ~/.swift-agent/projects/.
     public func loadAllData() {
-        do {
-            // Load projects
-            let persistedProjects = try storage.projectRepo.listAll()
-            self.projects = persistedProjects.map { p in
-                let vm = ProjectViewModel(id: p.id, name: p.name, path: p.path)
-                vm.isExpanded = true
-                return vm
-            }
+        let discovered = store.discoverProjects()
 
-            // Load all threads
-            let persistedThreads = try storage.threadRepo.listAll()
-            var vmMap: [String: ThreadViewModel] = [:]
-            var globalList: [ThreadViewModel] = []
+        var allProjects: [ProjectViewModel] = []
+        var vmMap: [String: ThreadViewModel] = [:]
+        let globalList: [ThreadViewModel] = []
 
-            for pt in persistedThreads {
-                let vm = ThreadViewModel(
-                    id: pt.id,
-                    agentSession: agentSession,
-                    storageManager: storage
-                )
-                vm.appViewModel = self
-                vm.update(from: pt)
+        for project in discovered {
+            let displayName = (project.originalPath as NSString).lastPathComponent
+            let pvm = ProjectViewModel(id: project.sanitizedName, name: displayName, path: project.originalPath)
+            pvm.isExpanded = true
 
-                // Load messages for this thread (most recent batch)
-                let messages = try storage.messageRepo.listByThread(threadId: pt.id, limit: 50, offset: 0)
-                vm.loadMessages(from: messages)
-
-                // Track total count for pagination
-                let totalCount = try storage.messageRepo.count(threadId: pt.id)
-                vm.setTotalMessageCount(totalCount)
-
-                vmMap[pt.id] = vm
-
-                if pt.projectId == nil {
-                    globalList.append(vm)
-                } else {
-                    // Attach to its project
-                    if let project = projects.first(where: { $0.id == pt.projectId }) {
-                        project.threads.append(vm)
-                    } else {
-                        // Orphaned thread — put in global
-                        globalList.append(vm)
+            // Load sessions for this project.
+            // Use the session index entry's projectPath as the authoritative
+            // value — it was written by createSession with the correct case.
+            // unsanitizePath() is lossy (lowercases), so project.originalPath
+            // can differ from the real path on case-sensitive volumes.
+            if let sessions = try? store.listSessions(projectPath: project.originalPath) {
+                // Restore the project path from the first session's authoritative
+                // projectPath so the path survives case-preserving round-trip.
+                if let correctPath = sessions.first?.projectPath {
+                    pvm.path = correctPath
+                }
+                for session in sessions {
+                    // Validate: skip sessions whose JSONL doesn't exist in
+                    // this project directory (stale/corrupt index entry).
+                    let transcriptPath = SwiftAgentPaths.transcriptPath(sessionId: session.sessionId, projectPath: project.originalPath)
+                    if !FileManager.default.fileExists(atPath: transcriptPath) {
+                        print("[AppVM] loadAllData: SKIPPING \(session.sessionId.prefix(8)) — transcript missing at \(transcriptPath)")
+                        continue
                     }
+
+                    let vm = ThreadViewModel(
+                        id: session.sessionId,
+                        agentSession: agentSession,
+                        store: store
+                    )
+                    vm.appViewModel = self
+                    vm.projectId = session.projectPath ?? project.originalPath
+                    print("[AppVM] loadAllData: session=\(session.sessionId.prefix(8)) projectId=\(vm.projectId ?? "nil") (index.projectPath=\(session.projectPath ?? "nil") discover.originalPath=\(project.originalPath))")
+                    vm.title = session.customTitle ?? session.firstPrompt ?? "New Chat"
+                    vm.selectedModel = "claude-sonnet-4-6"
+                    vm.updatedAt = ISO8601DateFormatter().date(from: session.modified) ?? Date()
+
+                    // Load messages lazily (on thread selection)
+                    vmMap[session.sessionId] = vm
+                    pvm.threads.append(vm)
                 }
+                pvm.threads.sort { $0.updatedAt > $1.updatedAt }
             }
 
-            self.threadViewModels = vmMap
-            self.globalThreads = globalList.sorted { $0.updatedAt > $1.updatedAt }
+            allProjects.append(pvm)
+        }
 
-            // Sort project threads by updatedAt
-            for project in projects {
-                project.threads.sort { $0.updatedAt > $1.updatedAt }
-            }
+        self.projects = allProjects.sorted { ($0.threads.first?.updatedAt ?? Date.distantPast) > ($1.threads.first?.updatedAt ?? Date.distantPast) }
+        self.threadViewModels = vmMap
 
-            // Auto-select first thread if none selected
-            if selectedThreadID == nil {
-                if let first = globalThreads.first?.id ?? projects.first?.threads.first?.id {
-                    selectedThreadID = first
-                }
-            }
+        // Separate global threads (those without a matching project)
+        // For now, all threads are under projects.
+        self.globalThreads = globalList
 
-            // First launch: if no threads exist at all, create a default one so
-            // the chat UI is immediately visible instead of showing a placeholder.
-            if threadViewModels.isEmpty {
-                // Create initial thread under the first project if available
-                _ = createThread(projectId: projects.first?.id)
+        // Auto-select first thread
+        if selectedThreadID == nil {
+            selectedThreadID = allProjects.first?.threads.first?.id
+            if let sid = selectedThreadID {
+                print("[AppVM] loadAllData: auto-selected thread \(sid.prefix(8)) (first project's first thread)")
             }
-        } catch {
-            print("[AppViewModel] Load failed: \(error)")
+        }
+
+        // First launch: create default project/thread if nothing exists
+        if allProjects.isEmpty {
+            let home = NSHomeDirectory()
+            _ = createProject(name: "Home", path: home)
         }
     }
 
@@ -330,7 +334,7 @@ public final class AppViewModel: ObservableObject {
     /// the sidebar until real activity occurs.
     @discardableResult
     public func createThread(title: String = "New Chat", projectId: String? = nil, persist: Bool = false) -> ThreadViewModel {
-        let thread = ThreadViewModel(agentSession: agentSession, storageManager: storage)
+        let thread = ThreadViewModel(agentSession: agentSession, store: store)
         thread.projectId = projectId
         thread.appViewModel = self
         thread.title = title
@@ -357,11 +361,13 @@ public final class AppViewModel: ObservableObject {
         if persist {
             promoteThreadToSidebar(thread, projectId: projectId)
             persistThreadToDB(thread, projectId: projectId)
+            // Note: selectedThreadID set by caller (createProject)
         } else {
             // Pending: only set selectedThreadID, do NOT add to the
             // sidebar list. The sidebar will show this thread as soon
             // as the user sends the first message.
             selectedThreadID = thread.id
+            print("[AppVM] createThread (pending): selectedThreadID=\(thread.id.prefix(8)) projectId=\(projectId ?? "nil")")
         }
 
         return thread
@@ -371,35 +377,29 @@ public final class AppViewModel: ObservableObject {
     /// from `ThreadViewModel.send` once the user has actually started
     /// a conversation.
     public func commitPendingThreadIfNeeded(_ thread: ThreadViewModel) {
-        // Already in the sidebar — nothing to do.
-        if let project = projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) }) {
-            _ = project
-            return
-        }
-        if globalThreads.contains(where: { $0.id == thread.id }) {
-            return
-        }
-
-        // Use the thread's stored projectId — set at creation time by
-        // createThread(). Previously this fell back to projects.first?.id,
-        // which ignored the project the user actually right-clicked on.
         let projectId = thread.projectId
+        let cwd = projectId ?? thread.workingDirectory
         print("[AppVM] commitPending thread.id=\(thread.id) projectId=\(projectId ?? "nil")")
 
-        // Persist the thread synchronously BEFORE the async sidebar promotion,
-        // so the first message's INSERT (which happens immediately on the same
-        // @MainActor run) doesn't hit a foreign key violation on thread_id.
-        persistThreadToDB(thread, projectId: projectId)
+        // Only persist to disk if not already done (e.g. from createProject with persist:true)
+        if !store.transcripts.exists(sessionId: thread.id, projectPath: cwd) {
+            persistThreadToDB(thread, projectId: projectId)
+        }
 
-        DispatchQueue.main.async { [self] in
-            promoteThreadToSidebar(thread, projectId: projectId)
+        // Only promote to sidebar if not already there
+        let alreadyInSidebar = projects.contains(where: { $0.threads.contains(where: { $0.id == thread.id }) })
+            || globalThreads.contains(where: { $0.id == thread.id })
+        if !alreadyInSidebar {
+            DispatchQueue.main.async { [self] in
+                promoteThreadToSidebar(thread, projectId: projectId)
+            }
         }
     }
 
     /// Insert the thread into the right `projects[].threads` or
     /// `globalThreads` list, sorted by updatedAt (newest first).
     private func promoteThreadToSidebar(_ thread: ThreadViewModel, projectId: String?) {
-        if let pid = projectId, let project = projects.first(where: { $0.id == pid }) {
+        if let pid = projectId, let project = projects.first(where: { $0.path.lowercased() == pid.lowercased() }) {
             project.threads.insert(thread, at: 0)
             project.threads.sort { $0.updatedAt > $1.updatedAt }
         } else {
@@ -408,15 +408,17 @@ public final class AppViewModel: ObservableObject {
         }
     }
 
-    /// Write the thread to SQLite. Best-effort; failures are logged.
+    /// Write the thread to the filesystem (~/.swift-agent/projects/).
     private func persistThreadToDB(_ thread: ThreadViewModel, projectId: String?) {
-        let persisted = PersistedThread(
-            id: thread.id,
-            projectId: projectId,
-            title: thread.title
-        )
+        let cwd = projectId ?? thread.workingDirectory
         do {
-            try storage.threadRepo.create(persisted)
+            let result = try store.createSession(
+                sessionId: thread.id,
+                projectPath: cwd,
+                title: thread.title == "New Chat" ? nil : thread.title,
+                cwd: cwd
+            )
+            print("[AppViewModel] Persisted session: \(result.transcriptPath)")
         } catch {
             print("[AppViewModel] Failed to persist thread: \(error)")
         }
@@ -424,41 +426,41 @@ public final class AppViewModel: ObservableObject {
 
     /// Select a thread and load its messages.
     public func selectThread(_ thread: ThreadViewModel) {
+        let previousID = selectedThreadID
         selectedThreadID = thread.id
-    }
-
-    /// Persist thread state change immediately.
-    public func persistThreadState(_ thread: ThreadViewModel) {
-        guard isStorageReady else { return }
-        do {
-            if let pt = try storage.threadRepo.get(id: thread.id) {
-                var updated = pt
-                updated.state = thread.persistedState
-                updated.model = thread.selectedModel
-                try storage.threadRepo.update(updated)
-            }
-        } catch {
-            print("[AppViewModel] Persist state failed: \(error)")
+        print("[AppVM] selectThread: \(previousID?.prefix(8) ?? "nil") → \(thread.id.prefix(8)) projectId=\(thread.projectId ?? "nil") title=\(thread.title)")
+        if thread.messages.isEmpty {
+            thread.loadMessagesFromStore()
         }
     }
 
-    /// Persist a message immediately.
+    /// Persist thread state change immediately (no-op for file-based storage).
+    public func persistThreadState(_ thread: ThreadViewModel) {
+        // File-based storage: state is tracked in-memory; sessions-index.json updated on message append.
+    }
+
+    /// Persist a message to the session JSONL file.
     public func persistMessage(_ message: PersistedMessage) {
         guard isStorageReady else { return }
-        do {
-            try storage.messageRepo.append(message)
-        } catch {
-            print("[AppViewModel] Persist message failed: \(error)")
-        }
+        // Message persistence is handled by ThreadViewModel via SwiftAgentStore
     }
 
-    /// Rename a thread.
+    /// Rename a thread (updates sessions-index.json customTitle).
     public func renameThread(id: String, title: String) {
+        guard let vm = threadViewModels[id] else { return }
+        let cwd = vm.projectId ?? vm.workingDirectory
         do {
-            try storage.threadRepo.updateTitle(id: id, title: title)
-            if let vm = threadViewModels[id] {
-                vm.title = title
-            }
+            let entry = SessionIndexEntry(
+                sessionId: id,
+                customTitle: title,
+                messageCount: 0,
+                created: ISO8601DateFormatter().string(from: Date()),
+                modified: ISO8601DateFormatter().string(from: Date()),
+                projectPath: cwd,
+                isSidechain: false
+            )
+            try store.sessionIndex.upsert(entry, projectPath: cwd)
+            vm.title = title
         } catch {
             print("[AppViewModel] Rename failed: \(error)")
         }
@@ -486,8 +488,10 @@ public final class AppViewModel: ObservableObject {
 
     /// Delete a thread.
     public func deleteThread(id: String) {
+        guard let vm = threadViewModels[id] else { return }
+        let cwd = vm.projectId ?? vm.workingDirectory
         do {
-            try storage.threadRepo.delete(id: id)
+            try store.deleteSession(sessionId: id, projectPath: cwd)
             threadViewModels.removeValue(forKey: id)
             globalThreads.removeAll { $0.id == id }
             for project in projects {
@@ -504,20 +508,24 @@ public final class AppViewModel: ObservableObject {
 
     // MARK: - Project Management
 
-    /// Create a new project and auto-create a thread so the chat UI appears immediately.
+    /// Create a new project directory and auto-create a thread.
     @discardableResult
     public func createProject(name: String, path: String) -> ProjectViewModel {
-        let project = PersistedProject(name: name, path: path)
-        let vm = ProjectViewModel(id: project.id, name: name, path: path)
+        let sanitized = SwiftAgentPaths.sanitizePath(path)
+        let vm = ProjectViewModel(id: sanitized, name: name, path: path)
         vm.isExpanded = true
 
         do {
-            try storage.projectRepo.create(project)
+            try store.createProject(projectPath: path)
             projects.append(vm)
 
             let threadTitle = "Chat in \(name)"
-            let thread = createThread(title: threadTitle, projectId: project.id)
-            vm.threads.append(thread)
+            let thread = createThread(title: threadTitle, projectId: path, persist: true)
+            // Auto-select the newly created thread so the user's first
+            // message goes to the correct project, not the previously
+            // selected Home thread.
+            selectedThreadID = thread.id
+            print("[AppVM] createProject: selectedThreadID=\(thread.id.prefix(8)) projectId=\(path)")
         } catch {
             print("[AppViewModel] Create project failed: \(error)")
         }
@@ -532,29 +540,22 @@ public final class AppViewModel: ObservableObject {
         return createProject(name: name, path: path)
     }
 
-    /// Delete a project (moves threads to global).
+    /// Delete a project (removes directory and all sessions).
     public func deleteProject(id: String) {
+        // Find the project's original path
+        guard let project = projects.first(where: { $0.id == id }) else { return }
         do {
-            try storage.projectRepo.delete(id: id)
+            try store.deleteProject(projectPath: project.path)
             loadAllData()
         } catch {
             print("[AppViewModel] Delete project failed: \(error)")
         }
     }
 
-    /// Rename a project.
+    /// Rename a project (in-memory only; path-based identity).
     public func renameProject(id: String, name: String) {
-        do {
-            if let project = try storage.projectRepo.get(id: id) {
-                var updated = project
-                updated.name = name
-                try storage.projectRepo.update(updated)
-                if let vm = projects.first(where: { $0.id == id }) {
-                    vm.name = name
-                }
-            }
-        } catch {
-            print("[AppViewModel] Rename project failed: \(error)")
+        if let vm = projects.first(where: { $0.id == id }) {
+            vm.name = name
         }
     }
 

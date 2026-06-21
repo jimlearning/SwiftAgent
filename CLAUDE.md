@@ -49,7 +49,7 @@ Sources/
     ├── RightTabs/            # Multi-tab right workspace (Review/Terminal/Browser/Files)
     ├── DeepSeek/             # DeepSeekClient, Models, Config, KeychainStore
     ├── LLM/                  # AppLLMProvider
-    ├── Storage/              # SQLite persistence (Database, Migrations, Repositories)
+    ├── Storage/              # File-based persistence via SwiftAgentStore (~/.swift-agent/projects/)
     ├── ViewModels/           # AppViewModel, ThreadViewModel, ProjectViewModel
     ├── Skills/               # Skills library + creator
     ├── MCP/                  # MCP server config + management
@@ -90,8 +90,19 @@ Tests/ — 258+ tests, 60+ suites (Core, CLI, App, UITests)
 
 ## Debug Logging
 
-`--debug` writes to `~/.swift-agent/logs/debug-YYYYMMDD-HHmmss.jsonl`.
-Request body, response status, raw SSE events logged. API keys masked.
+`--debug` writes to `~/.swift-agent/debug/<session-uuid>.txt` (plain text, CC-compatible format).
+API keys masked.
+
+## Storage (CC-Compatible File-Based)
+
+All persistent data lives under `~/.swift-agent/`:
+- **Projects**: `~/.swift-agent/projects/<sanitized-path>/` — one directory per project
+- **Sessions**: `<session-uuid>.jsonl` — one JSONL file per session (CC-compatible `LogEntry` per line)
+- **Session index**: `sessions-index.json` — fast metadata for sidebar listing
+- **Debug logs**: `~/.swift-agent/debug/<session-uuid>.txt` — plain text operational logs
+- **Memory**: `~/.swift-agent/projects/<sanitized>/memory/` — MEMORY.md + individual .md files
+
+Format and layout match Claude Code exactly (under `~/.swift-agent/` instead of `~/.claude/`).
 
 ## Role
 

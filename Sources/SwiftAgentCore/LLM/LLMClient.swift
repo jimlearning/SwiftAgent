@@ -3,14 +3,67 @@ import Foundation
 import CryptoKit
 #endif
 
-/// Protocol for debug logging of LLM API interactions.
-/// Implementations receive raw request/response data for diagnostics.
+/// Protocol for debug/operational logging throughout the agent runtime.
+/// Implementations receive structured log calls with level, category, and message.
+///
+/// Categories match CC's debug log conventions:
+/// - `[init]`, `[STARTUP]` — initialization and startup
+/// - `[API:request]`, `[API:auth]`, `[API:stream]` — API interactions
+/// - `[ToolExecutor]`, `[Permission]` — tool execution
+/// - `[MCP]`, `[Skill]`, `[Hook]`, `[LSP]` — integrations
+/// - `[Storage]`, `[Compactor]`, `[Agent]` — internal subsystems
+public protocol DebugLogSink: Sendable {
+    /// Log a debug-level message.
+    func debug(_ message: String, category: String)
+    /// Log a warning.
+    func warn(_ message: String, category: String)
+    /// Log an error.
+    func error(_ message: String, category: String)
+}
+
+// MARK: - Legacy protocol (backward compatibility)
+
+/// Legacy protocol for debug logging of LLM API interactions.
+/// Kept for backward compatibility; new code should use `DebugLogSink`.
 public protocol LLMDebugLogger: Sendable {
     func logRequest(url: String, method: String, headers: [String: String], body: String)
     func logResponse(status: Int, headers: [String: String])
     func logStreamEvent(_ rawJSON: String)
     func logError(_ error: Error)
     func logResponseBody(_ body: String)
+}
+
+/// Adapts a `DebugLogSink` to the legacy `LLMDebugLogger` protocol.
+/// This allows existing code using `LLMDebugLogger` to work with the new `SessionDebugLog`.
+public struct LegacyDebugLoggerAdapter: LLMDebugLogger {
+    private let sink: any DebugLogSink
+
+    public init(sink: any DebugLogSink) {
+        self.sink = sink
+    }
+
+    public func logRequest(url: String, method: String, headers: [String: String], body: String) {
+        let safeBody = body.count > 500 ? String(body.prefix(500)) + "..." : body
+        sink.debug("\(method) \(url) body=\(safeBody)", category: "API:request")
+    }
+
+    public func logResponse(status: Int, headers: [String: String]) {
+        sink.debug("status=\(status)", category: "API:response")
+    }
+
+    public func logStreamEvent(_ rawJSON: String) {
+        let truncated = rawJSON.count > 200 ? String(rawJSON.prefix(200)) + "..." : rawJSON
+        sink.debug("event: \(truncated)", category: "API:stream")
+    }
+
+    public func logError(_ error: Error) {
+        sink.error(error.localizedDescription, category: "API:error")
+    }
+
+    public func logResponseBody(_ body: String) {
+        let truncated = body.count > 500 ? String(body.prefix(500)) + "..." : body
+        sink.debug("body: \(truncated)", category: "API:response")
+    }
 }
 
 /// Anthropic Messages API client with streaming, thinking, caching, and beta support.

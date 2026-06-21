@@ -33,8 +33,8 @@ public struct ContentView: View {
                     apiKeyBanner
                 }
 
-                // Message list (main content area) — AppKit-native for performance
-                AppKitChatView(threadID: thread.id)
+                // Message list (main content area) — AppKit NSTableView with cell reuse
+                AppKitChatBridge(threadID: thread.id)
                     .id(thread.id)  // Force-rebuild on thread switch so scroll position resets cleanly
                     .overlay(alignment: .bottomTrailing) {
                         if !thread.isNearBottom {
@@ -42,8 +42,11 @@ public struct ContentView: View {
                         }
                     }
 
-                // Composer at bottom
+                // Composer at bottom — .id() forces full recreation on thread
+                // switch, preventing stale @StateObject from carrying over
+                // composer text/state between different threads.
                 ComposerView(threadID: thread.id)
+                    .id(thread.id)
             } else {
                 // No thread selected — show actionable empty state
                 emptyStateView
@@ -351,7 +354,7 @@ public struct ContentView: View {
                 .font(.uiBody)
                 .foregroundColor(.textSecondary)
             Button {
-                let pid = appViewModel.projects.first?.id
+                let pid = appViewModel.projects.first?.path
                 _ = appViewModel.createThread(projectId: pid)
             } label: {
                 Label("New Chat", systemImage: "plus")

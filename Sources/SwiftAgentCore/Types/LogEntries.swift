@@ -6,6 +6,9 @@ import Foundation
 /// A message serialized for log/transcript storage with metadata.
 /// Matches CC's TranscriptMessage (which extends SerializedMessage with parent tracking fields).
 public struct SerializedMessage: Sendable, Codable {
+    /// Unique identifier for this serialized entry (for parent/child tracking).
+    /// Matches CC's TranscriptMessage.uuid.
+    public var uuid: String
     public var message: Message
     public var cwd: String
     public var userType: String
@@ -26,7 +29,29 @@ public struct SerializedMessage: Sendable, Codable {
     public var agentColor: String?
     public var promptId: String?
 
+    enum CodingKeys: String, CodingKey {
+        case uuid
+        case message
+        case cwd
+        case userType
+        case entrypoint
+        case sessionID = "sessionId"
+        case timestamp
+        case version
+        case gitBranch
+        case slug
+        case parentUuid
+        case logicalParentUuid
+        case isSidechain
+        case agentId
+        case teamName
+        case agentName
+        case agentColor
+        case promptId
+    }
+
     public init(
+        uuid: String = UUID().uuidString,
         message: Message,
         cwd: String,
         userType: String,
@@ -45,6 +70,7 @@ public struct SerializedMessage: Sendable, Codable {
         agentColor: String? = nil,
         promptId: String? = nil
     ) {
+        self.uuid = uuid
         self.message = message
         self.cwd = cwd
         self.userType = userType
@@ -121,6 +147,18 @@ public struct CustomTitleEntry: Sendable, Codable {
     public let type: String  // "custom-title"
     public let sessionID: String
     public let customTitle: String
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case sessionID = "sessionId"
+        case customTitle
+    }
+
+    public init(type: String = "custom-title", sessionID: String, customTitle: String) {
+        self.type = type
+        self.sessionID = sessionID
+        self.customTitle = customTitle
+    }
 }
 
 /// AI-generated title entry. Matches CC's AiTitleMessage.
@@ -135,6 +173,21 @@ public struct LastPromptEntry: Sendable, Codable {
     public let type: String  // "last-prompt"
     public let sessionID: String
     public let lastPrompt: String
+    public let leafUuid: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case sessionID = "sessionId"
+        case lastPrompt
+        case leafUuid
+    }
+
+    public init(type: String = "last-prompt", sessionID: String, lastPrompt: String, leafUuid: String? = nil) {
+        self.type = type
+        self.sessionID = sessionID
+        self.lastPrompt = lastPrompt
+        self.leafUuid = leafUuid
+    }
 }
 
 /// Task summary entry. Matches CC's TaskSummaryMessage.
@@ -331,6 +384,15 @@ public struct FileHistorySnapshotItem: Sendable, Codable {
 
 /// The full Entry discriminated union matching CC's types/logs.ts:Entry.
 /// 20 variants matching all CC Entry union members.
+///
+/// ## JSON Format (CC-compatible flat type-discriminator)
+/// Each entry is a flat JSON object with a `"type"` field discriminator,
+/// plus the fields of the associated value merged at the top level.
+/// e.g. `{"type":"transcript","message":{...},"cwd":"...","sessionId":"..."}`
+///
+/// Serialization is handled by `TranscriptStore` via `JSONSerialization`
+/// to ensure CC-compatible flat format. Standard `Codable` is auto-synthesized
+/// for Swift-native encoding (used in tests, etc.).
 public enum LogEntry: Sendable, Codable {
     case transcript(SerializedMessage)
     case summary(SummaryEntry)
@@ -352,4 +414,227 @@ public enum LogEntry: Sendable, Codable {
     case contentReplacement(ContentReplacementEntry)
     case contextCollapseCommit(ContextCollapseCommitEntry)
     case contextCollapseSnapshot(ContextCollapseSnapshotEntry)
+    /// Unknown/unsupported entry type — preserved as raw JSON data for round-tripping.
+    case unknown(type: String, rawJSON: Data)
+
+    // MARK: - Type Discriminator
+
+    public var typeName: String {
+        switch self {
+        case .transcript: return "transcript"
+        case .summary: return "summary"
+        case .customTitle: return "custom-title"
+        case .aiTitle: return "ai-title"
+        case .lastPrompt: return "last-prompt"
+        case .taskSummary: return "task-summary"
+        case .tag: return "tag"
+        case .agentName: return "agent-name"
+        case .agentColor: return "agent-color"
+        case .agentSetting: return "agent-setting"
+        case .prLink: return "pr-link"
+        case .fileHistorySnapshot: return "file-history-snapshot"
+        case .attributionSnapshot: return "attribution-snapshot"
+        case .queueOperation: return "queue-operation"
+        case .speculationAccept: return "speculation-accept"
+        case .mode: return "mode"
+        case .worktreeState: return "worktree-state"
+        case .contentReplacement: return "content-replacement"
+        case .contextCollapseCommit: return "marble-origami-commit"
+        case .contextCollapseSnapshot: return "marble-origami-snapshot"
+        case .unknown(let type, _): return type
+        }
+    }
+}
+
+// MARK: - CC-compatible flat JSON serialization
+
+extension LogEntry {
+    /// Encode to a CC-compatible flat JSON dict (injecting "type" field).
+    public func toFlatDict() throws -> [String: Any] {
+        let encoder = JSONEncoder()
+        switch self {
+        case .transcript(let msg):
+            var dict = try Self.encodeStruct(msg, with: encoder)
+            dict["type"] = "transcript"
+            return dict
+        case .summary(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "summary"
+            return dict
+        case .customTitle(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "custom-title"
+            return dict
+        case .aiTitle(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "ai-title"
+            return dict
+        case .lastPrompt(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "last-prompt"
+            return dict
+        case .taskSummary(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "task-summary"
+            return dict
+        case .tag(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "tag"
+            return dict
+        case .agentName(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "agent-name"
+            return dict
+        case .agentColor(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "agent-color"
+            return dict
+        case .agentSetting(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "agent-setting"
+            return dict
+        case .prLink(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "pr-link"
+            return dict
+        case .fileHistorySnapshot(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "file-history-snapshot"
+            return dict
+        case .attributionSnapshot(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "attribution-snapshot"
+            return dict
+        case .queueOperation(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "queue-operation"
+            return dict
+        case .speculationAccept(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "speculation-accept"
+            return dict
+        case .mode(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "mode"
+            return dict
+        case .worktreeState(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "worktree-state"
+            return dict
+        case .contentReplacement(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "content-replacement"
+            return dict
+        case .contextCollapseCommit(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "marble-origami-commit"
+            return dict
+        case .contextCollapseSnapshot(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "marble-origami-snapshot"
+            return dict
+        case .unknown(_, let rawJSON):
+            return (try? JSONSerialization.jsonObject(with: rawJSON) as? [String: Any]) ?? [:]
+        }
+    }
+
+    /// Decode from a CC-compatible flat JSON dict (reading "type" field).
+    public static func fromFlatDict(_ dict: [String: Any]) -> LogEntry {
+        guard let typeStr = dict["type"] as? String else {
+            let fallbackData = (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+            return .unknown(type: "unknown", rawJSON: fallbackData)
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+        let decoder = JSONDecoder()
+        switch typeStr {
+        case "transcript":
+            if let msg = try? decoder.decode(SerializedMessage.self, from: data) {
+                return .transcript(msg)
+            }
+        case "summary":
+            if let e = try? decoder.decode(SummaryEntry.self, from: data) {
+                return .summary(e)
+            }
+        case "custom-title":
+            if let e = try? decoder.decode(CustomTitleEntry.self, from: data) {
+                return .customTitle(e)
+            }
+        case "ai-title":
+            if let e = try? decoder.decode(AiTitleEntry.self, from: data) {
+                return .aiTitle(e)
+            }
+        case "last-prompt":
+            if let e = try? decoder.decode(LastPromptEntry.self, from: data) {
+                return .lastPrompt(e)
+            }
+        case "task-summary":
+            if let e = try? decoder.decode(TaskSummaryEntry.self, from: data) {
+                return .taskSummary(e)
+            }
+        case "tag":
+            if let e = try? decoder.decode(TagEntry.self, from: data) {
+                return .tag(e)
+            }
+        case "agent-name":
+            if let e = try? decoder.decode(AgentNameEntry.self, from: data) {
+                return .agentName(e)
+            }
+        case "agent-color":
+            if let e = try? decoder.decode(AgentColorEntry.self, from: data) {
+                return .agentColor(e)
+            }
+        case "agent-setting":
+            if let e = try? decoder.decode(AgentSettingEntry.self, from: data) {
+                return .agentSetting(e)
+            }
+        case "pr-link":
+            if let e = try? decoder.decode(PRLinkEntry.self, from: data) {
+                return .prLink(e)
+            }
+        case "file-history-snapshot":
+            if let e = try? decoder.decode(FileHistorySnapshotEntry.self, from: data) {
+                return .fileHistorySnapshot(e)
+            }
+        case "attribution-snapshot":
+            if let e = try? decoder.decode(AttributionSnapshotEntry.self, from: data) {
+                return .attributionSnapshot(e)
+            }
+        case "queue-operation":
+            if let e = try? decoder.decode(QueueOperationEntry.self, from: data) {
+                return .queueOperation(e)
+            }
+        case "speculation-accept":
+            if let e = try? decoder.decode(SpeculationAcceptEntry.self, from: data) {
+                return .speculationAccept(e)
+            }
+        case "mode":
+            if let e = try? decoder.decode(ModeEntry.self, from: data) {
+                return .mode(e)
+            }
+        case "worktree-state":
+            if let e = try? decoder.decode(WorktreeStateEntry.self, from: data) {
+                return .worktreeState(e)
+            }
+        case "content-replacement":
+            if let e = try? decoder.decode(ContentReplacementEntry.self, from: data) {
+                return .contentReplacement(e)
+            }
+        case "marble-origami-commit":
+            if let e = try? decoder.decode(ContextCollapseCommitEntry.self, from: data) {
+                return .contextCollapseCommit(e)
+            }
+        case "marble-origami-snapshot":
+            if let e = try? decoder.decode(ContextCollapseSnapshotEntry.self, from: data) {
+                return .contextCollapseSnapshot(e)
+            }
+        default:
+            break
+        }
+        return .unknown(type: typeStr, rawJSON: data)
+    }
+
+    private static func encodeStruct<T: Encodable>(_ value: T, with encoder: JSONEncoder) throws -> [String: Any] {
+        let data = try encoder.encode(value)
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
 }

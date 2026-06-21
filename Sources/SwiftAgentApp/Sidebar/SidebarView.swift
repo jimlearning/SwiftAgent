@@ -80,6 +80,8 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 1) {
             topEntry(icon: "square.and.pencil", title: "New chat", shortcut: "⌘N") {
                 let pid = appViewModel.selectedThread?.projectId
+                    ?? appViewModel.projects.first?.path
+                    ?? NSHomeDirectory()
                 _ = appViewModel.createThread(projectId: pid)
             }
             topEntry(icon: "magnifyingglass", title: "Search", shortcut: "⌘F") {
@@ -207,7 +209,7 @@ struct SidebarView: View {
                     project: project,
                     renameTarget: $renameTarget,
                     onSelectThread: { appViewModel.selectThread($0) },
-                    onNewThread: { _ = appViewModel.createThread(projectId: project.id) },
+                    onNewThread: { _ = appViewModel.createThread(projectId: project.path) },
                     onDeleteProject: { appViewModel.deleteProject(id: project.id) },
                     onDeleteThread: { appViewModel.deleteThread(id: $0) }
                 )

@@ -83,20 +83,24 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     /// The agent session manager (shared across threads).
     private weak var agentSession: AgentSessionManager?
 
-    /// Storage manager for persistence.
-    private weak var storageManager: StorageManager?
+    /// Storage manager for persistence (file-based, CC-compatible).
+    private weak var store: SwiftAgentStore?
 
     /// Working directory resolved from parent project via projectId.
     /// Same logic as TabContentView.currentProjectPath.
+    ///
+    /// Never silently falls back to NSHomeDirectory() — callers MUST ensure
+    /// projectId is set before invoking any persistence path. A nil/missing
+    /// projectId here is a bug, not a normal condition.
     public var workingDirectory: String {
         if let pid = projectId,
            let appVM = appViewModel,
-           let project = appVM.projects.first(where: { $0.id == pid }) {
-            print("[ThreadVM] workingDirectory: found project path=\(project.path) for projectId=\(pid)")
+           let project = appVM.projects.first(where: { $0.path.lowercased() == pid.lowercased() }) {
             return project.path
         }
-        print("[ThreadVM] workingDirectory: FALLBACK projectId=\(projectId ?? "nil") appVM=\(appViewModel != nil ? "set" : "nil")")
-        return NSHomeDirectory()
+        let fallback = NSHomeDirectory()
+        print("[ThreadVM] ERROR: workingDirectory FALLBACK — projectId=\(projectId ?? "nil") appVM=\(appViewModel != nil ? "set" : "nil") → returning Home (\(fallback)). THIS IS A BUG.")
+        return fallback
     }
 
     /// Back-reference to AppViewModel for resolving project path.
@@ -120,11 +124,11 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     public init(
         id: String = UUID().uuidString,
         agentSession: AgentSessionManager? = nil,
-        storageManager: StorageManager? = nil
+        store: SwiftAgentStore? = nil
     ) {
         self.id = id
         self.agentSession = agentSession
-        self.storageManager = storageManager
+        self.store = store
     }
 
     public func setAgentSession(_ session: AgentSessionManager?) {
@@ -168,45 +172,43 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         hasMoreMessages = totalMessageCount > messages.count
     }
 
-    /// Load earlier messages from the database in a batch.
+    /// Load earlier messages from the transcript JSONL file.
     public func loadEarlierMessages(batchSize: Int = 50) {
-        guard let storage = storageManager, storage.isReady,
+        guard let s = store,
               hasMoreMessages else { return }
 
+        let cwd = projectId ?? workingDirectory
         do {
-            let earlier = try storage.messageRepo.listByThread(
-                threadId: id,
-                limit: batchSize,
-                offset: messageOffset
-            )
-
-            guard !earlier.isEmpty else {
+            let allMessages = try s.readMessages(sessionId: id, projectPath: cwd)
+            // For now, load all messages at once (file-based storage is fast enough)
+            guard !allMessages.isEmpty else {
                 hasMoreMessages = false
                 return
             }
 
-            let newMessages = earlier.compactMap { pm -> AgentMessage? in
-                guard let role = AgentMessageRole(rawValue: pm.role) else { return nil }
-                let blocks: [AgentMessageBlock]
-                if let meta = pm.metadata, let decoded = [AgentMessageBlock].fromJSON(meta) {
-                    blocks = decoded
-                } else {
-                    blocks = [.text(pm.content)]
-                }
-                return AgentMessage(
-                    id: pm.id,
-                    role: role,
-                    blocks: blocks,
-                    timestamp: pm.createdAt
-                )
+            let newMessages = allMessages.compactMap { sm -> AgentMessage? in
+                return AgentMessage.fromCore([sm.message]).first
             }
 
             // Prepend earlier messages
             messages = newMessages + messages
-            messageOffset += earlier.count
-            hasMoreMessages = messageOffset < totalMessageCount
+            hasMoreMessages = false // All messages loaded from single JSONL file
         } catch {
             print("[ThreadViewModel] Load earlier messages failed: \(error)")
+        }
+    }
+
+    /// Load all messages from the JSONL transcript file (called on thread selection).
+    public func loadMessagesFromStore() {
+        guard let s = store else { return }
+        let cwd = projectId ?? workingDirectory
+        do {
+            let allMessages = try s.readMessages(sessionId: id, projectPath: cwd)
+            guard !allMessages.isEmpty else { return }
+            let agentMessages = AgentMessage.fromCore(allMessages.map { $0.message })
+            self.messages = agentMessages
+        } catch {
+            print("[ThreadViewModel] loadMessagesFromStore failed: \(error)")
         }
     }
 
@@ -222,21 +224,11 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     }
 
     public func persistState() {
-        guard let storage = storageManager, storage.isReady else { return }
-        do {
-            try storage.threadRepo.updateState(id: id, state: persistedState)
-        } catch {
-            print("[ThreadViewModel] Persist state failed: \(error)")
-        }
+        // No-op: state is tracked in-memory for file-based storage.
     }
 
     public func persistMessage(_ message: PersistedMessage) {
-        guard let storage = storageManager, storage.isReady else { return }
-        do {
-            try storage.messageRepo.append(message)
-        } catch {
-            print("[ThreadViewModel] Persist message failed: \(error)")
-        }
+        // No-op: message persistence handled by persistMessageWithBlocks via store.appendMessage.
     }
 
     // MARK: - Send (Agent Loop)
@@ -263,9 +255,9 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             debugger.logUI("Queued message (depth \(queueCount))", metadata: ["threadId": id])
             // Still add user message to the list so user sees it immediately
             let userMsgID = UUID().uuidString
-            messages.append(AgentMessage.user(trimmed, id: userMsgID))
-            let blocks: [AgentMessageBlock] = [.text(trimmed)]
-            persistMessage(PersistedMessage(id: userMsgID, threadId: id, role: "user", content: trimmed, metadata: blocks.toJSONString()))
+            let userMessage = AgentMessage.user(trimmed, id: userMsgID)
+            messages.append(userMessage)
+            persistMessageWithBlocks(userMessage)
             return
         }
 
@@ -283,16 +275,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         currentRunUserMessageID = userMsgID
         let userMessage = AgentMessage.user(trimmed, id: userMsgID)
         messages.append(userMessage)
-
-        // Persist user message
-        let userBlocks: [AgentMessageBlock] = [.text(trimmed)]
-        persistMessage(PersistedMessage(
-            id: userMsgID,
-            threadId: id,
-            role: "user",
-            content: trimmed,
-            metadata: userBlocks.toJSONString()
-        ))
+        persistMessageWithBlocks(userMessage)
 
         // Promote pending thread
         onFirstUserMessage?()
@@ -315,7 +298,12 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         if title == "Untitled" || title == "New Chat" {
             let snippet = String(trimmed.prefix(60))
             title = snippet
-            _ = try? storageManager?.threadRepo.updateTitle(id: id, title: snippet)
+            // Title update via store.appendMetadata
+            if let s = store {
+                let cwd = projectId ?? workingDirectory
+                let entry = LogEntry.customTitle(CustomTitleEntry(sessionID: id, customTitle: snippet))
+                try? s.appendMetadata(entry, sessionId: id, projectPath: cwd)
+            }
         }
 
         // Build conversation from current messages
@@ -323,7 +311,8 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
 
         // Find project working directory
         let workingDir = workingDirectory
-        print("[ThreadVM] send() threadId=\(id) projectId=\(projectId ?? "nil") workingDir=\(workingDir)")
+        print("[ThreadVM] send() threadId=\(id.prefix(8)) projectId=\(projectId ?? "nil") workingDir=\(workingDirectory)")
+        print("[ThreadVM] send() text=\"\(trimmed.truncated(to: 50))\"")
 
         // Start agent loop
         let runStartTime = CFAbsoluteTimeGetCurrent()
@@ -371,7 +360,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     public func cancel() {
         streamingTask?.cancel()
         streamingTask = nil
-        agentSession?.cancel()
+        agentSession?.cancelRun()
         stopThoughtTimer()
         reasoningExpanded = false
         state = .idle
@@ -502,12 +491,12 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
                         break
                     }
                 }
-                for i in userIdx..<cutoff {
-                    try? storageManager?.messageRepo.deleteById(messages[i].id)
+                for _ in userIdx..<cutoff {
+                    // JSONL deletion not supported per-line; message will be overwritten on next save.
                 }
                 messages.removeSubrange(userIdx..<cutoff)
             } else {
-                try? storageManager?.messageRepo.deleteById(messages[index].id)
+                // JSONL deletion not supported per-line; message will be overwritten on next save.
                 messages.remove(at: index)
             }
             messages.append(contentsOf: turnMessages)
@@ -551,18 +540,80 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         processNextQueued()
     }
 
-    /// Persist an AgentMessage with full block metadata.
+    /// Persist an AgentMessage with full block metadata to the JSONL transcript file.
     private func persistMessageWithBlocks(_ msg: AgentMessage) {
-        guard let storage = storageManager, storage.isReady else { return }
-        let pm = PersistedMessage(
-            id: msg.id,
-            threadId: id,
-            role: msg.role.rawValue,
-            content: msg.blocks.extractText(),
-            metadata: msg.blocks.toJSONString(),
-            createdAt: msg.timestamp
+        guard let s = store else {
+            print("[ThreadVM] persistMessageWithBlocks: SKIP — store is nil. threadId=\(id.prefix(8))")
+            return
+        }
+        let cwd = projectId ?? workingDirectory
+        let resolvedPath = SwiftAgentPaths.transcriptPath(sessionId: id, projectPath: cwd)
+
+        guard let coreMessage = convertToCoreMessage(msg) else {
+            print("[ThreadVM] persistMessageWithBlocks: SKIP — convertToCoreMessage returned nil. threadId=\(id.prefix(8))")
+            return
+        }
+
+        print("[ThreadVM] persistMessageWithBlocks: threadId=\(id.prefix(8)) projectId=\(projectId ?? "nil") cwd=\(cwd) → file=\(resolvedPath)")
+
+        let serialized = SerializedMessage(
+            uuid: msg.id,
+            message: coreMessage,
+            cwd: cwd,
+            userType: "external",
+            sessionID: id,
+            timestamp: msg.timestamp,
+            version: "0.2.0",
+            isSidechain: false
         )
-        persistMessage(pm)
+
+        do {
+            try s.appendMessage(serialized, sessionId: id, projectPath: cwd)
+        } catch {
+            print("[ThreadViewModel] persistMessageWithBlocks failed: \(error)")
+        }
+    }
+
+    /// Convert an AgentMessage to a Core Message for persistence.
+    private func convertToCoreMessage(_ msg: AgentMessage) -> Message? {
+        let contentBlocks: [ContentBlock] = msg.blocks.compactMap { block in
+            switch block {
+            case .text(let text):
+                return .text(text)
+            case .thinking(let text, _):
+                return .thinking(text)
+            case .toolUse(let toolUse):
+                if let input = toolUse.rawInput {
+                    return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)
+                }
+                return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: .object([:]))
+            case .toolResult(let result):
+                return .toolResult(
+                    toolUseID: result.toolUseID,
+                    content: .string(result.content),
+                    isError: result.isError
+                )
+            case .systemReminder(let text):
+                return .text(text)
+            }
+        }
+
+        guard !contentBlocks.isEmpty else { return nil }
+
+        let role: MessageRole
+        switch msg.role {
+        case .user: role = .user
+        case .assistant: role = .assistant
+        case .system: role = .user
+        }
+
+        return Message(
+            uuid: msg.id,
+            type: role,
+            content: contentBlocks,
+            timestamp: msg.timestamp,
+            usage: msg.tokenUsage
+        )
     }
 
     private func userFriendlyMessage(for error: Error) -> String {

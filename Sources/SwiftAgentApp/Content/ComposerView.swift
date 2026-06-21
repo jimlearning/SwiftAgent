@@ -31,7 +31,12 @@ public struct ComposerView: View {
         if let thread = appViewModel.threadViewModels[threadID] {
             content(thread: thread)
         } else {
+            // This should never appear in normal use — indicates the thread
+            // ID passed from ContentView doesn't exist in threadViewModels.
             Color.clear.frame(height: 0)
+                .onAppear {
+                    print("[ComposerView] WARNING: threadID=\(threadID.prefix(8)) NOT found in threadViewModels. This composer will not send messages!")
+                }
         }
     }
 
@@ -512,6 +517,8 @@ public struct ComposerView: View {
         guard composer.isSendEnabled else { return }
         let text = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+
+        print("[ComposerView] sendAction: threadID=\(thread.id.prefix(8)) projectId=\(thread.projectId ?? "nil") title=\(thread.title)")
 
         DispatchQueue.main.async { [self] in
             composer.clear()
