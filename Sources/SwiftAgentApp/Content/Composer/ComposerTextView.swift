@@ -26,6 +26,9 @@ public final class ComposerTextView: NSTextView {
     /// Called when the text content changes.
     public var onTextChanged: ((String) -> Void)?
 
+    /// Called when the intrinsic height changes (text grows/shrinks).
+    public var onHeightChanged: ((CGFloat) -> Void)?
+
     /// Called when `@` is typed — passes the query text after `@` and the screen rect for positioning.
     /// Set this to show the mention autocomplete popup.
     public var onMentionQueryChanged: ((_ query: String, _ anchorRect: NSRect) -> Void)?
@@ -49,12 +52,12 @@ public final class ComposerTextView: NSTextView {
     // MARK: - Sizing
 
     /// Maximum height before scrolling kicks in.
-    public var maxHeight: CGFloat = 120 {
+    public var maxHeight: CGFloat = 150 {
         didSet { invalidateIntrinsicContentSize() }
     }
 
     /// Minimum height (one line).
-    public var minHeight: CGFloat = 28 {
+    public var minHeight: CGFloat = 50 {
         didSet { invalidateIntrinsicContentSize() }
     }
 
@@ -125,6 +128,7 @@ public final class ComposerTextView: NSTextView {
         invalidateIntrinsicContentSize()
         onTextChanged?(string)
         detectMention()
+        onHeightChanged?(intrinsicContentSize.height)
     }
 
     // MARK: - Mention Detection
@@ -296,6 +300,16 @@ extension ComposerTextView: NSTextViewDelegate {
     }
 }
 
+// MARK: - ComposerScrollView
+
+/// NSScrollView subclass that reports the document view's intrinsic content
+/// size so SwiftUI can size the composer based on text content.
+private final class ComposerScrollView: NSScrollView {
+    override var intrinsicContentSize: NSSize {
+        documentView?.intrinsicContentSize ?? super.intrinsicContentSize
+    }
+}
+
 // MARK: - NSViewRepresentable Wrapper
 
 /// SwiftUI wrapper for `ComposerTextView`.
@@ -305,6 +319,7 @@ public struct ComposerTextViewWrapper: NSViewRepresentable {
     var isFocused: Bool
     var onSend: () -> Void
     var onTextChanged: ((String) -> Void)?
+    var onHeightChanged: ((CGFloat) -> Void)?
 
     /// @-mention items for autocomplete. When non-nil and non-empty, the mention
     /// popup will appear when `@` is typed.
@@ -316,6 +331,7 @@ public struct ComposerTextViewWrapper: NSViewRepresentable {
         isFocused: Bool = false,
         onSend: @escaping () -> Void,
         onTextChanged: ((String) -> Void)? = nil,
+        onHeightChanged: ((CGFloat) -> Void)? = nil,
         mentionItems: [MentionItem] = []
     ) {
         self._text = text
@@ -323,6 +339,7 @@ public struct ComposerTextViewWrapper: NSViewRepresentable {
         self.isFocused = isFocused
         self.onSend = onSend
         self.onTextChanged = onTextChanged
+        self.onHeightChanged = onHeightChanged
         self.mentionItems = mentionItems
     }
 
@@ -331,7 +348,7 @@ public struct ComposerTextViewWrapper: NSViewRepresentable {
     }
 
     public func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+        let scrollView = ComposerScrollView()
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.drawsBackground = false
@@ -356,6 +373,7 @@ public struct ComposerTextViewWrapper: NSViewRepresentable {
         textView.onMentionDismiss = {
             context.coordinator.dismissMentionPopup()
         }
+        textView.onHeightChanged = onHeightChanged
 
         scrollView.documentView = textView
         context.coordinator.textView = textView

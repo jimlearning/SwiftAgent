@@ -26,6 +26,7 @@ public struct ComposerView: View {
     @State private var showModelPicker: Bool = false
     @State private var showSlashPalette: Bool = false
     @State private var slashFilter: String = "/"
+    @State private var textEditorHeight: CGFloat = 50
 
     public var body: some View {
         if let thread = appViewModel.threadViewModels[threadID] {
@@ -58,7 +59,6 @@ public struct ComposerView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         }
-        .frame(minHeight: 80)
         .background(Color.bgContent)
         .onChange(of: thread.state) { _, newState in
             // Auto-focus composer when agent finishes and no queued messages remain
@@ -121,9 +121,12 @@ public struct ComposerView: View {
             placeholder: "Ask for follow-up changes",
             isFocused: isFocused,
             onSend: { sendAction(thread: thread) },
+            onHeightChanged: { newHeight in
+                textEditorHeight = newHeight
+            },
             mentionItems: mentionItems
         )
-        .frame(minHeight: 28, maxHeight: 120)
+        .frame(height: textEditorHeight)
     }
 
     // MARK: - Mention Items
