@@ -425,21 +425,20 @@ struct ProjectSectionView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.textPrimary)
             Spacer()
-            // New Chat button — visible only on hover
-            if isHovering {
-                Button {
-                    onNewThread()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.textSecondary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .hoverHighlight(cornerRadius: 4, padding: EdgeInsets(top: 3, leading: 3, bottom: 3, trailing: 3))
-                .help("New chat in \(project.name)")
+            // New Chat button — always in layout, visible only on hover
+            Button {
+                onNewThread()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.textSecondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .opacity(isHovering ? 1 : 0)
+            .hoverHighlight(cornerRadius: 4, padding: EdgeInsets(top: 3, leading: 3, bottom: 3, trailing: 3))
+            .help("New chat in \(project.name)")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())

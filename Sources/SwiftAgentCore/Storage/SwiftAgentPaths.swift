@@ -107,6 +107,7 @@ public enum SwiftAgentPaths {
     /// Sanitize a project path for use as a directory name.
     /// Matches CC's sanitizePath: remove leading /, replace / with -, replace spaces with _.
     /// Always treats the path as absolute to avoid resolving relative paths against cwd.
+    /// Case is preserved so unsanitizePath can recover the original path for display.
     public static func sanitizePath(_ path: String) -> String {
         // Ensure path is treated as absolute
         let absolute = path.hasPrefix("/") ? path : "/\(path)"
@@ -114,7 +115,7 @@ public enum SwiftAgentPaths {
         var sanitized = resolved.hasPrefix("/") ? String(resolved.dropFirst()) : resolved
         sanitized = sanitized.replacingOccurrences(of: "/", with: "-")
         sanitized = sanitized.replacingOccurrences(of: " ", with: "_")
-        return sanitized.lowercased()
+        return sanitized
     }
 
     /// Reverse a sanitized directory name back to a plausible original path.

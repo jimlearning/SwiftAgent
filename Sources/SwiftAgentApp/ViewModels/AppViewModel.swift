@@ -259,8 +259,6 @@ public final class AppViewModel: ObservableObject {
             // Load sessions for this project.
             // Use the session index entry's projectPath as the authoritative
             // value — it was written by createSession with the correct case.
-            // unsanitizePath() is lossy (lowercases), so project.originalPath
-            // can differ from the real path on case-sensitive volumes.
             let sessions: [SessionIndexEntry]
             if let loaded = try? store.listSessions(projectPath: project.originalPath) {
                 sessions = loaded
@@ -282,6 +280,7 @@ public final class AppViewModel: ObservableObject {
                 // projectPath so the path survives case-preserving round-trip.
                 if let correctPath = sessions.first?.projectPath {
                     pvm.path = correctPath
+                    pvm.name = (correctPath as NSString).lastPathComponent
                 }
                 for session in sessions {
                     // Validate: skip sessions whose JSONL doesn't exist in

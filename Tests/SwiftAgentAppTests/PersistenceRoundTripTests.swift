@@ -135,7 +135,7 @@ final class PersistenceRoundTripTests: XCTestCase {
     /// reload from disk → verify thread is in correct project with correct data.
     func testViewModelPersistenceRoundTrip() throws {
         // Use a path with hyphens so unsanitizePath(sanitizePath(...)) differs
-        // from the original (lowercased, hyphens ambiguous with dir separators).
+        // from the original (hyphens ambiguous with dir separators).
         let projectPath = "/tmp/swift-agent-vm-test"
 
         // ------ PHASE 1: Create and persist ------
