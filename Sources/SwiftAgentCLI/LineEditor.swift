@@ -34,6 +34,11 @@ public final class LineEditor: @unchecked Sendable {
     /// After Ctrl+O is processed by rawModeReadLine, this is set to true.
     public var ctrlOTriggered: Bool = false
 
+    /// Reference to the inner unstructured Task created by backgroundLineReader.
+    /// Cancelled when the agent loop ends to prevent it from stealing stdin bytes
+    /// from the next rawModeReadLine call.
+    private var backgroundReadTask: Task<Void, Never>?
+
     // MARK: - Init
 
     public init(historyDir: URL? = nil) {
@@ -134,8 +139,11 @@ public final class LineEditor: @unchecked Sendable {
     /// Bare ESC calls `onCancel`; regular characters accumulate into a line buffer;
     /// Enter completes and yields a line. Replaces the separate ESC watcher.
     func backgroundLineReader(onCancel: @escaping @Sendable () -> Void) -> AsyncStream<String> {
-        AsyncStream { continuation in
-            Task {
+        // Cancel any previous background reader before starting a new one.
+        backgroundReadTask?.cancel()
+
+        return AsyncStream { continuation in
+            let task = Task {
                 let fd = STDIN_FILENO
                 var buffer = ""
                 while !Task.isCancelled {
@@ -170,7 +178,18 @@ public final class LineEditor: @unchecked Sendable {
                 }
                 continuation.finish()
             }
+            backgroundReadTask = task
         }
+    }
+
+    /// Cancel the background line reader task and wait for it to fully exit.
+    /// Must be called before rawModeReadLine to prevent the zombie task from
+    /// stealing stdin bytes (particularly destructive for multi-byte UTF-8).
+    public func stopBackgroundReader() async {
+        guard let task = backgroundReadTask else { return }
+        task.cancel()
+        _ = await task.value
+        backgroundReadTask = nil
     }
 
     /// Restore terminal settings.

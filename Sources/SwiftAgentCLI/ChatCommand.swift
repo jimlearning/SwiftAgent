@@ -481,10 +481,11 @@ struct ChatCommand: AsyncParsableCommand {
             // its poll()+read() loop steals the user's input byte-by-byte.
             let userInputHandler: UserInputPromptHandler = { [currentEscapeTask, isCancelled] questions in
                 spinnerPause.paused = true
-                // Cancel the escape watcher so it stops reading stdin, then
-                // wait up to 150ms for its 100ms poll() timeout to let it exit.
+                // Cancel both the outer for-await task AND the inner
+                // backgroundLineReader task (which otherwise becomes a
+                // zombie stealing stdin bytes from the cooked-mode prompt).
                 currentEscapeTask.task?.cancel()
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                await editor.stopBackgroundReader()
                 defer {
                     spinnerPause.paused = false
                     // Restart escape watcher for any remaining LLM rounds
@@ -821,7 +822,7 @@ struct ChatCommand: AsyncParsableCommand {
 
             spinnerTask.cancel()
             currentEscapeTask.task?.cancel()
-            try? await Task.sleep(nanoseconds: 50_000_000)
+            await editor.stopBackgroundReader()
 
             if wasCancelled {
                 conversationHistory.removeSubrange(historyCount...)
