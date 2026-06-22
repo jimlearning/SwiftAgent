@@ -20,6 +20,7 @@ public struct ContentView: View {
     @State private var isRenamingTitle: Bool = false
     @State private var renameTitleText: String = ""
     @State private var showEnvPopover: Bool = false
+    @State private var composerDragHeight: CGFloat = 50
 
     public init() {}
 
@@ -42,10 +43,17 @@ public struct ContentView: View {
                         }
                     }
 
+                HorizontalDragDivider(
+                    height: $composerDragHeight,
+                    range: 50...100,
+                    edge: .bottom,
+                    color: .borderSubtle
+                )
+
                 // Composer at bottom — .id() forces full recreation on thread
                 // switch, preventing stale @StateObject from carrying over
                 // composer text/state between different threads.
-                ComposerView(threadID: thread.id)
+                ComposerView(threadID: thread.id, dragHeight: composerDragHeight)
                     .id(thread.id)
             } else {
                 // No thread selected — show actionable empty state

@@ -17,6 +17,7 @@ import SwiftUI
 public struct ComposerView: View {
     @EnvironmentObject var appViewModel: AppViewModel
     let threadID: String
+    var dragHeight: CGFloat = 50
 
     @StateObject private var composer = ComposerViewModel()
 
@@ -44,8 +45,6 @@ public struct ComposerView: View {
     @ViewBuilder
     private func content(thread: ThreadViewModel) -> some View {
         VStack(spacing: 0) {
-            Divider().background(Color.borderSubtle)
-
             // Status row (thought time or error)
             statusRow(thread: thread)
 
@@ -53,12 +52,14 @@ public struct ComposerView: View {
             textEditorArea(thread: thread)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
+                .padding(.bottom, 8)
 
             // Control row
             controlRow(thread: thread)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         }
+        .frame(height: max(dragHeight, textEditorHeight) + 54)
         .background(Color.bgContent)
         .onChange(of: thread.state) { _, newState in
             // Auto-focus composer when agent finishes and no queued messages remain
@@ -126,7 +127,7 @@ public struct ComposerView: View {
             },
             mentionItems: mentionItems
         )
-        .frame(height: textEditorHeight)
+        .frame(height: max(dragHeight, textEditorHeight))
     }
 
     // MARK: - Mention Items
