@@ -46,6 +46,7 @@ public struct FilesPanelView: View {
         }
         .background(Color.bgRightPanel)
         .onAppear { refreshFiles() }
+        .onChange(of: projectPath) { refreshFiles() }
     }
 
     // MARK: - Header

@@ -355,12 +355,10 @@ public final class AppViewModel: ObservableObject {
         // For now, all threads are under projects.
         self.globalThreads = globalList
 
-        // Auto-select first thread
-        if selectedThreadID == nil {
-            selectedThreadID = allProjects.first?.threads.first?.id
-            if let sid = selectedThreadID {
-                print("[AppVM] loadAllData: auto-selected thread \(sid.prefix(8)) (first project's first thread)")
-            }
+        // Auto-select first thread and load its messages.
+        if selectedThreadID == nil, let thread = allProjects.first?.threads.first {
+            selectThread(thread)
+            print("[AppVM] loadAllData: auto-selected thread \(thread.id.prefix(8)) (first project's first thread)")
         }
 
     }

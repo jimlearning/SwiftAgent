@@ -14,6 +14,9 @@ struct TabContentView: View {
             case .review:
                 ReviewPanelView(entries: reviewEntries)
                     .onAppear { appViewModel.refreshDiffSummary() }
+                    .onChange(of: appViewModel.selectedThreadID) {
+                        appViewModel.refreshDiffSummary()
+                    }
             case .terminal:
                 TerminalPanelView(tabID: tab.id.uuidString)
             case .browser:

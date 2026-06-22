@@ -8,6 +8,10 @@ public struct BrowserPanelView: NSViewRepresentable {
     let tabID: String
     let initialURL: URL
 
+    public func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     public func makeNSView(context: Context) -> NSView {
         let container = NSView()
         container.wantsLayer = true
@@ -24,9 +28,18 @@ public struct BrowserPanelView: NSViewRepresentable {
             webView.trailingAnchor.constraint(equalTo: container.trailingAnchor)
         ])
 
+        context.coordinator.webView = webView
         webView.load(URLRequest(url: initialURL))
         return container
     }
 
-    public func updateNSView(_ nsView: NSView, context: Context) {}
+    public func updateNSView(_ nsView: NSView, context: Context) {
+        guard let webView = context.coordinator.webView,
+              webView.url != initialURL else { return }
+        webView.load(URLRequest(url: initialURL))
+    }
+
+    public final class Coordinator {
+        var webView: WKWebView?
+    }
 }
