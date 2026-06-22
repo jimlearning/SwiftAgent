@@ -261,7 +261,23 @@ public final class AppViewModel: ObservableObject {
             // value — it was written by createSession with the correct case.
             // unsanitizePath() is lossy (lowercases), so project.originalPath
             // can differ from the real path on case-sensitive volumes.
-            if let sessions = try? store.listSessions(projectPath: project.originalPath) {
+            let sessions: [SessionIndexEntry]
+            if let loaded = try? store.listSessions(projectPath: project.originalPath) {
+                sessions = loaded
+            } else {
+                // Index corrupted or unreadable — attempt recovery by
+                // rebuilding from JSONL files on disk (orphan recovery).
+                print("[AppVM] loadAllData: CORRUPT INDEX for \(project.sanitizedName) — attempting rebuild from JSONL files")
+                do {
+                    try store.rebuildIndex(projectPath: project.originalPath)
+                    sessions = (try? store.listSessions(projectPath: project.originalPath)) ?? []
+                    print("[AppVM] loadAllData: rebuildIndex recovered \(sessions.count) sessions for \(project.sanitizedName)")
+                } catch {
+                    print("[AppVM] loadAllData: rebuildIndex FAILED for \(project.sanitizedName): \(error)")
+                    sessions = []
+                }
+            }
+            if !sessions.isEmpty {
                 // Restore the project path from the first session's authoritative
                 // projectPath so the path survives case-preserving round-trip.
                 if let correctPath = sessions.first?.projectPath {
@@ -293,6 +309,40 @@ public final class AppViewModel: ObservableObject {
                     pvm.threads.append(vm)
                 }
                 pvm.threads.sort { $0.updatedAt > $1.updatedAt }
+            } else {
+                // Auto-recovery: the index is empty but there may be orphan JSONL
+                // files on disk (e.g. from the ordering bug where createSession was
+                // never called). Rebuild the index from JSONL files and reload.
+                let dir = SwiftAgentPaths.projectDir(forProjectPath: project.originalPath)
+                let jsonlFiles = (try? FileManager.default.contentsOfDirectory(atPath: dir))?
+                    .filter { $0.hasSuffix(".jsonl") } ?? []
+                if !jsonlFiles.isEmpty {
+                    print("[AppVM] loadAllData: EMPTY INDEX but \(jsonlFiles.count) JSONL files exist for \(project.sanitizedName) — auto-rebuilding")
+                    do {
+                        try store.rebuildIndex(projectPath: project.originalPath)
+                        if let recovered = try? store.listSessions(projectPath: project.originalPath), !recovered.isEmpty {
+                            if let correctPath = recovered.first?.projectPath {
+                                pvm.path = correctPath
+                            }
+                            for session in recovered {
+                                let tp = SwiftAgentPaths.transcriptPath(sessionId: session.sessionId, projectPath: project.originalPath)
+                                if !FileManager.default.fileExists(atPath: tp) { continue }
+                                let vm = ThreadViewModel(id: session.sessionId, agentSession: agentSession, store: store)
+                                vm.appViewModel = self
+                                vm.projectId = session.projectPath ?? project.originalPath
+                                vm.title = session.customTitle ?? session.firstPrompt ?? "New Chat"
+                                vm.selectedModel = "claude-sonnet-4-6"
+                                vm.updatedAt = ISO8601DateFormatter().date(from: session.modified) ?? Date()
+                                vmMap[session.sessionId] = vm
+                                pvm.threads.append(vm)
+                            }
+                            pvm.threads.sort { $0.updatedAt > $1.updatedAt }
+                            print("[AppVM] loadAllData: auto-rebuild recovered \(recovered.count) sessions for \(project.sanitizedName)")
+                        }
+                    } catch {
+                        print("[AppVM] loadAllData: auto-rebuild FAILED for \(project.sanitizedName): \(error)")
+                    }
+                }
             }
 
             allProjects.append(pvm)
@@ -313,11 +363,6 @@ public final class AppViewModel: ObservableObject {
             }
         }
 
-        // First launch: create default project/thread if nothing exists
-        if allProjects.isEmpty {
-            let home = NSHomeDirectory()
-            _ = createProject(name: "Home", path: home)
-        }
     }
 
     // MARK: - Thread Management
@@ -381,8 +426,17 @@ public final class AppViewModel: ObservableObject {
         let cwd = projectId ?? thread.workingDirectory
         print("[AppVM] commitPending thread.id=\(thread.id) projectId=\(projectId ?? "nil")")
 
-        // Only persist to disk if not already done (e.g. from createProject with persist:true)
-        if !store.transcripts.exists(sessionId: thread.id, projectPath: cwd) {
+        // Only persist if not already registered in the index (e.g. from
+        // createProject with persist:true). We check the index, NOT the
+        // transcript file, because appendMessage can create the JSONL before
+        // createSession has a chance to register the session in the index.
+        let alreadyIndexed: Bool
+        do {
+            alreadyIndexed = try store.sessionIndex.get(sessionId: thread.id, projectPath: cwd) != nil
+        } catch {
+            alreadyIndexed = false // index missing/corrupt — persist to be safe
+        }
+        if !alreadyIndexed {
             persistThreadToDB(thread, projectId: projectId)
         }
 

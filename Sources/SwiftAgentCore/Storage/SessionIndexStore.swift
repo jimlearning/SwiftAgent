@@ -116,6 +116,12 @@ public final class SessionIndexStore: @unchecked Sendable {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
+    /// Serial queue to prevent concurrent read-modify-write races on the
+    /// same index file. Two `upsert` calls (or an upsert + remove) racing
+    /// on the same project would read the same baseline, each modify it
+    /// independently, then write — the second write overwrites the first.
+    private let writeQueue = DispatchQueue(label: "com.swiftagent.sessionindex", qos: .utility)
+
     public init() {
         self.fileManager = FileManager.default
         self.encoder = JSONEncoder()
@@ -141,49 +147,68 @@ public final class SessionIndexStore: @unchecked Sendable {
 
     /// Upsert a session entry (insert or update).
     /// Updates the `modified` timestamp and increments `messageCount` if the entry exists.
+    /// Serialized through a private queue to prevent concurrent read-modify-write races.
     public func upsert(_ entry: SessionIndexEntry, projectPath: String) throws {
-        var index = (try? readIndex(projectPath: projectPath)) ?? SessionIndex(entries: [])
-
-        if let existingIdx = index.entries.firstIndex(where: { $0.sessionId == entry.sessionId }) {
-            // Update existing entry, preserving fields not set in the incoming entry
-            var updated = index.entries[existingIdx]
-            updated.fullPath = entry.fullPath ?? updated.fullPath
-            updated.firstPrompt = entry.firstPrompt ?? updated.firstPrompt
-            updated.summary = entry.summary ?? updated.summary
-            updated.customTitle = entry.customTitle ?? updated.customTitle
-            updated.messageCount = entry.messageCount > 0 ? entry.messageCount : updated.messageCount
-            updated.modified = entry.modified
-            updated.gitBranch = entry.gitBranch ?? updated.gitBranch
-            updated.projectPath = entry.projectPath ?? updated.projectPath
-            updated.tag = entry.tag ?? updated.tag
-            updated.mode = entry.mode ?? updated.mode
-            updated.agentName = entry.agentName ?? updated.agentName
-            updated.agentColor = entry.agentColor ?? updated.agentColor
-            if let mtime = entry.fileMtime { updated.fileMtime = mtime }
-            let modDate = Date()
-            let attrs = try? fileManager.attributesOfItem(atPath: entry.fullPath ?? "")
-            updated.fileMtime = attrs?[.modificationDate] as? Double
-                ?? modDate.timeIntervalSince1970 * 1000
-            index.entries[existingIdx] = updated
-        } else {
-            var newEntry = entry
-            if newEntry.fullPath != nil {
-                let attrs = try? fileManager.attributesOfItem(atPath: newEntry.fullPath!)
-                if let modDate = attrs?[.modificationDate] as? Date {
-                    newEntry.fileMtime = modDate.timeIntervalSince1970 * 1000
-                }
+        try writeQueue.sync {
+            let index: SessionIndex
+            do {
+                index = try readIndex(projectPath: projectPath)
+            } catch {
+                print("[SessionIndex] upsert: readIndex FAILED for \(projectPath) — \(error). Index may be corrupted; attempting recovery.")
+                throw error
             }
-            index.entries.append(newEntry)
-        }
 
-        try writeIndex(index, projectPath: projectPath)
+            var mutableIndex = index
+            if let existingIdx = mutableIndex.entries.firstIndex(where: { $0.sessionId == entry.sessionId }) {
+                // Update existing entry, preserving fields not set in the incoming entry
+                var updated = mutableIndex.entries[existingIdx]
+                updated.fullPath = entry.fullPath ?? updated.fullPath
+                updated.firstPrompt = entry.firstPrompt ?? updated.firstPrompt
+                updated.summary = entry.summary ?? updated.summary
+                updated.customTitle = entry.customTitle ?? updated.customTitle
+                updated.messageCount = entry.messageCount > 0 ? entry.messageCount : updated.messageCount
+                updated.modified = entry.modified
+                updated.gitBranch = entry.gitBranch ?? updated.gitBranch
+                updated.projectPath = entry.projectPath ?? updated.projectPath
+                updated.tag = entry.tag ?? updated.tag
+                updated.mode = entry.mode ?? updated.mode
+                updated.agentName = entry.agentName ?? updated.agentName
+                updated.agentColor = entry.agentColor ?? updated.agentColor
+                if let mtime = entry.fileMtime { updated.fileMtime = mtime }
+                let modDate = Date()
+                let attrs = try? fileManager.attributesOfItem(atPath: entry.fullPath ?? "")
+                updated.fileMtime = attrs?[.modificationDate] as? Double
+                    ?? modDate.timeIntervalSince1970 * 1000
+                mutableIndex.entries[existingIdx] = updated
+            } else {
+                var newEntry = entry
+                if newEntry.fullPath != nil {
+                    let attrs = try? fileManager.attributesOfItem(atPath: newEntry.fullPath!)
+                    if let modDate = attrs?[.modificationDate] as? Date {
+                        newEntry.fileMtime = modDate.timeIntervalSince1970 * 1000
+                    }
+                }
+                mutableIndex.entries.append(newEntry)
+            }
+
+            try writeIndex(mutableIndex, projectPath: projectPath)
+        }
     }
 
-    /// Remove a session from the index.
+    /// Remove a session from the index. Serialized to prevent races with upsert.
     public func remove(sessionId: String, projectPath: String) throws {
-        var index = (try? readIndex(projectPath: projectPath)) ?? SessionIndex(entries: [])
-        index.entries.removeAll { $0.sessionId == sessionId }
-        try writeIndex(index, projectPath: projectPath)
+        try writeQueue.sync {
+            let index: SessionIndex
+            do {
+                index = try readIndex(projectPath: projectPath)
+            } catch {
+                print("[SessionIndex] remove: readIndex FAILED for \(projectPath) — \(error)")
+                throw error
+            }
+            var mutableIndex = index
+            mutableIndex.entries.removeAll { $0.sessionId == sessionId }
+            try writeIndex(mutableIndex, projectPath: projectPath)
+        }
     }
 
     /// Rebuild the entire index by scanning all JSONL files in the project directory.

@@ -289,19 +289,32 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
 
         // Add user message (skip for queued messages — already in the list)
         let userMsgID: String
+        let userMessage: AgentMessage? // captured for persistence after onFirstUserMessage
         if let reuseID = reuseUserMessageID {
             userMsgID = reuseID
+            userMessage = nil
         } else {
             let newID = UUID().uuidString
             userMsgID = newID
-            let userMessage = AgentMessage.user(trimmed, id: newID)
-            messages.append(userMessage)
-            persistMessageWithBlocks(userMessage)
+            let msg = AgentMessage.user(trimmed, id: newID)
+            messages.append(msg)
+            userMessage = msg
         }
         currentRunUserMessageID = userMsgID
 
-        // Promote pending thread
+        // CRITICAL: Promote pending thread BEFORE persisting the user message.
+        // onFirstUserMessage → commitPendingThreadIfNeeded → persistThreadToDB →
+        // createSession which registers the session in sessions-index.json.
+        // If persistMessageWithBlocks runs first, appendMessage creates the JSONL
+        // file, then commitPendingThreadIfNeeded skips createSession (because the
+        // file already exists), and the session never appears in the index.
         onFirstUserMessage?()
+
+        // Now persist the user message — the session is already in the index
+        // so appendMessage can update messageCount correctly.
+        if let msg = userMessage {
+            persistMessageWithBlocks(msg)
+        }
 
         // Create assistant placeholder
         let assistantID = UUID().uuidString
