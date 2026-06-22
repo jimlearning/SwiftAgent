@@ -570,36 +570,45 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     }
 
     /// Persist an AgentMessage with full block metadata to the JSONL transcript file.
+    ///
+    /// Conversion (pure computation) runs on MainActor; file I/O is dispatched to a
+    /// detached task so it never blocks the main thread during streaming.
     private func persistMessageWithBlocks(_ msg: AgentMessage) {
         guard let s = store else {
             print("[ThreadVM] persistMessageWithBlocks: SKIP — store is nil. threadId=\(id.prefix(8))")
             return
         }
+        let threadId = id
         let cwd = projectId ?? workingDirectory
-        let resolvedPath = SwiftAgentPaths.transcriptPath(sessionId: id, projectPath: cwd)
+        let resolvedPath = SwiftAgentPaths.transcriptPath(sessionId: threadId, projectPath: cwd)
 
         guard let coreMessage = convertToCoreMessage(msg) else {
-            print("[ThreadVM] persistMessageWithBlocks: SKIP — convertToCoreMessage returned nil. threadId=\(id.prefix(8))")
+            print("[ThreadVM] persistMessageWithBlocks: SKIP — convertToCoreMessage returned nil. threadId=\(threadId.prefix(8))")
             return
         }
 
-        print("[ThreadVM] persistMessageWithBlocks: threadId=\(id.prefix(8)) projectId=\(projectId ?? "nil") cwd=\(cwd) → file=\(resolvedPath)")
+        print("[ThreadVM] persistMessageWithBlocks: threadId=\(threadId.prefix(8)) projectId=\(projectId ?? "nil") cwd=\(cwd) → file=\(resolvedPath)")
 
         let serialized = SerializedMessage(
             uuid: msg.id,
             message: coreMessage,
             cwd: cwd,
             userType: "external",
-            sessionID: id,
+            sessionID: threadId,
             timestamp: msg.timestamp,
             version: "0.2.0",
             isSidechain: false
         )
 
-        do {
-            try s.appendMessage(serialized, sessionId: id, projectPath: cwd)
-        } catch {
-            print("[ThreadViewModel] persistMessageWithBlocks failed: \(error)")
+        // Offload file I/O — TranscriptStore/SessionIndexStore both use
+        // writeQueue.sync internally, which blocks the calling thread.
+        // Running this in a detached task keeps the main thread free.
+        Task.detached { [store = s] in
+            do {
+                try store.appendMessage(serialized, sessionId: threadId, projectPath: cwd)
+            } catch {
+                print("[ThreadViewModel] persistMessageWithBlocks failed: \(error)")
+            }
         }
     }
 

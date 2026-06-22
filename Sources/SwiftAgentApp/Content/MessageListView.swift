@@ -138,26 +138,32 @@ public struct MessageListView: View {
 // MARK: - Main-Thread Hang Detector
 
 /// Background thread that pings the main thread every ~50ms via
-/// `DispatchQueue.main.async` + semaphore. Logs a warning if the
-/// round-trip exceeds 50ms, or if the main thread is unresponsive
-/// for 2+ seconds. Singleton — `.start()` is idempotent.
+/// `DispatchQueue.main.async` + semaphore. Logs progressively louder
+/// warnings at 100ms/500ms/2s thresholds.
+///
+/// When a 2s+ hard hang is detected, a 1-second `sample` of the process
+/// is written to `~/Library/Logs/SwiftAgent/hang-<timestamp>.txt` so the
+/// exact blocking call stack can be inspected.
 private final class HangDetector: @unchecked Sendable {
     static let shared = HangDetector()
     private let log = Logger(subsystem: "com.swiftagent.app", category: "HangDetector")
     private var started = false
     private let lock = NSLock()
 
+    /// How many hangs have been detected since launch.
+    private(set) var hangCount: Int = 0
+    private let hangCountLock = NSLock()
+
     private init() {}
 
     func start() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !started else { return }
-        started = true
+        lock.withLock {
+            guard !started else { return }
+            started = true
+        }
 
         DispatchQueue.global(qos: .userInteractive).async { [log] in
             let pingInterval: TimeInterval = 0.050
-            let hangThreshold: TimeInterval = 0.050
             var iteration: UInt64 = 0
 
             while true {
@@ -168,20 +174,60 @@ private final class HangDetector: @unchecked Sendable {
                 DispatchQueue.main.async { sem.signal() }
                 let waitResult = sem.wait(timeout: .now() + 2.0)
 
-                let pongReceived = CFAbsoluteTimeGetCurrent()
-                let roundTrip = (pongReceived - pingSent) * 1000
+                let roundTrip = (CFAbsoluteTimeGetCurrent() - pingSent) * 1000
 
                 switch waitResult {
                 case .success:
-                    if roundTrip > hangThreshold {
-                        //log.warning("[MAIN HANG] iter=\(iteration) blocked=\(String(format: "%.0f", roundTrip))ms")
+                    if roundTrip > 500 {
+                        log.warning("[MAIN SLOW] iter=\(iteration) blocked=\(String(format: "%.0f", roundTrip))ms — queue saturated")
+                    } else if roundTrip > 100 {
+                        // Soft micro-hang — could become worse under load
                     }
                 case .timedOut:
-                    log.warning("[MAIN HANG] iter=\(iteration) SEMAPHORE TIMEOUT (2s+) — main thread hard-blocked")
+                    log.critical("[MAIN HANG] iter=\(iteration) SEMAPHORE TIMEOUT (2s+) — main thread hard-blocked")
+                    HangDetector.captureHangSample(iteration: iteration)
                 }
 
                 Thread.sleep(forTimeInterval: pingInterval)
             }
+        }
+    }
+
+    /// Capture a 1-second process sample via `/usr/bin/sample`.
+    /// Writes to `~/Library/Logs/SwiftAgent/` for post-mortem analysis.
+    private static func captureHangSample(iteration: UInt64) {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let logsDir = NSHomeDirectory() + "/Library/Logs/SwiftAgent"
+        try? FileManager.default.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
+
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let timestamp = dateFormatter.string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+
+        let samplePath = "\(logsDir)/hang-iter\(iteration)-\(timestamp).txt"
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
+        process.arguments = ["\(pid)", "1", "-file", samplePath]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            // Don't wait — sample runs for 1 second; let it finish in the background
+            DispatchQueue.global().async {
+                process.waitUntilExit()
+                let logger = Logger(subsystem: "com.swiftagent.app", category: "HangDetector")
+                if process.terminationStatus == 0 {
+                    logger.info("[MAIN HANG] sample captured: \(samplePath, privacy: .public)")
+                } else {
+                    logger.warning("[MAIN HANG] sample failed (exit \(process.terminationStatus))")
+                }
+            }
+        } catch {
+            let logger = Logger(subsystem: "com.swiftagent.app", category: "HangDetector")
+            logger.warning("[MAIN HANG] could not launch sample: \(error.localizedDescription)")
         }
     }
 }

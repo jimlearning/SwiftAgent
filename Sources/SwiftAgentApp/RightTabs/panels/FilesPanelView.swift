@@ -26,6 +26,8 @@ public struct FilesPanelView: View {
     @State private var selectedFile: FileNode?
     @State private var selectedFileContent: String?
     @State private var expandedFolders: Set<String> = []
+    /// Lazily-loaded children for directories beyond the initial tree depth.
+    @State private var loadedChildren: [String: [FileNode]] = [:]
 
     private static let log = Logger(subsystem: "com.swiftagent.app", category: "FilesPanel")
     private static var mdRenderCache: [String: AttributedString] = [:]
@@ -110,28 +112,34 @@ public struct FilesPanelView: View {
 
     // MARK: - Tree Column
 
+    /// File tree rendered as `List` + `DisclosureGroup` so SwiftUI lazily
+    /// creates only the visible rows. The old `ScrollView` + recursive
+    /// `VStack`/`ForEach` eagerly instantiated every child of every expanded
+    /// directory (200+ views for Sources/SwiftAgentApp), blocking the main
+    /// thread during scroll layout.
     @ViewBuilder
     private var treeColumn: some View {
         if rootNodes.isEmpty {
             emptyState
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(filteredRootNodes) { node in
-                        FileTreeRow(
-                            node: node,
-                            depth: 0,
-                            expanded: $expandedFolders,
-                            selected: $selectedFile,
-                            onSelect: handleSelect,
-                            onAddToChat: { fileNode in
-                                appViewModel.addFileToComposer(fileNode.url)
-                            },
-                            projectPath: projectPath
-                        )
-                    }
+            List {
+                ForEach(filteredRootNodes) { node in
+                    FileTreeRow(
+                        node: node,
+                        depth: 0,
+                        expanded: $expandedFolders,
+                        selected: $selectedFile,
+                        loadedChildren: $loadedChildren,
+                        onSelect: handleSelect,
+                        onAddToChat: { fileNode in
+                            appViewModel.addFileToComposer(fileNode.url)
+                        },
+                        projectPath: projectPath
+                    )
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
     }
 
@@ -335,10 +343,19 @@ public struct FilesPanelView: View {
     private func refreshFiles() {
         guard let path = projectPath else { rootNodes = []; return }
         let url = URL(fileURLWithPath: path, isDirectory: true)
-        rootNodes = FileNode.buildTree(at: url, maxDepth: 6, maxEntriesPerDir: 500)
-        // Auto-expand the root by default.
-        if let firstDir = rootNodes.first {
-            expandedFolders.insert(firstDir.url.path)
+        // Offload synchronous FileManager I/O — contentsOfDirectory and
+        // resourceValues block the calling thread. The tree is built eagerly
+        // (maxDepth: 6) on a background thread and then published to the UI.
+        // Rendering is lazy via List + DisclosureGroup, so view instantiation
+        // is still capped to visible rows.
+        Task.detached(priority: .userInitiated) {
+            let nodes = FileNode.buildTree(at: url, maxDepth: 6, maxEntriesPerDir: 500)
+            await MainActor.run {
+                rootNodes = nodes
+                if let firstDir = nodes.first {
+                    expandedFolders.insert(firstDir.url.path)
+                }
+            }
         }
     }
 }
@@ -403,12 +420,29 @@ struct FileTreeRow: View {
     let depth: Int
     @Binding var expanded: Set<String>
     @Binding var selected: FileNode?
+    /// Fallback children loaded lazily (keyed by node id).
+    @Binding var loadedChildren: [String: [FileNode]]
     let onSelect: (FileNode) -> Void
     let onAddToChat: (FileNode) -> Void
     let projectPath: String?
 
     private var isExpanded: Bool { expanded.contains(node.url.path) }
     private var isSelected: Bool { selected?.url == node.url }
+
+    /// Effective children: pre-built tree first, then lazily loaded fallback.
+    private var effectiveChildren: [FileNode]? {
+        node.children ?? loadedChildren[node.id]
+    }
+
+    private var expandedBinding: Binding<Bool> {
+        Binding(
+            get: { expanded.contains(node.url.path) },
+            set: { newVal in
+                if newVal { expanded.insert(node.url.path) }
+                else { expanded.remove(node.url.path) }
+            }
+        )
+    }
 
     /// Returns the list of app bundle URLs that can open this file,
     /// in the same order Finder's "Open With" submenu would show.
@@ -426,132 +460,142 @@ struct FileTreeRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            row
-            if node.isDirectory, isExpanded, let children = node.children {
-                ForEach(children) { child in
-                    FileTreeRow(
-                        node: child,
-                        depth: depth + 1,
-                        expanded: $expanded,
-                        selected: $selected,
-                        onSelect: onSelect,
-                        onAddToChat: onAddToChat,
-                        projectPath: projectPath
-                    )
+        if node.isDirectory {
+            if let children = effectiveChildren, !children.isEmpty {
+                DisclosureGroup(isExpanded: expandedBinding) {
+                    ForEach(children) { child in
+                        FileTreeRow(
+                            node: child,
+                            depth: depth + 1,
+                            expanded: $expanded,
+                            selected: $selected,
+                            loadedChildren: $loadedChildren,
+                            onSelect: onSelect,
+                            onAddToChat: onAddToChat,
+                            projectPath: projectPath
+                        )
+                    }
+                } label: {
+                    rowLabel
                 }
+            } else if node.children?.isEmpty == true {
+                // Empty directory — no children, no chevron
+                rowLabel
+            } else {
+                // Children not loaded yet — tap to load and expand
+                rowLabel
+                    .onTapGesture {
+                        let key = node.url.path
+                        if expanded.contains(key) {
+                            expanded.remove(key)
+                        } else {
+                            expanded.insert(key)
+                            loadChildren()
+                        }
+                    }
+            }
+        } else {
+            rowLabel
+                .onTapGesture {
+                    selected = node
+                    onSelect(node)
+                }
+        }
+    }
+
+    private func loadChildren() {
+        guard node.isDirectory, node.children == nil, loadedChildren[node.id] == nil else { return }
+        Task.detached(priority: .userInitiated) {
+            let children = FileNode.buildTree(at: node.url, maxDepth: 1, maxEntriesPerDir: 500)
+            await MainActor.run {
+                loadedChildren[node.id] = children
             }
         }
     }
 
-    private var row: some View {
-        Button {
-            if node.isDirectory {
-                if isExpanded {
-                    expanded.remove(node.url.path)
-                } else {
-                    expanded.insert(node.url.path)
-                }
-            } else {
-                selected = node
-                onSelect(node)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: node.isDirectory ? (isExpanded ? "chevron.down" : "chevron.right") : "doc")
-                    .font(.system(size: 9, weight: node.isDirectory ? .bold : .regular))
-                    .frame(width: 12)
-                    .foregroundColor(.textTertiary)
-                Image(systemName: node.isDirectory ? "folder" : iconForFile(node.url))
-                    .font(.system(size: 11))
-                    .foregroundColor(.textSecondary)
-                Text(node.name)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? .textPrimary : .textPrimary.opacity(0.9))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .padding(.leading, CGFloat(depth) * 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.bgElevated.opacity(0.6) : Color.clear)
-            .contentShape(Rectangle())
+    private var rowLabel: some View {
+        HStack(spacing: 4) {
+            Image(systemName: node.isDirectory ? "folder" : iconForFile(node.url))
+                .font(.system(size: 11))
+                .foregroundColor(.textSecondary)
+            Text(node.name)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(isSelected ? .textPrimary : .textPrimary.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .hoverHighlight(
-            background: Color.white.opacity(isSelected ? 0.04 : 0.06),
-            cornerRadius: 4,
-            padding: EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
-        )
-        .contextMenu {
-            // 1. Open in default app — opens with the system's default
-            //    app for this file type (Finder's "Open").
-            Button("Open in default app") {
-                NSWorkspace.shared.open(node.url)
-            }
+        .padding(.leading, 3)
+        .padding(.trailing, 3)
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isSelected ? Color.bgElevated.opacity(0.6) : Color.clear)
+        .contentShape(Rectangle())
+        .contextMenu { fileContextMenu }
+    }
 
-            // 2. Open with > — Finder-style submenu listing every app
-            //    that can open this file. The default app is checked.
-            Menu("Open with") {
-                if availableApps.isEmpty {
-                    Text("No app can open this file")
-                } else {
-                    ForEach(availableApps, id: \.self) { appURL in
-                        Button {
-                            NSWorkspace.shared.open(
-                                [node.url],
-                                withApplicationAt: appURL,
-                                configuration: NSWorkspace.OpenConfiguration()
-                            ) { _, _ in }
-                        } label: {
-                            let isDefault = (appURL == defaultApp)
-                            HStack {
-                                Image(systemName: isDefault ? "checkmark" : "")
-                                    .frame(width: 14)
-                                Text(appURL.deletingPathExtension().lastPathComponent)
-                            }
+    @ViewBuilder
+    private var fileContextMenu: some View {
+        // 1. Open in default app
+        Button("Open in default app") {
+            NSWorkspace.shared.open(node.url)
+        }
+
+        // 2. Open with >
+        Menu("Open with") {
+            if availableApps.isEmpty {
+                Text("No app can open this file")
+            } else {
+                ForEach(availableApps, id: \.self) { appURL in
+                    Button {
+                        NSWorkspace.shared.open(
+                            [node.url],
+                            withApplicationAt: appURL,
+                            configuration: NSWorkspace.OpenConfiguration()
+                        ) { _, _ in }
+                    } label: {
+                        let isDefault = (appURL == defaultApp)
+                        HStack {
+                            Image(systemName: isDefault ? "checkmark" : "")
+                                .frame(width: 14)
+                            Text(appURL.deletingPathExtension().lastPathComponent)
                         }
                     }
                 }
             }
-
-            Divider()
-
-            // 3. Reveal in Finder
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([node.url])
-            }
-
-            // 4. Copy path
-            Button("Copy path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(node.url.path, forType: .string)
-            }
-
-            Divider()
-
-            // 5. Git operations (when in a git repo)
-            if let workingDir = projectPath {
-                Button("Git log") {
-                    gitLogForFile(node.url, workingDir: workingDir)
-                }
-                Button("Git diff") {
-                    gitDiffForFile(node.url, workingDir: workingDir)
-                }
-                Divider()
-            }
-
-            // 6. Add to chat — attach this file to the current thread's
-            //    composer. The Files panel surfaces a placeholder
-            //    message so the user can see the attachment in the
-            //    conversation stream.
-            Button("Add to chat") {
-                onAddToChat(node)
-            }
-            .disabled(node.isDirectory)
         }
+
+        Divider()
+
+        // 3. Reveal in Finder
+        Button("Reveal in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([node.url])
+        }
+
+        // 4. Copy path
+        Button("Copy path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(node.url.path, forType: .string)
+        }
+
+        Divider()
+
+        // 5. Git operations
+        if let workingDir = projectPath {
+            Button("Git log") {
+                gitLogForFile(node.url, workingDir: workingDir)
+            }
+            Button("Git diff") {
+                gitDiffForFile(node.url, workingDir: workingDir)
+            }
+            Divider()
+        }
+
+        // 6. Add to chat
+        Button("Add to chat") {
+            onAddToChat(node)
+        }
+        .disabled(node.isDirectory)
     }
 
     // MARK: - Git Helpers

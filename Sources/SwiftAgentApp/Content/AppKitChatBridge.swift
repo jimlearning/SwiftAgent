@@ -94,8 +94,10 @@ public struct AppKitChatBridge: NSViewRepresentable {
             isInitialLoad = true
 
             // ── Messages ──
+            // Throttle to ~60fps — prevents streaming event storms from
+            // flooding the main thread with NSTableView layout calls.
             vm.$messages
-                .receive(on: DispatchQueue.main)
+                .throttle(for: .milliseconds(16), scheduler: DispatchQueue.main, latest: true)
                 .sink { [weak self] messages in self?.handleMessages(messages) }
                 .store(in: &cancellables)
 

@@ -32,6 +32,7 @@ public final class ChatTableView: NSTableView {
     private var foldState: FoldState = FoldState()
     private var thoughtTime: String? = nil
     private var lastLayoutWidth: CGFloat = 600
+    private var isUpdatingLayout: Bool = false
 
     // Scroll state
     private var suppressAutoScroll: Bool = false
@@ -181,7 +182,10 @@ public final class ChatTableView: NSTableView {
     // MARK: - Layout Width
 
     public func updateLayoutWidth(_ width: CGFloat) {
-        guard width > 0, abs(width - lastLayoutWidth) > 1 else { return }
+        guard width > 0, abs(width - lastLayoutWidth) > 1, !isUpdatingLayout else { return }
+        isUpdatingLayout = true
+        defer { isUpdatingLayout = false }
+
         lastLayoutWidth = width
         tableColumns.first?.width = width
         for rowIndex in 0..<min(items.count, numberOfRows) {

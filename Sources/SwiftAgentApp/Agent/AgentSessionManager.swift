@@ -95,7 +95,9 @@ public final class AgentSessionManager: ObservableObject {
     // MARK: - Run state
 
     /// The currently running agent task (if any).
-    private var currentRunTask: Task<RunResult, Error>?
+    /// Guarded by `runTaskLock` — accessed from both cancel (MainActor) and the detached run task.
+    private var _currentRunTask: Task<RunResult, Error>?
+    private let runTaskLock = NSLock()
 
     /// Whether an agent turn is currently executing.
     @Published public private(set) var isRunning: Bool = false
@@ -338,13 +340,14 @@ public final class AgentSessionManager: ObservableObject {
             }
         }
 
-        // Wrap in a Task so cancellation can target it
-        let runTask = Task { @MainActor [weak self] in
-            guard let self else {
-                throw CancellationError()
-            }
-            self.isRunning = true
-            defer { self.isRunning = false }
+        // Run the agent loop detached from MainActor so streaming event
+        // processing and tool execution don't compete with UI layout.
+        // UI state mutations hop to MainActor explicitly.
+        let runTask = Task.detached { [weak self] in
+            guard let self else { throw CancellationError() }
+
+            await MainActor.run { self.isRunning = true }
+            defer { Task { @MainActor in self.isRunning = false } }
 
             return try await engine.run(
                 userInput: userInput,
@@ -357,16 +360,16 @@ public final class AgentSessionManager: ObservableObject {
             )
         }
 
-        self.currentRunTask = runTask
+        runTaskLock.withLock { _currentRunTask = runTask }
 
         do {
             let result = try await runTask.value
-            self.currentRunTask = nil
-            self.isRunning = false
+            runTaskLock.withLock { _currentRunTask = nil }
+            await MainActor.run { self.isRunning = false }
             return result
         } catch {
-            self.currentRunTask = nil
-            self.isRunning = false
+            runTaskLock.withLock { _currentRunTask = nil }
+            await MainActor.run { self.isRunning = false }
             if error is CancellationError {
                 debugger.logLifecycle("Agent run cancelled", metadata: [:])
             } else {
@@ -378,7 +381,9 @@ public final class AgentSessionManager: ObservableObject {
 
     /// Cancel the currently running agent turn.
     public func cancelRun() {
-        guard let task = currentRunTask, !task.isCancelled else { return }
+        let task = runTaskLock.withLock { _currentRunTask }
+
+        guard let task, !task.isCancelled else { return }
 
         // Cancel the Swift Task — this causes `try await runTask.value` to throw CancellationError
         task.cancel()
@@ -397,7 +402,7 @@ public final class AgentSessionManager: ObservableObject {
             pendingPermission = nil
         }
 
-        currentRunTask = nil
+        runTaskLock.withLock { _currentRunTask = nil }
         isRunning = false
 
         AgentDebugger.shared.logLifecycle("Run cancelled by user", metadata: [:])
