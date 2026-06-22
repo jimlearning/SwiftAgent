@@ -174,12 +174,15 @@ public final class ChatTableRowView: NSTableCellView {
 
         case .toolUse(let toolUse):
             let view = ToolUseBlockView()
-            view.configure(toolUse: toolUse)
+            let resultExpanded = !(foldState?.isCollapsed(.toolResult(toolUseID: toolUse.toolUseID)) ?? false)
+            view.configure(toolUse: toolUse, isResultExpanded: resultExpanded, onToggle: { [weak self] in
+                self?.handleFoldToggle(.toolResult(toolUseID: toolUse.toolUseID))
+            })
             return view
 
         case .toolResult(let result):
             let view = ToolResultBlockView()
-            let expanded = !(foldState?.isCollapsed(.toolResult(messageID: message.id, toolUseID: result.toolUseID)) ?? false)
+            let expanded = !(foldState?.isCollapsed(.toolResult(toolUseID: result.toolUseID)) ?? false)
             view.configure(result: result, expanded: expanded, layoutWidth: layoutWidth)
             return view
 
@@ -195,6 +198,10 @@ public final class ChatTableRowView: NSTableCellView {
     private func handleFoldToggle(_ target: FoldTarget) {
         foldState?.toggle(target)
         applyFoldState()
+        // Force immediate layout so status badges etc. are positioned correctly
+        // before the table recalculates row heights.
+        needsLayout = true
+        layoutSubtreeIfNeeded()
         onFoldToggled?()
     }
 
@@ -224,11 +231,13 @@ public final class ChatTableRowView: NSTableCellView {
                 }
             case .toolResult(let result):
                 if let resultBlock = view as? ToolResultBlockView {
-                    let shouldExpand = !fs.isCollapsed(.toolResult(messageID: message.id, toolUseID: result.toolUseID))
+                    let shouldExpand = !fs.isCollapsed(.toolResult(toolUseID: result.toolUseID))
                     resultBlock.configure(result: result, expanded: shouldExpand, layoutWidth: layoutWidth)
                 }
             case .toolUse(let toolUse):
                 if let toolBlock = view as? ToolUseBlockView {
+                    let resultExpanded = !fs.isCollapsed(.toolResult(toolUseID: toolUse.toolUseID))
+                    toolBlock.updateResultExpanded(resultExpanded)
                     toolBlock.updateStatus(toolUse.status)
                 }
             default: break
@@ -305,11 +314,18 @@ public final class ChatTableRowView: NSTableCellView {
             }
             return headerH + kBlockVSpacing + measureTextHeight(content, font: cbCaptionFont, width: contentWidth - 16)
 
-        case .toolUse:
-            return 40
+        case .toolUse(let toolUse):
+            // Always full card: icon+name row + summary row
+            let headerH = measureTextHeight(toolUse.toolName, font: NSFont.systemFont(ofSize: 12, weight: .semibold), width: contentWidth)
+            let summaryH = measureTextHeight(toolUse.inputSummary, font: cbSmallFont, width: contentWidth)
+            return kToolCardVPad * 2 + headerH + 2 + summaryH
 
         case .toolResult(let result):
-            let headerH: CGFloat = 18
+            let isCollapsed = foldState.isCollapsed(.toolResult(toolUseID: result.toolUseID))
+            if isCollapsed {
+                return 0
+            }
+            let headerH: CGFloat = measureTextHeight("Result", font: cbToolResultHeaderFont, width: contentWidth)
             let truncated = String(result.content.prefix(500))
             let textH = measureTextHeight(truncated, font: cbToolResultFont, width: contentWidth)
             return headerH + 4 + textH

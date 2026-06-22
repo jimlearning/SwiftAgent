@@ -206,9 +206,22 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             let allMessages = try s.readMessages(sessionId: id, projectPath: cwd)
             guard !allMessages.isEmpty else { return }
             let agentMessages = AgentMessage.fromCore(allMessages.map { $0.message })
+            let blockSummary = agentMessages.map { am in
+                let kinds = am.blocks.map { b -> String in
+                    switch b {
+                    case .text: return "text"
+                    case .thinking: return "think"
+                    case .toolUse: return "tool"
+                    case .toolResult: return "result"
+                    case .systemReminder: return "sys"
+                    }
+                }
+                return "\(am.role):[\(kinds.joined(separator: ","))]"
+            }.joined(separator: " | ")
+            print("[ThreadVM.load] \(agentMessages.count) msgs: \(blockSummary)")
             self.messages = agentMessages
         } catch {
-            print("[ThreadViewModel] loadMessagesFromStore failed: \(error)")
+            print("[ThreadVM.load] FAILED: \(error)")
         }
     }
 
@@ -490,15 +503,6 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             // any stale streaming state). Queued user messages (appended
             // after the placeholder) are NOT removed.
             if let userIdx = messages.firstIndex(where: { $0.id == currentRunUserMessageID }) {
-                // Delete only messages from userIdx to end from DB, but
-                // BE CAREFUL: only delete the messages that are part of
-                // this agent run (user message + assistant + tool results).
-                // Queued messages below the assistant have role .user and
-                // should be preserved.
-                //
-                // Strategy: walk forward from userIdx and delete until we
-                // hit a user message that is NOT the triggering one (i.e.,
-                // a queued message). Then delete the range [userIdx..<cutoff).
                 var cutoff = messages.count
                 for i in (userIdx + 1)..<messages.count {
                     if messages[i].role == .user && messages[i].id != currentRunUserMessageID {
@@ -506,19 +510,14 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
                         break
                     }
                 }
-                for _ in userIdx..<cutoff {
-                    // JSONL deletion not supported per-line; message will be overwritten on next save.
-                }
                 messages.removeSubrange(userIdx..<cutoff)
             } else {
-                // JSONL deletion not supported per-line; message will be overwritten on next save.
                 messages.remove(at: index)
             }
             messages.append(contentsOf: turnMessages)
 
             // Persist turn messages, but skip user messages — they were
             // already persisted in startAgentRun with a different UUID.
-            // Persisting them again from turns creates a duplicate.
             for msg in turnMessages where msg.role != .user {
                 persistMessageWithBlocks(msg)
             }

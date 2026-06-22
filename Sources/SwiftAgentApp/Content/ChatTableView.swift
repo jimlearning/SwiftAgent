@@ -260,9 +260,13 @@ extension ChatTableView: NSTableViewDataSource {
 
         cell.identifier = identifier
         cell.onFoldToggled = { [weak self] in
-            self?.cachedRowHeights.removeAll()
-            self?.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
-            self?.onFoldToggled?()
+            guard let self else { return }
+            cachedRowHeights.removeAll()
+            // Recalc all rows — the affected tool result is in a different row
+            // than the tool use card that was clicked.
+            let allRows = IndexSet(integersIn: 0..<items.count)
+            noteHeightOfRows(withIndexesChanged: allRows)
+            onFoldToggled?()
         }
 
         let message = items[row]

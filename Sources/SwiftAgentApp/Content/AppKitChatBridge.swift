@@ -73,6 +73,7 @@ public struct AppKitChatBridge: NSViewRepresentable {
         private var lastMessageCount: Int = 0
         private var lastStreamingBlockCount: Int = 0
         private var isInitialLoad = true
+        private let foldState = FoldState()
 
         /// KVO token for clip-view bounds → `isNearBottom` sync.
         private var clipViewBoundsObserver: NSKeyValueObservation?
@@ -119,6 +120,7 @@ public struct AppKitChatBridge: NSViewRepresentable {
             lastMessageCount = 0
             lastStreamingBlockCount = 0
             isInitialLoad = true
+            foldState.reset()
             startObserving()
         }
 
@@ -196,7 +198,7 @@ public struct AppKitChatBridge: NSViewRepresentable {
         }
 
         private func resolveFoldState() -> FoldState {
-            FoldState()
+            foldState
         }
 
         private func resolveThoughtTime() -> String? {

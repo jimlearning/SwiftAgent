@@ -62,33 +62,24 @@ public struct AgentMessage: Identifiable, Equatable {
 
     public mutating func appendText(_ text: String) {
         renderToken &+= 1
-        if let lastIdx = blocks.lastIndex(where: { $0.textContent != nil }) {
-            if let existing = blocks[lastIdx].textContent {
-                blocks[lastIdx] = .text(existing + text)
-                return
-            }
+        // Merge into the last block if it is already text (streaming continuation).
+        if let lastBlock = blocks.last, case .text(let existing) = lastBlock {
+            blocks[blocks.count - 1] = .text(existing + text)
+            return
         }
-        let insertIdx: Int
-        if let firstToolIdx = blocks.firstIndex(where: { $0.toolUse != nil || $0.toolResult != nil }) {
-            insertIdx = firstToolIdx
-        } else {
-            insertIdx = blocks.count
-        }
-        blocks.insert(.text(text), at: insertIdx)
+        // New text block at the end, preserving the model's output order.
+        // The model may produce text before or after tools; we must not reorder.
+        blocks.append(.text(text))
     }
 
     public mutating func appendThinking(_ text: String) {
         renderToken &+= 1
-        // Only merge into the last thinking block if it is the LAST block
-        // in the array. If tool_use, tool_result, or text blocks have been
-        // inserted after the last thinking block, the new thinking content
-        // belongs to a NEW thinking block that should appear after them.
+        // Merge into the last block if it is thinking (streaming continuation).
         if let lastBlock = blocks.last, case .thinking(let existing, let expanded) = lastBlock {
             blocks[blocks.count - 1] = .thinking(existing + text, isExpanded: expanded)
             return
         }
-        // Create a new thinking block at the end of the blocks array,
-        // preserving interleaved think→tool→think ordering.
+        // New thinking block at the end, preserving interleaved order.
         blocks.append(.thinking(text))
     }
 
@@ -188,6 +179,18 @@ public struct ToolUseBlock: Equatable, Codable {
         self.rawInput = rawInput
         self.status = status
     }
+
+    /// Custom decoding so persisted blocks from before the `status` field
+    /// was added default to `.completed` instead of failing to decode.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        toolUseID = try c.decode(String.self, forKey: .toolUseID)
+        toolName = try c.decode(String.self, forKey: .toolName)
+        inputSummary = try c.decode(String.self, forKey: .inputSummary)
+        inputDetail = try c.decode(String.self, forKey: .inputDetail)
+        rawInput = try c.decodeIfPresent(JSONValue.self, forKey: .rawInput)
+        status = try c.decodeIfPresent(ToolUseStatus.self, forKey: .status) ?? .completed
+    }
 }
 
 public enum ToolUseStatus: Equatable, Codable {
@@ -215,6 +218,16 @@ public struct ToolResultBlock: Equatable, Codable {
         self.content = content
         self.isError = isError
         self.isExpanded = isExpanded
+    }
+
+    /// Custom decoding so persisted blocks from before the `isExpanded`
+    /// field was added default to `false` instead of failing to decode.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        toolUseID = try c.decode(String.self, forKey: .toolUseID)
+        content = try c.decode(String.self, forKey: .content)
+        isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+        isExpanded = try c.decodeIfPresent(Bool.self, forKey: .isExpanded) ?? false
     }
 }
 
@@ -251,13 +264,28 @@ extension AgentMessage {
                     switch block {
                     case .text(let text): return .text(text)
                     case .thinking(let text, _): return .thinking(text)
-                    case .toolUse(let id, let name, let input):
+                    case .toolUse(let id, let name, let input),
+                         .serverToolUse(let id, let name, let input):
+                        let summary = summarizeInput(toolName: name, input: input)
                         return .toolUse(ToolUseBlock(
                             toolUseID: id, toolName: name,
-                            inputSummary: summarizeInput(toolName: name, input: input),
-                            inputDetail: input.jsonString, rawInput: input
+                            inputSummary: summary,
+                            inputDetail: input.jsonString, rawInput: input,
+                            status: .completed
                         ))
-                    default: return nil
+                    case .toolResult(let toolUseID, let content, let isError):
+                        let text: String
+                        switch content {
+                        case .string(let s): text = s
+                        case .blocks: text = "[complex result]"
+                        }
+                        return .toolResult(ToolResultBlock(
+                            toolUseID: toolUseID,
+                            content: text,
+                            isError: isError
+                        ))
+                    default:
+                        return nil
                     }
                 }
                 return AgentMessage(id: msg.uuid, role: .assistant, blocks: blocks,
@@ -271,7 +299,9 @@ extension AgentMessage {
                 guard !textBlocks.isEmpty else { return nil }
                 return AgentMessage(id: msg.uuid, role: .system, blocks: textBlocks, timestamp: msg.timestamp)
 
-            default: return nil
+            default:
+                print("[fromCore] skipped msg type=\(msg.type.rawValue)")
+                return nil
             }
         }
     }
@@ -282,9 +312,14 @@ extension AgentMessage {
     /// the original `userInput` for every Turn). The user message is only emitted for
     /// the FIRST turn to avoid duplication; subsequent turns contribute only their
     /// assistant message and tool results.
+    ///
+    /// Each turn's assistant message gets a unique UUID so they survive JSONL
+    /// deduplication independently. The first turn reuses `lastAssistantID` (the
+    /// streaming placeholder's UUID) so the coordinator replaces it in-place.
     public static func fromTurns(_ turns: [Turn], lastAssistantID: String? = nil) -> [AgentMessage] {
         var result: [AgentMessage] = []
         var isFirstTurn = true
+        var isFirstAssistant = true
         for turn in turns {
             // Only emit user message for the first turn — all turns in a run
             // share the same user input, so repeating it causes duplication.
@@ -300,39 +335,58 @@ extension AgentMessage {
                 isFirstTurn = false
             }
             if let assistant = turn.assistantMessage {
-                result.append(AgentMessage(
-                    id: lastAssistantID ?? assistant.uuid, role: .assistant,
-                    blocks: assistant.content.compactMap { block in
-                        switch block {
-                        case .text(let text): return .text(text)
-                        case .thinking(let text, _): return .thinking(text)
-                        case .toolUse(let id, let name, let input):
-                            return .toolUse(ToolUseBlock(
-                                toolUseID: id, toolName: name,
-                                inputSummary: summarizeInput(toolName: name, input: input),
-                                inputDetail: input.jsonString, rawInput: input, status: .completed
-                            ))
-                        default: return nil
+                // First assistant reuses the streaming placeholder's UUID so the
+                // coordinator replaces it in-place; subsequent assistants get unique
+                // UUIDs so their tool_use blocks survive JSONL dedup independently.
+                let msgID = isFirstAssistant
+                    ? (lastAssistantID ?? assistant.uuid)
+                    : assistant.uuid
+                isFirstAssistant = false
+
+                // Build the initial block list from the assistant's content.
+                var blocks: [AgentMessageBlock] = assistant.content.compactMap { block in
+                    switch block {
+                    case .text(let text): return .text(text)
+                    case .thinking(let text, _): return .thinking(text)
+                    case .toolUse(let id, let name, let input),
+                         .serverToolUse(let id, let name, let input):
+                        return .toolUse(ToolUseBlock(
+                            toolUseID: id, toolName: name,
+                            inputSummary: summarizeInput(toolName: name, input: input),
+                            inputDetail: input.jsonString, rawInput: input, status: .completed
+                        ))
+                    default: return nil
+                    }
+                }
+
+                // Inline tool results right after their matching toolUse cards so
+                // they stay adjacent (same as the streaming in-message layout).
+                for trMsg in turn.toolResults {
+                    for block in trMsg.content {
+                        if case .toolResult(let toolUseID, let content, let isError) = block {
+                            let text: String
+                            switch content {
+                            case .string(let s): text = s
+                            case .blocks: text = "[complex result]"
+                            }
+                            let resultBlock: AgentMessageBlock = .toolResult(
+                                ToolResultBlock(toolUseID: toolUseID, content: text, isError: isError)
+                            )
+                            // Insert after the matching toolUse card, or append if not found.
+                            if let idx = blocks.lastIndex(where: { b in b.toolUse?.toolUseID == toolUseID }) {
+                                blocks.insert(resultBlock, at: idx + 1)
+                            } else {
+                                blocks.append(resultBlock)
+                            }
                         }
-                    },
+                    }
+                }
+
+                result.append(AgentMessage(
+                    id: msgID, role: .assistant,
+                    blocks: blocks,
                     timestamp: assistant.timestamp, tokenUsage: assistant.usage
                 ))
-            }
-            for trMsg in turn.toolResults {
-                let blocks = trMsg.content.compactMap { block -> AgentMessageBlock? in
-                    if case .toolResult(let toolUseID, let content, let isError) = block {
-                        let text: String
-                        switch content {
-                        case .string(let s): text = s
-                        case .blocks: text = "[complex result]"
-                        }
-                        return .toolResult(ToolResultBlock(toolUseID: toolUseID, content: text, isError: isError))
-                    }
-                    return nil
-                }
-                if !blocks.isEmpty {
-                    result.append(AgentMessage(id: trMsg.uuid, role: .system, blocks: blocks, timestamp: trMsg.timestamp))
-                }
             }
         }
         return result

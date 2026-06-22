@@ -162,7 +162,8 @@ public final class TextBlockView: NSView, ChatBlockView {
         case .user:
             let maxTextW = kUserBubbleMaxW - kUserBubbleHPad * 2
             let fit = label.sizeThatFits(CGSize(width: maxTextW, height: CGFloat.greatestFiniteMagnitude))
-            return CGSize(width: kUserBubbleMaxW, height: fit.height + kUserBubbleVPad * 2)
+            // Fill the full stack width so the bubble can right-align within it.
+            return CGSize(width: layoutWidth, height: fit.height + kUserBubbleVPad * 2)
         case .assistant, .system:
             let fit = label.sizeThatFits(CGSize(width: layoutWidth, height: CGFloat.greatestFiniteMagnitude))
             return CGSize(width: layoutWidth, height: fit.height)
@@ -295,8 +296,10 @@ public final class ThinkingBlockView: NSView, ChatBlockView {
 
 // MARK: - ToolUseBlockView
 
-/// Card showing a tool invocation with icon, name, summary, and status badge.
-/// Supports in-place status updates.
+/// Card showing a tool invocation (icon, name, summary, status).
+/// Clicking toggles the associated tool result below.
+/// The card itself is always fully visible; the chevron indicates
+/// whether the result block is expanded (▾) or collapsed (▸).
 public final class ToolUseBlockView: NSView, ChatBlockView {
     public private(set) var blockKind: AgentMessageBlock.BlockKind = .toolUse
 
@@ -304,8 +307,16 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
     private let nameLabel = NSTextField(labelWithString: "")
     private let summaryLabel = NSTextField(labelWithString: "")
     private let statusView = NSView()
+    private let chevronLabel = NSTextField(labelWithString: "")
 
     private var toolUseID: String = ""
+    private var isResultExpanded: Bool = true
+    private var onToggle: (() -> Void)?
+
+    /// Transparent overlay button that handles clicks for the entire card.
+    /// Placed as the last (topmost) subview so it always receives mouse events,
+    /// regardless of which child label the user clicks on.
+    private let clickButton = NSButton()
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -338,17 +349,41 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
 
         statusView.wantsLayer = true
         addSubview(statusView)
+
+        chevronLabel.font = NSFont.systemFont(ofSize: 9, weight: .bold)
+        chevronLabel.textColor = .cbTextTertiary
+        chevronLabel.isBezeled = false
+        chevronLabel.drawsBackground = false
+        chevronLabel.stringValue = "▾"
+        chevronLabel.sizeToFit()
+        addSubview(chevronLabel)
+
+        clickButton.isBordered = false
+        clickButton.isTransparent = true
+        clickButton.title = ""
+        clickButton.target = self
+        clickButton.action = #selector(cardClicked)
+        addSubview(clickButton)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    public func configure(toolUse: ToolUseBlock) {
+    /// `isResultExpanded` controls the chevron direction and is driven by
+    /// the FoldTarget.toolResult state in the message-level FoldState.
+    public func configure(toolUse: ToolUseBlock, isResultExpanded: Bool = true, onToggle: (() -> Void)? = nil) {
         self.toolUseID = toolUse.toolUseID
+        self.isResultExpanded = isResultExpanded
+        self.onToggle = onToggle
+
         iconLabel.stringValue = toolIcon(for: toolUse.toolName)
         nameLabel.stringValue = toolUse.toolName
         summaryLabel.stringValue = toolUse.inputSummary
+
+        chevronLabel.stringValue = isResultExpanded ? "▾" : "▸"
+        chevronLabel.sizeToFit()
+
         updateStatusBadge(toolUse.status)
 
         iconLabel.sizeToFit()
@@ -358,14 +393,27 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
         invalidateIntrinsicContentSize()
     }
 
+    public func updateResultExpanded(_ expanded: Bool) {
+        isResultExpanded = expanded
+        chevronLabel.stringValue = expanded ? "▾" : "▸"
+        chevronLabel.sizeToFit()
+        needsLayout = true
+    }
+
     public func updateStatus(_ status: ToolUseStatus) {
         updateStatusBadge(status)
+        needsLayout = true
     }
 
     public func updateContent(with block: AgentMessageBlock) -> Bool {
         guard case .toolUse(let toolUse) = block else { return false }
         updateStatusBadge(toolUse.status)
+        needsLayout = true
         return true
+    }
+
+    @objc private func cardClicked() {
+        onToggle?()
     }
 
     private func updateStatusBadge(_ status: ToolUseStatus) {
@@ -419,11 +467,17 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
         iconLabel.sizeToFit()
         iconLabel.frame.origin = CGPoint(x: kToolCardHPad, y: kToolCardVPad)
 
+        chevronLabel.sizeToFit()
+        chevronLabel.frame.origin = CGPoint(
+            x: bounds.width - kToolCardHPad - chevronLabel.bounds.width,
+            y: kToolCardVPad + 1
+        )
+
         nameLabel.sizeToFit()
         nameLabel.frame.origin = CGPoint(x: iconLabel.frame.maxX + 8, y: kToolCardVPad)
 
         statusView.frame.origin = CGPoint(
-            x: bounds.width - statusView.bounds.width - kToolCardHPad,
+            x: chevronLabel.frame.minX - statusView.bounds.width - 8,
             y: kToolCardVPad
         )
 
@@ -433,6 +487,8 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
             width: bounds.width - kToolCardHPad * 2,
             height: summaryLabel.bounds.height
         )
+
+        clickButton.frame = bounds
     }
 
     public override var intrinsicContentSize: CGSize {
@@ -440,8 +496,8 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
         nameLabel.sizeToFit()
         summaryLabel.sizeToFit()
 
-        let contentH = max(iconLabel.bounds.height, nameLabel.bounds.height)
-        let totalH = kToolCardVPad * 2 + contentH + 2 + summaryLabel.bounds.height
+        let headerH = max(iconLabel.bounds.height, nameLabel.bounds.height)
+        let totalH = kToolCardVPad * 2 + headerH + 2 + summaryLabel.bounds.height
 
         return CGSize(width: 400, height: totalH)
     }
@@ -466,8 +522,9 @@ public final class ToolUseBlockView: NSView, ChatBlockView {
 
 // MARK: - ToolResultBlockView
 
-/// Card showing a tool result with icon, header, and content.
-/// Supports expand/collapse and in-place text updates.
+/// Tool result display block. Visibility toggled by clicking the tool card above.
+/// The header row (icon + label) is always visible; content is hidden when collapsed.
+/// No chevron or click handler — the tool card controls expand/collapse.
 public final class ToolResultBlockView: NSView, ChatBlockView {
     public private(set) var blockKind: AgentMessageBlock.BlockKind = .toolResult
 
@@ -475,7 +532,7 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
     private let headerLabel = NSTextField(labelWithString: "")
     private let contentLabel = NSTextField(wrappingLabelWithString: "")
 
-    private var isExpanded: Bool = false
+    private var isExpanded: Bool = true
     private var layoutWidth: CGFloat = 400
     private var toolUseID: String = ""
 
@@ -490,6 +547,7 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
         headerLabel.font = cbToolResultHeaderFont
         headerLabel.isBezeled = false
         headerLabel.drawsBackground = false
+        headerLabel.textColor = .cbTextTertiary
         addSubview(headerLabel)
 
         contentLabel.font = cbToolResultFont
@@ -498,7 +556,7 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
         contentLabel.drawsBackground = false
         contentLabel.isSelectable = true
         contentLabel.lineBreakMode = .byWordWrapping
-        contentLabel.maximumNumberOfLines = 6
+        contentLabel.maximumNumberOfLines = 0
         contentLabel.preferredMaxLayoutWidth = layoutWidth
         addSubview(contentLabel)
     }
@@ -524,10 +582,13 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
             headerLabel.textColor = .cbTextTertiary
         }
 
+        headerIcon.isHidden = !expanded
+        headerLabel.isHidden = !expanded
+
         let truncated = String(result.content.prefix(500))
         contentLabel.stringValue = truncated
         contentLabel.preferredMaxLayoutWidth = layoutWidth
-        contentLabel.maximumNumberOfLines = expanded ? 0 : 6
+        contentLabel.isHidden = !expanded
 
         headerIcon.sizeToFit()
         headerLabel.sizeToFit()
@@ -547,6 +608,12 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
 
     public override func layout() {
         super.layout()
+        if !isExpanded {
+            headerIcon.frame = .zero
+            headerLabel.frame = .zero
+            contentLabel.frame = .zero
+            return
+        }
         headerIcon.sizeToFit()
         headerIcon.frame.origin = .zero
 
@@ -561,6 +628,9 @@ public final class ToolResultBlockView: NSView, ChatBlockView {
     }
 
     public override var intrinsicContentSize: CGSize {
+        if !isExpanded {
+            return CGSize(width: layoutWidth, height: 0)
+        }
         headerIcon.sizeToFit()
         headerLabel.sizeToFit()
         let headerH = max(headerIcon.bounds.height, headerLabel.bounds.height)

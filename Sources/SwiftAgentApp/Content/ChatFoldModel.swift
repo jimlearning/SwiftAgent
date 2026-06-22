@@ -10,8 +10,10 @@ public enum FoldTarget: Hashable, Sendable {
     case thinking(messageID: String, blockIndex: Int)
     /// A single tool-use block.
     case toolUse(messageID: String, toolUseID: String)
-    /// A tool-result block.
-    case toolResult(messageID: String, toolUseID: String)
+    /// A tool-result block. Keyed only by toolUseID so the tool card
+    /// and the result block agree on the same fold target regardless of
+    /// which message they belong to.
+    case toolResult(toolUseID: String)
     /// An entire turn (user + assistant + tools together).
     case turn(messageID: String)
     /// The entire message (all blocks collapsed).
@@ -119,7 +121,7 @@ public struct AutoCollapseEngine {
                     if case .toolResult(let result) = block {
                         let lineCount = result.content.components(separatedBy: "\n").count
                         if lineCount >= policy.minToolResultLines {
-                            let target = FoldTarget.toolResult(messageID: message.id, toolUseID: result.toolUseID)
+                            let target = FoldTarget.toolResult(toolUseID: result.toolUseID)
                             collapsed.insert(target)
                         }
                     }
