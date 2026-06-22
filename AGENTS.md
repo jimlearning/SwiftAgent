@@ -45,7 +45,7 @@ Sources/
     ├── EntryPoint.swift      # @main App entry with windows, commands, error overlay
     ├── Window/               # MainContentView with HSplitView 3-pane + native .toolbar
     ├── Sidebar/              # SidebarView, ProjectRowView, ThreadRowView
-    ├── Content/              # ContentView, ComposerView, MessageListView, etc.
+    ├── Content/              # ContentView, ComposerView, NSTableView chat (AppKitChatView/Bridge, ChatTableView/RowView/Blocks/FoldModel/ScrollContainer)
     ├── RightTabs/            # Multi-tab right workspace (Review/Terminal/Browser/Files)
     ├── DeepSeek/             # DeepSeekClient, Models, Config, KeychainStore
     ├── LLM/                  # AppLLMProvider

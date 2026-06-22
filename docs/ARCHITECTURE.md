@@ -51,6 +51,11 @@ Thin CLI layer. All UI/UX lives here.
 | LineEditor decomposition | 5 independent modules (`TextBuffer`, `TerminalInput`, `EditorRenderer`, `PasteBurstDetector`, `ComposerState`) | Pure function-like subsystems with no terminal side-effects. Reduced from 1,287→461 lines (-64%) |
 | macOS app layout | `HSplitView` 3-pane (not `NavigationSplitView`) + native `.toolbar` | 3 independent toggles (sidebar / right / focus) can't be expressed through `NavigationSplitViewVisibility`'s 4-case enum, and `.navigationSplitViewColumnWidth(min: 0)` reserves the collapsed column's layout slot. `HSplitView` (NSSplitView wrapper) has fixed-order columns with flex widths — collapse a column to 0pt and the remaining columns naturally expand to fill. |
 | macOS focus mode | `if !focusMode { ContentView() }` — remove from tree entirely, not `.frame(width: 0)` | `ContentView` carries `.layoutPriority(1)`, so even at width 0 it claims the leading slot and pushes `SidebarView` to the middle. Removing from the tree lets `HSplitView` relayout sidebar + right to fill the freed space with sidebar back at the leading edge. |
+| Chat rendering | `NSTableView` with cell reuse + `NSStackView` blocks (not SwiftUI `ScrollView`+`VStack`) | SwiftUI `ScrollView` builds all views upfront — 500-message conversations OOM. NSTableView recycles rows via `makeView(withIdentifier:owner:)`. Each row (`ChatTableRowView`) uses `NSStackView` to stack `ChatBlockView` instances vertically. Per-row height computed via `measureHeight()` with cached results. |
+| Message model | Tool results are inline blocks within assistant messages (not separate system messages) | Matches how streaming delivers events: tool results pop in right after their tool use card. `fromTurns` inlines results next to matching `toolUse` blocks instead of emitting separate system messages. `fromCore` also handles `toolResult` blocks in assistant messages. This keeps tool card + result visually adjacent and avoids orphaned results far from their context. |
+| `fromTurns` UUID strategy | First assistant gets `lastAssistantID` (replaces streaming placeholder), subsequent turns get unique `assistant.uuid` | All turns sharing the same UUID would collide in JSONL deduplication (`readMessages` keeps last occurrence by UUID), causing tool use blocks from earlier turns to be silently dropped. Unique UUIDs per turn preserve all blocks. |
+| Fold system | `FoldTarget.toolResult` keyed only on `toolUseID` (no `messageID`); `FoldState` persistent in Coordinator | The tool card and its result block live in different rows/messages (tool card in assistant message, result may be in the same or adjacent message). Keying on `toolUseID` alone ensures clicking the card toggles the result regardless of which message carries it. `FoldState` is an `ObservableObject` owned by `AppKitChatBridge.Coordinator` and reused across reloads, so collapse state survives thread switches. |
+| Collapsed tool result rendering | Zero height — header and content both hidden, `intrinsicContentSize.height = 0` | Previously collapsed results only hid the content text, leaving the "Result" header visible and occupying space. Full zero-height collapse removes the block entirely from layout so text below it shifts up cleanly. |
 
 ## Design Conventions
 
@@ -256,9 +261,13 @@ Sources/SwiftAgentApp/            # macOS SwiftUI App (DeepSeek-powered)
 ├── Content/
 │   ├── ContentView.swift         # Center pane: toolbar + messages + composer
 │   ├── ComposerView.swift        # Message input (text, send, slash commands)
-│   ├── MessageListView.swift     # Scrollable message list
-│   ├── MessageBubbleView.swift   # Individual message bubbles
-│   └── ToolCallCard.swift        # Tool call inline cards
+│   ├── AppKitChatView.swift      # SwiftUI wrapper for NSTableView-based chat
+│   ├── AppKitChatBridge.swift    # Coordinator: AppKit↔SwiftUI bridge, FoldState owner
+│   ├── ChatTableView.swift       # NSTableView with cell reuse, height caching, streaming
+│   ├── ChatTableRowView.swift    # Row view: NSStackView block stacking, fold handling
+│   ├── ChatBlockViews.swift      # Block views: text, thinking, toolUse, toolResult, system
+│   ├── ChatFoldModel.swift       # FoldTarget enum + FoldState ObservedObject + auto-collapse
+│   └── ChatScrollContainer.swift # Scroll container with stickiness + floating scroll button
 ├── RightTabs/
 │   ├── RightTabsView.swift       # Multi-tab right workspace container
 │   ├── RightTabsStore.swift      # Tab state management
