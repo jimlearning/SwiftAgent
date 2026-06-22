@@ -28,6 +28,7 @@ public struct FilesPanelView: View {
     @State private var expandedFolders: Set<String> = []
     /// Lazily-loaded children for directories beyond the initial tree depth.
     @State private var loadedChildren: [String: [FileNode]] = [:]
+    @State private var treeWidth: CGFloat = 240
 
     private static let log = Logger(subsystem: "com.swiftagent.app", category: "FilesPanel")
     private static var mdRenderCache: [String: AttributedString] = [:]
@@ -40,8 +41,8 @@ public struct FilesPanelView: View {
             Divider().background(Color.borderSubtle)
             HStack(spacing: 0) {
                 treeColumn
-                    .frame(width: 220)
-                Divider().background(Color.borderSubtle)
+                    .frame(width: treeWidth)
+                DragDivider(width: $treeWidth, range: 160...320, edge: .trailing, color: .borderStrong)
                 previewColumn
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -477,13 +478,20 @@ struct FileTreeRow: View {
                     }
                 } label: {
                     rowLabel
+                        .contentShape(Rectangle())
+                        .onTapGesture { expandedBinding.wrappedValue.toggle() }
                 }
             } else if node.children?.isEmpty == true {
                 // Empty directory — no children, no chevron
                 rowLabel
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        expanded.remove(node.url.path)
+                    }
             } else {
                 // Children not loaded yet — tap to load and expand
                 rowLabel
+                    .contentShape(Rectangle())
                     .onTapGesture {
                         let key = node.url.path
                         if expanded.contains(key) {
@@ -525,9 +533,9 @@ struct FileTreeRow: View {
                 .truncationMode(.middle)
             Spacer(minLength: 0)
         }
-        .padding(.leading, 3)
-        .padding(.trailing, 3)
-        .padding(.vertical, 3)
+        .offset(x: -8)   // shift content left to close chevron gap; frame/bg unaffected
+        .padding(.leading, 0)
+        .padding(.trailing, 0)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? Color.bgElevated.opacity(0.6) : Color.clear)
         .contentShape(Rectangle())

@@ -34,7 +34,8 @@ struct MainContentView: View {
 
                 DragDivider(
                     width: $appViewModel.sidebarWidth,
-                    range: appViewModel.sidebarWidthRange
+                    range: appViewModel.sidebarWidthRange,
+                    edge: .leading
                 )
             }
 
@@ -55,22 +56,23 @@ struct MainContentView: View {
                 DragDivider(
                     width: $appViewModel.rightWidth,
                     range: appViewModel.rightWidthRange,
-                    inverted: true
+                    inverted: true,
+                    edge: .trailing
                 )
             }
 
             // Right: multi-tab workspace. User-resizable in normal mode;
             // expands to fill all remaining space in focus mode.
+            //
+            // Single RightTabsView instance with conditional frame modifiers
+            // (NOT if-else) — preserves view identity across focusMode toggles
+            // so tab-internal @State (selected file, expanded folders, preview
+            // content) survives the transition.
             if appViewModel.rightVisible {
-                if appViewModel.focusMode {
-                    RightTabsView()
-                        .frame(maxWidth: .infinity)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                } else {
-                    RightTabsView()
-                        .frame(width: appViewModel.rightWidth)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+                RightTabsView()
+                    .frame(maxWidth: appViewModel.focusMode ? .infinity : nil)
+                    .frame(width: appViewModel.focusMode ? nil : appViewModel.rightWidth)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .background(Color.bgContent)

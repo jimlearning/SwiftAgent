@@ -18,20 +18,32 @@ struct DragDivider: View {
     @Binding var width: CGFloat
     let range: ClosedRange<CGFloat>
     var inverted: Bool = false
+    /// Which edge the visual line hugs (the junction between panes).
+    /// `.leading` for dividers after the left pane, `.trailing` for
+    /// dividers before the right pane.
+    var edge: HorizontalEdge = .leading
+    var color: Color = .clear
 
     private let hitWidth: CGFloat = 6
     private let visualWidth: CGFloat = 1
 
     @State private var initialWidth: CGFloat?
 
+    private var visualAlignment: Alignment {
+        switch edge {
+        case .leading:  return .leading
+        case .trailing: return .trailing
+        }
+    }
+
     var body: some View {
         Rectangle()
             .fill(Color.clear)
             .frame(width: hitWidth)
             .contentShape(Rectangle())
-            .overlay(alignment: .center) {
+            .overlay(alignment: visualAlignment) {
                 Rectangle()
-                    .fill(Color.borderStrong)
+                    .fill(color)
                     .frame(width: visualWidth)
             }
             .onHover { hovering in
