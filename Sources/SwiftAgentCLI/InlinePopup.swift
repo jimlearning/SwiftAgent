@@ -6,14 +6,17 @@ import Foundation
 public struct PopupConfig {
     /// Maximum popup height in rows (including borders).
     public let maxHeight: Int
-    /// Maximum popup width in columns (capped by terminal width).
+    /// Absolute maximum popup width in columns (hard cap, also bounded by terminal).
     public let maxWidth: Int
+    /// Minimum popup width in columns.
+    public let minWidth: Int
     /// Left padding inside the border before item text.
     public let leftPadding: Int
 
-    public init(maxHeight: Int = 12, maxWidth: Int = 66, leftPadding: Int = 2) {
+    public init(maxHeight: Int = 12, maxWidth: Int = 80, minWidth: Int = 20, leftPadding: Int = 2) {
         self.maxHeight = maxHeight
         self.maxWidth = maxWidth
+        self.minWidth = minWidth
         self.leftPadding = leftPadding
     }
 }
@@ -190,10 +193,23 @@ public struct InlinePopup {
         inputStartCol: Int = 0
     ) {
         let visible = min(items.count, maxVisibleItems)
-        let popupWidth = min(config.maxWidth, terminalWidth - inputStartCol - 2)
 
-        // Calculate column widths for display + help
+        // ── Adaptive width ──
         let haveHelp = items.contains { ($0.help ?? "").isEmpty == false }
+
+        // Max display text width across all items (not just visible, so width is stable)
+        let maxDisplayWidth = items.map { TerminalDisplayWidth.width($0.display) }.max() ?? 10
+        // Estimate help column from raw help text (capped at 30), width-independent
+        let maxHelpWidth: Int = haveHelp
+            ? min(30, items.compactMap { $0.help }.map { TerminalDisplayWidth.width($0) }.max() ?? 0)
+            : 0
+
+        // Content-ideal = leftPadding + indicator(2) + maxDisplay + separator(2) + help + rightPadding(2)
+        let contentIdeal = config.leftPadding + 2 + maxDisplayWidth + (haveHelp ? 2 + maxHelpWidth : 0) + 2
+        let idealWidth = max(config.minWidth, min(contentIdeal, config.maxWidth))
+        let popupWidth = min(idealWidth, terminalWidth - inputStartCol - 2)
+
+        // Help column width from the resolved popup
         let helpWidth = haveHelp ? min(30, popupWidth / 3) : 0
         let displayWidth = popupWidth - config.leftPadding - (haveHelp ? helpWidth + 2 : 0) - 2  // -2 for right padding
 
