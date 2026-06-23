@@ -414,18 +414,20 @@ struct ProjectSectionView: View {
 
     private var projectRow: some View {
         HStack(spacing: 4) {
-            Image(systemName: project.isExpanded ? "chevron.down" : "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .frame(width: 14)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.textTertiary)
+                .rotationEffect(.degrees(project.isExpanded ? 90 : 0))
+                .frame(width: 14)
             Image(systemName: "folder")
                 .font(.system(size: 12))
                 .foregroundColor(.textSecondary)
             Text(project.name)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer()
-            // New Chat button — always in layout, visible only on hover
             Button {
                 onNewThread()
             } label: {
@@ -437,21 +439,24 @@ struct ProjectSectionView: View {
             }
             .buttonStyle(.plain)
             .opacity(isHovering ? 1 : 0)
+            .scaleEffect(isHovering ? 1 : 0.8)
             .hoverHighlight(cornerRadius: 4, padding: EdgeInsets(top: 3, leading: 3, bottom: 3, trailing: 3))
             .help("New chat in \(project.name)")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
+        .cellHoverHighlight()
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                isHovering = hovering
+            }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isHovering ? Color.white.opacity(0.08) : Color.clear)
-        )
-        .onTapGesture { project.isExpanded.toggle() }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: project.isExpanded)
+        .onTapGesture {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                project.isExpanded.toggle()
+            }
+        }
         .contextMenu {
             Button("Rename") { renameTarget = .project(project.id) }
             Button("New Thread") { onNewThread() }
@@ -466,6 +471,10 @@ struct ProjectSectionView: View {
 /// Single thread row with strong visual distinction between selected
 /// and unselected states. Selection shows: a 2pt accent border on the
 /// left edge, a darker background overlay, and a bolder title font.
+///
+/// Padding is applied once via the hoverHighlight modifier; the row
+/// itself carries no extra `.padding()` so the hover region exactly
+/// matches the visible cell area.
 struct ThreadRowView: View {
     @ObservedObject var thread: ThreadViewModel
     let isSelected: Bool
@@ -477,17 +486,13 @@ struct ThreadRowView: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 6) {
-                // 2pt accent bar — only visible when selected. Acts as the
-                // strongest visual cue that this thread is active.
-                Rectangle()
-                    .fill(Color.accentPrimary)
-                    .frame(width: 2)
-                    .opacity(isSelected ? 1 : 0)
+                Spacer().frame(width: 6)
 
                 if thread.hasUnread && !isSelected {
                     Circle()
                         .fill(Color.accentPrimary)
                         .frame(width: 6, height: 6)
+                        .shadow(color: Color.accentPrimary.opacity(0.35), radius: 3, x: 0, y: 0)
                 }
 
                 Text(displayTitle)
@@ -503,24 +508,27 @@ struct ThreadRowView: View {
                     .foregroundColor(isSelected ? .textSecondary : .textTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: CellTokens.cornerRadius)
-                    .fill(isSelected ? Color.bgElevated : Color.clear)
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.leading, isSelected ? 8 : 10)  // reserve room for accent bar
         .hoverHighlight(
             background: isSelected ? CellTokens.selectedHoverBackground : CellTokens.hoverBackground,
             cornerRadius: CellTokens.cornerRadius,
-            padding: EdgeInsets(
-                top: CellTokens.padding.top,
-                leading: isSelected ? 8 : 10,
-                bottom: CellTokens.padding.bottom,
-                trailing: CellTokens.padding.trailing
-            )
+            padding: CellTokens.padding
         )
+        .background(
+            RoundedRectangle(cornerRadius: CellTokens.cornerRadius)
+                .fill(isSelected ? Color.bgElevated : Color.clear)
+        )
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color.accentPrimary)
+                .frame(width: 2)
+                .padding(.vertical, 7)
+                .padding(.leading, 2)
+                .opacity(isSelected ? 1 : 0)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
         .contextMenu {
             Button("Rename") { renameTarget = .thread(thread.id) }
             Divider()
