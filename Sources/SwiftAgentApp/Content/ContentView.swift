@@ -287,6 +287,7 @@ public struct ContentView: View {
 
     private func breadcrumb(thread: ThreadViewModel) -> some View {
         let project = appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) })
+            ?? (thread.projectId != nil ? appViewModel.projects.first(where: { $0.path == thread.projectId }) : nil)
         return Text(project?.name ?? "No project")
             .font(.uiCaption)
             .foregroundColor(.textSecondary)

@@ -209,7 +209,7 @@ struct SidebarView: View {
                     project: project,
                     renameTarget: $renameTarget,
                     onSelectThread: { appViewModel.selectThread($0) },
-                    onNewThread: { _ = appViewModel.createThread(projectId: project.path) },
+                    onNewThread: { _ = appViewModel.createThread(title: "Chat in \(project.name)", projectId: project.path) },
                     onDeleteProject: { appViewModel.deleteProject(id: project.id) },
                     onDeleteThread: { appViewModel.deleteThread(id: $0) }
                 )
