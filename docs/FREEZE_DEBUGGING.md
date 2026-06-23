@@ -35,7 +35,7 @@ If a freeze lasts 2+ seconds, the built-in `HangDetector` (`Sources/SwiftAgentAp
 
 **Trigger:** Toggle focus mode several times, then select a file.
 
-**Root cause:** `ChatScrollContainer.setFrameSize` called `updateLayoutWidth` → `noteHeightOfRows` **synchronously inside AppKit's layout pass**. `noteHeightOfRows` triggers NSTableView to re-measure row heights, which can trigger another `setFrameSize` via AppKit's internal layout, creating an **infinite re-entrant layout loop**. The old `ChatScrollView` had an explicit comment warning against this pattern.
+**Root cause:** `ChatScrollContainer.setFrameSize` called `updateLayoutWidth` → `noteHeightOfRows` **synchronously inside AppKit's layout pass**. `noteHeightOfRows` triggers NSTableView to re-measure row heights, which can trigger another `setFrameSize` via AppKit's internal layout, creating an **infinite re-entrant layout loop**.
 
 **Files:**
 - `Content/ChatScrollContainer.swift` — `setFrameSize` calling `updateLayoutWidth` synchronously

@@ -17,9 +17,6 @@ private let kScrollStickinessThreshold: CGFloat = 50
 /// NSTableView-based chat view with cell reuse via `makeView(withIdentifier:owner:)`,
 /// in-place streaming updates, and multi-level folding support.
 ///
-/// Replaces the old `ChatScrollView` + `ChatDocumentView` + `ChatMessageCell` stack
-/// which built all cells upfront without reuse.
-///
 /// - Row reuse: `ChatTableRowView` cells are recycled via standard NSTableView
 ///   view-reuse pooling (identifier: `ChatRow`).
 /// - Streaming: the last visible row is located and its content is updated in-place
@@ -159,7 +156,19 @@ public final class ChatTableView: NSTableView {
         if let cell = view(atColumn: 0, row: rowIndex, makeIfNecessary: false) as? ChatTableRowView {
             _ = cell.updateStreamingBlocks(message.blocks)
             noteHeightOfRows(withIndexesChanged: IndexSet(integer: rowIndex))
-            autoScrollToBottom(animated: false)
+        }
+
+        // Force layout so row rects are up-to-date before we scroll.
+        layoutSubtreeIfNeeded()
+
+        // Scroll directly to the document bottom. scrollRowToVisible only
+        // guarantees the row is partially on screen, so as the row grows
+        // taller the bottom edge drifts below the clip rect.
+        if !suppressAutoScroll, let scrollView = enclosingScrollView {
+            let docHeight = scrollView.documentView?.frame.height ?? 0
+            let clipHeight = scrollView.contentView.bounds.height
+            let bottomY = max(0, docHeight - clipHeight)
+            scrollView.contentView.scroll(NSPoint(x: 0, y: bottomY))
         }
     }
 

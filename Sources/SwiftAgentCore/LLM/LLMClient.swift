@@ -875,8 +875,10 @@ extension Message {
                 return ["type": "tool_result", "tool_use_id": toolID, "content": contentValue, "is_error": isError] as [String: Any]
             case .image(_, let mediaType, let data, _):
                 return ["type": "image", "source": ["type": "base64", "media_type": mediaType, "data": data]] as [String: Any]
-            case .thinking(let text, _):
-                return ["type": "thinking", "thinking": text] as [String: Any]
+            case .thinking(let text, let signature):
+                var dict: [String: Any] = ["type": "thinking", "thinking": text]
+                if let signature { dict["signature"] = signature }
+                return dict
             case .redactedThinking(let text):
                 return ["type": "redacted_thinking", "data": text] as [String: Any]
             case .document(_, let mediaType, let data):
@@ -917,8 +919,10 @@ extension Message {
                 return dict
             case .image(_, let mediaType, let data, _):
                 return ["type": "image", "source": ["type": "base64", "media_type": mediaType, "data": data]] as [String: Any]
-            case .thinking(let text, _):
-                return ["type": "thinking", "thinking": text] as [String: Any]
+            case .thinking(let text, let signature):
+                var dict: [String: Any] = ["type": "thinking", "thinking": text]
+                if let signature { dict["signature"] = signature }
+                return dict
             case .redactedThinking(let text):
                 return ["type": "redacted_thinking", "data": text] as [String: Any]
             case .document(_, let mediaType, let data):

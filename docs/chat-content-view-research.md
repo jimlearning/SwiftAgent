@@ -4,26 +4,26 @@
 
 ### 1.1 当前架构
 
-项目存在两套并行的 Chat View 实现：
+当前 Chat View 使用基于 NSTableView 的 AppKit 实现：
 
 | 组件 | 实现方式 | 状态 |
 |------|----------|------|
+| `AppKitChatBridge` + `ChatTableView` + `ChatTableRowView` | AppKit (NSViewRepresentable + NSTableView + cell reuse) | 当前生产使用 |
 | `MessageListView` + `MessageBubbleView` | 纯 SwiftUI (VStack + ForEach) | 已废弃 — 注释说明 LazyVStack 在 macOS 26.0 导致死锁 |
-| `AppKitChatView` + `ChatScrollView` + `ChatMessageCell` | AppKit (NSViewRepresentable + 自定义 NSView 栈) | 当前生产使用 |
 
-### 1.2 当前 AppKit 实现的核心问题
+### 1.2 当前实现的核心能力
 
-1. **无 Cell 复用**: `ChatDocumentView` 维护 `[ChatMessageCell]` 数组，所有消息 cell 常驻内存。1000+ 条消息时内存压力显著。
-2. **手动布局系统**: 使用 `isFlipped = true` + 手动 `layout()` 覆盖。每帧 streaming 触发 `layoutSubtreeIfNeeded()`，在快速 token 到达时容易产生 layout loop。
-3. **Combine 驱动更新**: Coordinator 通过 `sink` 订阅 `$messages`，在 streaming 时 delta=0 的情况下做 in-place 文本更新，存在 block count diff 判断逻辑脆弱的问题。
-4. **折叠能力有限**: 仅有 thinking block 的 toggle，不支持多层级折叠（如 tool-use → tool-result 组折叠、连续同类 tool 的批量折叠）。
-5. **无自动折叠**: 历史消息中的 tool result 始终展开，占用大量垂直空间。
-6. **动画缺失**: 折叠/展开没有过渡动画，消息增删也没有动画。
+1. **Cell 复用**: NSTableView 通过 `makeView(withIdentifier:owner:)` 自动回收离屏 cell，1000+ 消息时只有可见行在内存中。
+2. **Auto Layout**: ChatTableRowView 使用 NSStackView + Auto Layout 管理子视图布局，由 AppKit 布局引擎驱动。
+3. **Streaming 更新**: `ChatTableView.updateStreamingRow(_:)` 通过 `ChatBlockView` 协议的 `updateContent(with:)` 实现 in-place 文本更新，不重建视图。
+4. **多层级折叠**: `FoldTarget` 枚举支持 thinking / toolUse / toolResult / turn / message 五级折叠目标。
+5. **自动折叠**: `AutoCollapseEngine` 根据消息距离末端的距离自动折叠旧的 tool 调用和结果。
+6. **动画**: `insertRows`/`removeRows` 自带 NSAnimationContext 动画，`noteHeightOfRows` 驱动高度变化动画。
 
-### 1.3 线程模型风险
+### 1.3 线程模型
 
-- `Coordinator.startObserving()` 中 `messages.publisher.sink` 在 `@MainActor` 上下文中执行，但 streaming 期间消息更新频率极高（每 token 一次），容易与 AppKit 布局周期产生竞争。
-- `DispatchQueue.main.async` 延迟布局是 workaround，但引入了不确定性。
+- `AppKitChatBridge.Coordinator` 通过 Combine `@MainActor` 观察 `ThreadViewModel.$messages`，throttle 16ms 防止 streaming 事件风暴。
+- `ChatScrollContainer.setFrameSize` 通过 `DispatchQueue.main.async` 延迟 `updateLayoutWidth`，避免在 AppKit 布局周期内同步触发 `noteHeightOfRows` 导致 re-entrant layout loop。
 
 ---
 
@@ -195,14 +195,14 @@ NSAnimationContext.runAnimationGroup { ctx in
 
 ```
 Sources/SwiftAgentApp/Content/
-├── ChatTableView.swift           # NSTableView 封装（替代 ChatScrollView）
-├── ChatTableRowView.swift        # 行视图（替代 ChatMessageCell）
-├── ChatBlockViews.swift          # 可复用 block 子视图
+├── ChatTableView.swift           # NSTableView 封装，cell 复用 + streaming 更新
+├── ChatTableRowView.swift        # 行视图，NSStackView 组装 block 子视图
+├── ChatBlockViews.swift          # 可复用 block 子视图（text/thinking/toolUse/toolResult/system）
 ├── ChatFoldModel.swift           # 折叠状态模型 + 自动折叠策略
-├── ChatTableController.swift     # Data Source + Delegate（替代 Coordinator）
-├── ChatContentBridge.swift       # SwiftUI NSViewRepresentable 桥接（替代 AppKitChatView）
-├── ChatAutoCollapsePolicy.swift  # 自动折叠策略
-└── (保留) ComposerView.swift
+├── ChatScrollContainer.swift     # NSScrollView 容器，滚动粘性 + 浮动按钮
+├── AppKitChatBridge.swift        # SwiftUI NSViewRepresentable 桥接，连接 ThreadViewModel 到 ChatTableView
+├── ComposerView.swift            # 消息输入框
+└── ContentView.swift             # 中心面板：toolbar + 消息列表 + composer
 ```
 
 ## 5. 实现路线
@@ -248,12 +248,6 @@ Sources/SwiftAgentApp/Content/
 | `ChatTableView.swift` | NSTableView 子类 — cell 复用、streaming 更新、scroll 管理 | ~280 |
 | `AppKitChatBridge.swift` | SwiftUI bridge (NSViewRepresentable) — 连接 ThreadViewModel 到 ChatTableView | ~180 |
 
-### 修改文件
-
-| 文件 | 变更 |
-|------|------|
-| `ContentView.swift` | `AppKitChatView` → `AppKitChatBridge` |
-
 ### 架构亮点
 
 1. **Cell 复用**: `makeView(withIdentifier:owner:)` 自动回收离屏 cell，1000+ 消息时只有可见 cell 在内存中
@@ -263,14 +257,13 @@ Sources/SwiftAgentApp/Content/
 5. **行高缓存**: 基于 `messageID + blockCount + isStreaming` 的缓存 key，避免重复计算
 6. **Scroll 管理**: 基于 `didLiveScrollNotification` 的 auto-scroll 抑制逻辑，用户上滚阅读历史时不会自动跳到底部
 
-### 与旧实现的对比
+### 代码规模
 
-| 维度 | 旧实现 (ChatScrollView) | 新实现 (ChatTableView) |
-|------|------------------------|------------------------|
-| Cell 复用 | ❌ 所有 cell 常驻内存 | ✅ NSTableView reuse pool |
-| 更新机制 | 手动 subview 管理 + layout() | NSTableView 原生 reload/insert/noteHeight |
-| 折叠能力 | 仅 thinking toggle | thinking / toolUse / toolResult / 多层 |
-| 自动折叠 | ❌ | ✅ AutoCollapseEngine |
-| 动画 | ❌ | ✅ insertRows/removeRows 自带动画 |
-| 行高计算 | 手动 layoutSubtreeIfNeeded() | NSTableView heightOfRow + 缓存 |
-| 代码量 | ~730 行 (3 文件) | ~1475 行 (5 文件) |
+| 文件 | 行数 |
+|------|------|
+| `ChatTableView.swift` | ~280 |
+| `ChatTableRowView.swift` | ~265 |
+| `ChatBlockViews.swift` | ~590 |
+| `ChatFoldModel.swift` | ~160 |
+| `AppKitChatBridge.swift` | ~180 |
+| **总计** | **~1475 行 (5 文件)** |

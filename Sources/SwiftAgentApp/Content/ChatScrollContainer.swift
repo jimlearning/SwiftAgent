@@ -52,7 +52,7 @@ public final class ChatScrollContainer: NSScrollView {
     /// **Important:** `updateLayoutWidth` triggers `noteHeightOfRows` which is a
     /// layout operation. Calling it synchronously from `setFrameSize` (which
     /// runs during AppKit's active layout pass) causes the re-entrant layout
-    /// loop described in `ChatScrollView.swift:236-248`. The fix: defer to the
+    /// loop. The fix: defer to the
     /// next runloop iteration so layout completes before we re-measure.
     public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)

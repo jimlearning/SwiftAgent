@@ -11,9 +11,8 @@ import Combine
 /// ## Scroll architecture
 ///
 /// An NSTableView **must** be the `documentView` of an NSScrollView to
-/// actually scroll. The old `AppKitChatView` returned a custom `ChatScrollView`
-/// (NSScrollView subclass); this bridge returns `ChatScrollContainer` which
-/// does the same job with the new table.
+	/// actually scroll. This bridge returns `ChatScrollContainer` which hosts
+	/// the table inside a standard NSScrollView.
 ///
 /// ## `isNearBottom` sync
 ///
@@ -77,6 +76,8 @@ public struct AppKitChatBridge: NSViewRepresentable {
 
         /// KVO token for clip-view bounds → `isNearBottom` sync.
         private var clipViewBoundsObserver: NSKeyValueObservation?
+        /// Observer for the scroll-to-bottom notification from SwiftUI overlay.
+        private var scrollToBottomObserver: NSObjectProtocol?
 
         fileprivate init(threadID: String, appViewModel: AppViewModel) {
             self.currentThreadID = threadID
@@ -109,12 +110,23 @@ public struct AppKitChatBridge: NSViewRepresentable {
 
             // ── isNearBottom KVO ──
             observeNearBottom()
+
+            // ── Scroll-to-bottom notification ──
+            scrollToBottomObserver = NotificationCenter.default.addObserver(
+                forName: .chatScrollToBottom, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.tableView?.autoScrollToBottom(animated: true)
+            }
         }
 
         fileprivate func stopObserving() {
             cancellables.removeAll()
             clipViewBoundsObserver?.invalidate()
             clipViewBoundsObserver = nil
+            if let observer = scrollToBottomObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            scrollToBottomObserver = nil
         }
 
         fileprivate func reloadFromViewModel() {

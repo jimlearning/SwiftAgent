@@ -8,4 +8,8 @@ extension Notification.Name {
     /// Posted when the user wants to open Settings (alternative to the
     /// SwiftUI openWindow environment value).
     static let swiftAgentOpenSettings = Notification.Name("swiftAgentOpenSettings")
+
+    /// Posted by the scroll-to-bottom overlay button in ContentView.
+    /// AppKitChatBridge listens and scrolls the ChatTableView to the bottom.
+    static let chatScrollToBottom = Notification.Name("chatScrollToBottom")
 }

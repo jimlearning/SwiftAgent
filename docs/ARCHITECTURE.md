@@ -261,7 +261,6 @@ Sources/SwiftAgentApp/            # macOS SwiftUI App (DeepSeek-powered)
 ├── Content/
 │   ├── ContentView.swift         # Center pane: toolbar + messages + composer
 │   ├── ComposerView.swift        # Message input (text, send, slash commands)
-│   ├── AppKitChatView.swift      # SwiftUI wrapper for NSTableView-based chat
 │   ├── AppKitChatBridge.swift    # Coordinator: AppKit↔SwiftUI bridge, FoldState owner
 │   ├── ChatTableView.swift       # NSTableView with cell reuse, height caching, streaming
 │   ├── ChatTableRowView.swift    # Row view: NSStackView block stacking, fold handling

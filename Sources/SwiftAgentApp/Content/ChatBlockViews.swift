@@ -671,11 +671,13 @@ public final class ThinkingBlockView: ChatCardBlockView {
     }
 
     public override func updateCardBody(with block: AgentMessageBlock) -> Bool {
-        guard case .thinking(let text, let expanded) = block else { return false }
-        self.isExpanded = expanded
+        guard case .thinking(let text, _) = block else { return false }
+        // Preserve isExpanded from configure() (driven by FoldState).
+        // The block's stored isExpanded is always false during streaming;
+        // overwriting it here would hide the body on every streaming tick.
         self.content = text
         bodyLabel.stringValue = text
-        bodyLabel.isHidden = !expanded || text.isEmpty
+        bodyLabel.isHidden = !isExpanded || text.isEmpty
         invalidateIntrinsicContentSize()
         return true
     }
