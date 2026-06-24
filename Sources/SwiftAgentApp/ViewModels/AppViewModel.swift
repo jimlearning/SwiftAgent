@@ -298,7 +298,7 @@ public final class AppViewModel: ObservableObject {
                     vm.projectId = session.projectPath ?? project.originalPath
                     print("[AppVM] loadAllData: session=\(session.sessionId.prefix(8)) projectId=\(vm.projectId ?? "nil") (index.projectPath=\(session.projectPath ?? "nil") discover.originalPath=\(project.originalPath))")
                     vm.title = session.customTitle ?? session.firstPrompt ?? "New Chat"
-                    vm.selectedModel = "claude-sonnet-4-6"
+                    vm.selectedModel = agentProvider?.currentModel ?? "deepseek-v4-pro"
                     vm.updatedAt = ISO8601DateFormatter().date(from: session.modified) ?? Date()
 
                     // Load messages lazily (on thread selection)
@@ -328,7 +328,7 @@ public final class AppViewModel: ObservableObject {
                                 vm.appViewModel = self
                                 vm.projectId = session.projectPath ?? project.originalPath
                                 vm.title = session.customTitle ?? session.firstPrompt ?? "New Chat"
-                                vm.selectedModel = "claude-sonnet-4-6"
+                                vm.selectedModel = agentProvider?.currentModel ?? "deepseek-v4-pro"
                                 vm.updatedAt = ISO8601DateFormatter().date(from: session.modified) ?? Date()
                                 vmMap[session.sessionId] = vm
                                 pvm.threads.append(vm)
