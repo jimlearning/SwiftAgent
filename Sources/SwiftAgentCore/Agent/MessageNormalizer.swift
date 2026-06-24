@@ -332,11 +332,17 @@ public func normalizeMessagesForAPI(_ messages: [Message], tools: [String] = [])
     // limit to prevent API overload from excessive tool result content.
     let budgeted = ToolResultStorage.applyToolResultBudget(messages: normalized)
 
+    // Pass 16a: Extract tool_result blocks from assistant messages into user messages.
+    // The Anthropic API requires tool_result blocks in user-role messages. Assistant
+    // messages with inline tool_results (e.g. reconstructed from AgentMessage UI state
+    // after persistence/restore) cause 400 errors.
+    let toolResultsExtracted = extractToolResultsFromAssistantMessages(budgeted)
+
     // Pass 17: Ensure tool_use / tool_result pairing.
     // Matches CC's ensureToolResultPairing in utils/messages.ts —
     // inserts synthetic error blocks for missing tool results and
     // strips orphaned tool results to prevent 400 API errors.
-    return ensureToolResultPairing(budgeted)
+    return ensureToolResultPairing(toolResultsExtracted)
 }
 
 // MARK: - API Content Normalization
@@ -605,6 +611,58 @@ private func ensureNonEmptyAssistantContent(_ messages: [Message]) -> [Message] 
             container: msg.container, stopSequence: msg.stopSequence
         )
     }
+}
+
+// MARK: - Tool Result Extraction from Assistant Messages
+
+/// Extract tool_result blocks from assistant messages into separate user messages.
+///
+/// The Anthropic API requires tool_result blocks in user-role messages. When AgentMessage
+/// UI state is round-tripped through persistence and `buildConversation` reconstructs
+/// Core messages, tool_result blocks may end up inline in assistant messages (where they
+/// live for display purposes). This pass moves them to user messages to prevent 400 errors.
+private func extractToolResultsFromAssistantMessages(_ messages: [Message]) -> [Message] {
+    var result: [Message] = []
+
+    for msg in messages {
+        guard msg.type == .assistant else {
+            result.append(msg)
+            continue
+        }
+
+        var assistantBlocks: [ContentBlock] = []
+        var toolResultBlocks: [ContentBlock] = []
+
+        for block in msg.content {
+            switch block {
+            case .toolResult:
+                toolResultBlocks.append(block)
+            default:
+                assistantBlocks.append(block)
+            }
+        }
+
+        // Emit assistant message if it has non-tool-result blocks
+        if !assistantBlocks.isEmpty {
+            result.append(Message(
+                uuid: msg.uuid, type: .assistant, content: assistantBlocks,
+                timestamp: msg.timestamp, usage: msg.usage,
+                model: msg.model, stopReason: msg.stopReason,
+                isVirtual: msg.isVirtual, requestId: msg.requestId,
+                container: msg.container, stopSequence: msg.stopSequence
+            ))
+        }
+
+        // Emit tool results as a user message
+        if !toolResultBlocks.isEmpty {
+            result.append(Message(
+                uuid: UUID().uuidString, type: .user, content: toolResultBlocks,
+                timestamp: msg.timestamp
+            ))
+        }
+    }
+
+    return result
 }
 
 // MARK: - Tool Result Pairing

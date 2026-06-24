@@ -706,48 +706,95 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     // MARK: - Conversation Building
 
     /// Build a `Conversation` from the current message list.
+    ///
+    /// Streaming placeholders (isStreaming) are excluded — they carry no content and
+    /// would become "(no content)" noise in the API request.  tool_result blocks are
+    /// extracted from assistant messages into separate user messages because the
+    /// Anthropic API requires tool_result blocks in user-role messages; leaving them
+    /// in assistant messages causes a 400 error on subsequent turns.
     private func buildConversation() -> Conversation {
-        let coreMessages: [Message] = messages.compactMap { agentMsg in
-            let contentBlocks: [ContentBlock] = agentMsg.blocks.compactMap { block in
-                switch block {
-                case .text(let text):
-                    return .text(text)
-                case .thinking(let text, _):
-                    return .thinking(text)
-                case .toolUse(let toolUse):
-                    // Round-trip back to ContentBlock.toolUse using stored rawInput
-                    if let input = toolUse.rawInput {
-                        return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)
-                    }
-                    // No rawInput — reconstruct from detail (best-effort fallback)
-                    return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: .object([:]))
-                case .toolResult(let result):
-                    return .toolResult(
-                        toolUseID: result.toolUseID,
-                        content: .string(result.content),
-                        isError: result.isError
-                    )
-                case .systemReminder(let text):
-                    return .text(text)
-                }
-            }
+        var coreMessages: [Message] = []
 
-            guard !contentBlocks.isEmpty else { return nil }
+        for agentMsg in messages {
+            guard !agentMsg.isStreaming else { continue }
 
-            let role: MessageRole
             switch agentMsg.role {
-            case .user: role = .user
-            case .assistant: role = .assistant
-            case .system: role = .user
-            }
+            case .assistant:
+                var assistantBlocks: [ContentBlock] = []
+                var toolResultBlocks: [ContentBlock] = []
 
-            return Message(
-                uuid: agentMsg.id,
-                type: role,
-                content: contentBlocks,
-                timestamp: agentMsg.timestamp,
-                usage: agentMsg.tokenUsage
-            )
+                for block in agentMsg.blocks {
+                    switch block {
+                    case .text(let text):
+                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty { assistantBlocks.append(.text(text)) }
+                    case .thinking(let text, _):
+                        assistantBlocks.append(.thinking(text))
+                    case .toolUse(let toolUse):
+                        if let input = toolUse.rawInput {
+                            assistantBlocks.append(.toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input))
+                        } else {
+                            assistantBlocks.append(.toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: .object([:])))
+                        }
+                    case .toolResult(let result):
+                        toolResultBlocks.append(.toolResult(
+                            toolUseID: result.toolUseID,
+                            content: .string(result.content),
+                            isError: result.isError
+                        ))
+                    case .systemReminder(let text):
+                        assistantBlocks.append(.text(text))
+                    }
+                }
+
+                if !assistantBlocks.isEmpty {
+                    coreMessages.append(Message(
+                        uuid: agentMsg.id, type: .assistant, content: assistantBlocks,
+                        timestamp: agentMsg.timestamp, usage: agentMsg.tokenUsage
+                    ))
+                }
+
+                if !toolResultBlocks.isEmpty {
+                    coreMessages.append(Message(
+                        uuid: UUID().uuidString, type: .user, content: appendToolResultCacheBreakpointReminder(to: toolResultBlocks),
+                        timestamp: agentMsg.timestamp
+                    ))
+                }
+
+            case .user, .system:
+                let contentBlocks: [ContentBlock] = agentMsg.blocks.compactMap { block in
+                    switch block {
+                    case .text(let text): return .text(text)
+                    case .thinking(let text, _): return .thinking(text)
+                    case .toolUse(let toolUse):
+                        if let input = toolUse.rawInput {
+                            return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)
+                        }
+                        return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: .object([:]))
+                    case .toolResult(let result):
+                        return .toolResult(
+                            toolUseID: result.toolUseID,
+                            content: .string(result.content),
+                            isError: result.isError
+                        )
+                    case .systemReminder(let text): return .text(text)
+                    }
+                }
+
+                let nonEmpty = contentBlocks.filter { block in
+                    if case .text(let text) = block {
+                        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                    return true
+                }
+
+                guard !nonEmpty.isEmpty else { continue }
+
+                coreMessages.append(Message(
+                    uuid: agentMsg.id, type: .user, content: nonEmpty,
+                    timestamp: agentMsg.timestamp, usage: agentMsg.tokenUsage
+                ))
+            }
         }
 
         return Conversation(id: id, flatMessages: coreMessages)

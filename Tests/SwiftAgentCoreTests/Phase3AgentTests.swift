@@ -147,6 +147,70 @@ struct MessageNormalizerTests {
             Issue.record("Expected cache breakpoint reminder to remain trailing text")
         }
     }
+
+    @Test
+    func normalizeExtractsToolResultsFromAssistantMessages() {
+        // Simulates the bug: tool_result blocks that ended up in an assistant
+        // message (e.g. after AgentMessage persistence/restore round-trip).
+        // The normalizer must extract them into a user message to prevent
+        // a 400 API error.
+        let messages = [
+            Message(type: .user, content: [.text("list files")]),
+            Message(type: .assistant, content: [
+                .text("Let me check."),
+                .toolUse(id: "toolu_1", name: "Bash", input: .object(["command": .string("ls")])),
+                .toolResult(toolUseID: "toolu_1", content: .string("file1.txt\nfile2.txt"), isError: false),
+                .text("Here are the files."),
+            ]),
+            Message(type: .user, content: [.text("next message")]),
+        ]
+
+        let normalized = normalizeMessagesForAPI(messages, tools: ["Bash"])
+
+        // Verify no assistant message contains tool_result blocks
+        for msg in normalized where msg.type == .assistant {
+            for block in msg.content {
+                if case .toolResult = block {
+                    Issue.record("tool_result block found in assistant message after normalization")
+                }
+            }
+        }
+
+        // Verify tool_result is in a user message
+        let userWithToolResult = normalized.first { msg in
+            msg.type == .user && msg.content.contains { block in
+                if case .toolResult = block { return true }
+                return false
+            }
+        }
+        #expect(userWithToolResult != nil, "Expected tool_result in a user message")
+
+        // Verify tool_use → tool_result pairing is intact
+        let toolIDs = Self.collectToolUseIDs(in: normalized)
+        let resultIDs = Self.collectToolResultIDs(in: normalized)
+        #expect(toolIDs == resultIDs, "Expected all tool_use IDs to have matching tool_result IDs")
+    }
+
+    private static func collectToolUseIDs(in messages: [Message]) -> Set<String> {
+        var ids = Set<String>()
+        for msg in messages {
+            for block in msg.content {
+                if case .toolUse(let id, _, _) = block { ids.insert(id) }
+                if case .serverToolUse(let id, _, _) = block { ids.insert(id) }
+            }
+        }
+        return ids
+    }
+
+    private static func collectToolResultIDs(in messages: [Message]) -> Set<String> {
+        var ids = Set<String>()
+        for msg in messages {
+            for block in msg.content {
+                if case .toolResult(let id, _, _) = block { ids.insert(id) }
+            }
+        }
+        return ids
+    }
 }
 
 struct SystemPromptBuilderTests {
