@@ -1,19 +1,7 @@
 import SwiftUI
+import ClarcCore
 
-/// Sidebar: top entries + Projects list + Chats (global) + Settings.
-///
-/// Built from `ScrollView` + `VStack` rather than `List` because List's
-/// row container hijacks Button hit-testing: a `Button` placed inside a
-/// List row has its tap region restricted to the label/icon, not the
-/// full row. ScrollView + VStack keeps every Button's contentShape
-/// intact.
-///
-/// Visual system (this pass):
-/// - Selected thread row: distinct background (`bgElevated.opacity(0.7)`)
-///   + 2pt left accent border (`accentPrimary`) + bolder title font
-/// - Hover: 8% white overlay across full row
-/// - Search field: pill-shaped, subtle border, focus glow
-/// - Project chevron: full-row hit area, not just the icon
+/// Sidebar: top entries + Projects list (Clarc-style session rows) + Settings.
 struct SidebarView: View {
     @EnvironmentObject var appViewModel: AppViewModel
     @Environment(\.openSettings) private var openSettings
@@ -32,7 +20,6 @@ struct SidebarView: View {
                 topEntries
                 searchFieldArea
                 projectsSection
-                chatsSection
                 Spacer().frame(height: 12)
                 settingsLink
             }
@@ -137,10 +124,6 @@ struct SidebarView: View {
                 .onChange(of: searchText) { _, newValue in
                     appViewModel.searchFilter = newValue
                 }
-                .onSubmit {
-                    // Pressing Enter in the field — no-op for v1; future pass
-                    // will jump to the first match in the visible list.
-                }
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
@@ -205,8 +188,9 @@ struct SidebarView: View {
             }
 
             ForEach(appViewModel.projects) { project in
-                ProjectSectionView(
+                ClarcProjectSectionView(
                     project: project,
+                    selectedThreadID: appViewModel.selectedThreadID,
                     renameTarget: $renameTarget,
                     onSelectThread: { appViewModel.selectThread($0) },
                     onNewThread: { _ = appViewModel.createThread(title: "Chat in \(project.name)", projectId: project.path) },
@@ -229,32 +213,6 @@ struct SidebarView: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 4)
-    }
-
-    // MARK: - Chats (global) Section
-
-    private var chatsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("Chats", trailing: nil)
-
-            if appViewModel.globalThreads.isEmpty {
-                Text("No chats yet")
-                    .font(.uiCaption)
-                    .foregroundColor(.textTertiary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 4)
-            }
-
-            ForEach(appViewModel.globalThreads) { thread in
-                ThreadRowView(
-                    thread: thread,
-                    isSelected: appViewModel.selectedThreadID == thread.id,
-                    renameTarget: $renameTarget,
-                    onSelect: { appViewModel.selectThread(thread) },
-                    onDelete: { appViewModel.deleteThread(id: thread.id) }
-                )
-            }
-        }
     }
 
     // MARK: - Settings Link
@@ -374,12 +332,11 @@ struct SidebarView: View {
     }
 }
 
-// MARK: - Project Section View
+// MARK: - Project Section View (Clarc-style)
 
-struct ProjectSectionView: View {
+private struct ClarcProjectSectionView: View {
     @ObservedObject var project: ProjectViewModel
-    @EnvironmentObject var appViewModel: AppViewModel
-
+    let selectedThreadID: String?
     @Binding var renameTarget: RenameTarget?
     let onSelectThread: (ThreadViewModel) -> Void
     let onNewThread: () -> Void
@@ -394,15 +351,15 @@ struct ProjectSectionView: View {
             if project.isExpanded {
                 if project.threads.isEmpty {
                     Text("No chats")
-                        .font(.uiCaption)
-                        .foregroundColor(.textTertiary)
+                        .font(.system(size: ClaudeTheme.size(11)))
+                        .foregroundStyle(ClaudeTheme.textTertiary)
                         .padding(.leading, 36)
                         .padding(.vertical, 2)
                 }
                 ForEach(project.threads) { thread in
-                    ThreadRowView(
+                    ClarcThreadRowView(
                         thread: thread,
-                        isSelected: appViewModel.selectedThreadID == thread.id,
+                        isSelected: selectedThreadID == thread.id,
                         renameTarget: $renameTarget,
                         onSelect: { onSelectThread(thread) },
                         onDelete: { onDeleteThread(thread.id) }
@@ -416,15 +373,15 @@ struct ProjectSectionView: View {
         HStack(spacing: 4) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.textTertiary)
+                .foregroundStyle(ClaudeTheme.textTertiary)
                 .rotationEffect(.degrees(project.isExpanded ? 90 : 0))
                 .frame(width: 14)
             Image(systemName: "folder")
                 .font(.system(size: 12))
-                .foregroundColor(.textSecondary)
+                .foregroundStyle(ClaudeTheme.textSecondary)
             Text(project.name)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.textPrimary)
+                .font(.system(size: ClaudeTheme.size(13), weight: .medium))
+                .foregroundStyle(ClaudeTheme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer()
@@ -433,7 +390,7 @@ struct ProjectSectionView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.textSecondary)
+                    .foregroundStyle(ClaudeTheme.textSecondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
@@ -466,19 +423,12 @@ struct ProjectSectionView: View {
     }
 }
 
-// MARK: - Thread Row View
+// MARK: - Thread Row View (Clarc-style)
 
-/// Single thread row with strong visual distinction between selected
-/// and unselected states. Selection shows: a 2pt accent border on the
-/// left edge, a darker background overlay, and a bolder title font.
-///
-/// Padding is applied once via the hoverHighlight modifier; the row
-/// itself carries no extra `.padding()` so the hover region exactly
-/// matches the visible cell area.
-struct ThreadRowView: View {
+/// Clarc-style session row: compact, relative date, rename/delete context menu.
+private struct ClarcThreadRowView: View {
     @ObservedObject var thread: ThreadViewModel
     let isSelected: Bool
-
     @Binding var renameTarget: RenameTarget?
     let onSelect: () -> Void
     let onDelete: () -> Void
@@ -490,22 +440,22 @@ struct ThreadRowView: View {
 
                 if thread.hasUnread && !isSelected {
                     Circle()
-                        .fill(Color.accentPrimary)
+                        .fill(ClaudeTheme.accent)
                         .frame(width: 6, height: 6)
-                        .shadow(color: Color.accentPrimary.opacity(0.35), radius: 3, x: 0, y: 0)
+                        .shadow(color: ClaudeTheme.accent.opacity(0.35), radius: 3, x: 0, y: 0)
                 }
 
                 Text(displayTitle)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? .textPrimary : .textPrimary.opacity(0.85))
+                    .font(.system(size: ClaudeTheme.size(13)))
+                    .foregroundStyle(isSelected ? ClaudeTheme.textPrimary : ClaudeTheme.textPrimary.opacity(0.8))
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 Spacer(minLength: 4)
 
                 Text(relativeTime(thread.updatedAt))
-                    .font(.system(size: 10))
-                    .foregroundColor(isSelected ? .textSecondary : .textTertiary)
+                    .font(.system(size: ClaudeTheme.size(11)))
+                    .foregroundStyle(ClaudeTheme.textTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -522,7 +472,7 @@ struct ThreadRowView: View {
         )
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentPrimary)
+                .fill(ClaudeTheme.accent)
                 .frame(width: 2)
                 .padding(.vertical, 7)
                 .padding(.leading, 2)

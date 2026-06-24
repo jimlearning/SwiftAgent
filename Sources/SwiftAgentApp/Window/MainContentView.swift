@@ -1,31 +1,20 @@
+import Combine
 import SwiftUI
+import SwiftAgentCore
+import ClarcCore
+import ClarcChatKit
 
 /// Three-pane workspace with independent sidebar / right-pane /
 /// focus-mode toggles.
-///
-/// Layout rules:
-/// - Left toggle → sidebar slides in/out from the left edge
-/// - Right toggle → right tabs slides in/out from the right edge
-/// - Focus toggle → ContentView slides out, RightTabsView expands to
-///   fill the freed space (toggle only available when right is visible)
-///
-/// Why HStack (not HSplitView):
-/// HSplitView wraps NSSplitView, which manages its own AppKit layout.
-/// NSSplitView does not participate in SwiftUI's animation system for
-/// column show/hide — frame changes and view insertions/removals snap
-/// instead of animating. Plain HStack gives SwiftUI full control over
-/// layout, so `.transition` and `.animation` work as expected for
-/// smooth slide-in/slide-out of entire columns.
-///
-/// Sidebar is always pinned to the leading edge regardless of which
-/// other panes are visible. ContentView and RightTabsView must never
-/// both be hidden — this is enforced by AppViewModel's didSet guards.
 struct MainContentView: View {
     @EnvironmentObject var appViewModel: AppViewModel
 
+    @State private var chatBridge = ChatBridge()
+    @State private var windowState = WindowState()
+    @State private var syncCancellables = Set<AnyCancellable>()
+
     var body: some View {
         HStack(spacing: 0) {
-            // Left: sidebar — user-resizable via drag divider.
             if appViewModel.sidebarVisible {
                 SidebarView()
                     .frame(width: appViewModel.sidebarWidth)
@@ -39,8 +28,6 @@ struct MainContentView: View {
                 )
             }
 
-            // Center: content — flexible, fills the space between
-            // sidebar and right pane. Hidden in focus mode.
             if !appViewModel.focusMode {
                 ContentView()
                     .frame(maxWidth: .infinity)
@@ -50,8 +37,6 @@ struct MainContentView: View {
                     ))
             }
 
-            // Draggable divider between center and right — hidden when
-            // either side is collapsed or in focus mode (right fills all).
             if !appViewModel.focusMode && appViewModel.rightVisible {
                 DragDivider(
                     width: $appViewModel.rightWidth,
@@ -61,13 +46,6 @@ struct MainContentView: View {
                 )
             }
 
-            // Right: multi-tab workspace. User-resizable in normal mode;
-            // expands to fill all remaining space in focus mode.
-            //
-            // Single RightTabsView instance with conditional frame modifiers
-            // (NOT if-else) — preserves view identity across focusMode toggles
-            // so tab-internal @State (selected file, expanded folders, preview
-            // content) survives the transition.
             if appViewModel.rightVisible {
                 RightTabsView()
                     .frame(maxWidth: appViewModel.focusMode ? .infinity : nil)
@@ -76,6 +54,19 @@ struct MainContentView: View {
             }
         }
         .background(Color.bgContent)
+        .environment(chatBridge)
+        .environment(windowState)
+        .task {
+            setupChatBridge()
+            windowState.currentSessionId = appViewModel.selectedThreadID ?? windowState.newSessionKey
+            chatBridge.messages = convertMessages(appViewModel.selectedThread?.messages ?? [])
+            subscribeToThread()
+        }
+        .onChange(of: appViewModel.selectedThreadID) { _, newID in
+            windowState.currentSessionId = newID ?? windowState.newSessionKey
+            chatBridge.messages = convertMessages(appViewModel.selectedThread?.messages ?? [])
+            subscribeToThread()
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
@@ -128,4 +119,116 @@ struct MainContentView: View {
         .animation(.easeInOut(duration: 0.22), value: appViewModel.rightVisible)
         .animation(.easeInOut(duration: 0.22), value: appViewModel.focusMode)
     }
+
+    // MARK: - ChatBridge Wiring
+
+    private func setupChatBridge() {
+        chatBridge.sendHandler = { [self] in
+            guard let thread = appViewModel.selectedThread else { return }
+            let text = windowState.inputText
+            windowState.inputText = ""
+            thread.send(userText: text)
+        }
+        chatBridge.cancelStreamingHandler = { [self] in
+            appViewModel.selectedThread?.cancel()
+        }
+    }
+
+    // MARK: - Thread Observation (Combine → @Observable bridge)
+
+    /// Tears down old subscriptions and re-subscribes to the current thread's
+    /// `@Published` publishers so `chatBridge` stays in sync during streaming.
+    private func subscribeToThread() {
+        syncCancellables.removeAll()
+        guard let thread = appViewModel.selectedThread else { return }
+
+        thread.$messages
+            .dropFirst()
+            .sink { [weak chatBridge] msgs in
+                chatBridge?.messages = convertMessages(msgs)
+            }
+            .store(in: &syncCancellables)
+
+        thread.$state
+            .sink { [weak chatBridge, weak thread] state in
+                let streaming = state == .executing
+                chatBridge?.isStreaming = streaming
+                chatBridge?.streamingStartDate = streaming ? thread?.executionStartTime : nil
+            }
+            .store(in: &syncCancellables)
+    }
+}
+
+// MARK: - Message Conversion (shared)
+
+/// Converts `[AgentMessage]` → `[ChatMessage]`, merging tool-result blocks
+/// into their matching tool-use blocks by `toolUseID` so that tool cards
+/// display the tool name and input summary (instead of blank).
+private func convertMessages(_ agentMessages: [AgentMessage]) -> [ChatMessage] {
+    agentMessages.compactMap { am in
+        let role: Role
+        switch am.role {
+        case .user: role = .user
+        case .assistant, .system: role = .assistant
+        }
+
+        // First pass: collect tool-use blocks so tool-result blocks can
+        // inherit the matching tool's name and input.
+        var toolUseMap: [String: (name: String, input: [String: ClarcCore.JSONValue])] = [:]
+        for block in am.blocks {
+            if case .toolUse(let tb) = block {
+                toolUseMap[tb.toolUseID] = (tb.toolName, convertInputJSON(tb.rawInput))
+            }
+        }
+
+        let blocks: [MessageBlock] = am.blocks.compactMap { block in
+            switch block {
+            case .text(let text):
+                return .text(text)
+            case .thinking(let text, _):
+                return .thinking(text)
+            case .toolUse(let tb):
+                let input = convertInputJSON(tb.rawInput)
+                return .toolCall(ToolCall(
+                    id: tb.toolUseID,
+                    name: tb.toolName,
+                    input: input,
+                    result: nil,
+                    isError: false
+                ))
+            case .toolResult(let tr):
+                // Merge result into the matching tool-use card.
+                let match = toolUseMap[tr.toolUseID]
+                return .toolCall(ToolCall(
+                    id: tr.toolUseID,
+                    name: match?.name ?? "",
+                    input: match?.input ?? [:],
+                    result: tr.content,
+                    isError: tr.isError
+                ))
+            case .systemReminder(let text):
+                return .text(text)
+            }
+        }
+        let isComplete = !am.isStreaming && (agentMessages.last?.id == am.id)
+        return ChatMessage(
+            id: UUID(uuidString: am.id) ?? UUID(),
+            role: role,
+            blocks: blocks,
+            isStreaming: am.isStreaming,
+            isResponseComplete: isComplete,
+            timestamp: am.timestamp
+        )
+    }
+}
+
+private func convertInputJSON(_ json: SwiftAgentCore.JSONValue?) -> [String: ClarcCore.JSONValue] {
+    guard let json else { return [:] }
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
+    guard let data = try? encoder.encode(json),
+          let obj = try? decoder.decode([String: ClarcCore.JSONValue].self, from: data) else {
+        return [:]
+    }
+    return obj
 }

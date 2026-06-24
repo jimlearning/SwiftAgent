@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// Reasoning strength for the model picker menu (per §5.7, §11.5).
+public enum ReasoningStrength: String, CaseIterable, Sendable {
+    case low = "Low"
+    case medium = "Medium"
+    case high = "High"
+    case extraHigh = "Extra High"
+}
+
 public struct ModelPickerView: View {
     @Binding var selectedModel: DeepSeekModel
     @Binding var reasoningStrength: ReasoningStrength

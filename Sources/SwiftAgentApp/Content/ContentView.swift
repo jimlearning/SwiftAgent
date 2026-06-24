@@ -1,17 +1,8 @@
 import SwiftUI
+import ClarcCore
+import ClarcChatKit
 
-/// Center pane: thread toolbar + message list + composer.
-///
-/// Reads the currently selected thread from `AppViewModel` via `@EnvironmentObject`
-/// (rather than receiving a `ThreadViewModel` value through the initializer).
-/// This guarantees that any `@Published` mutation inside the thread — including
-/// `messages`, `state`, and `thoughtTimeString` — drives a redraw of every
-/// child view that reads those properties, including the message list, the
-/// composer send-button state, and the "Thought for Xs" status row.
-///
-/// Using a single source of truth through `AppViewModel` also avoids stale
-/// closure captures that occur when a parent view rebuilds with a new
-/// thread reference but the child view's callback still points at the old one.
+/// Center pane: thread toolbar + Clarc ChatView.
 public struct ContentView: View {
     @EnvironmentObject var appViewModel: AppViewModel
 
@@ -20,7 +11,6 @@ public struct ContentView: View {
     @State private var isRenamingTitle: Bool = false
     @State private var renameTitleText: String = ""
     @State private var showEnvPopover: Bool = false
-    @State private var composerDragHeight: CGFloat = 50
 
     public init() {}
 
@@ -29,34 +19,12 @@ public struct ContentView: View {
             if let thread = appViewModel.selectedThread {
                 toolbarView(thread: thread)
 
-                // API key banner
                 if appViewModel.showAPIKeyBanner {
                     apiKeyBanner
                 }
 
-                // Message list (main content area) — AppKit NSTableView with cell reuse
-                AppKitChatBridge(threadID: thread.id)
-                    .id(thread.id)  // Force-rebuild on thread switch so scroll position resets cleanly
-                    .overlay(alignment: .bottomTrailing) {
-                        if !thread.isNearBottom {
-                            scrollToBottomButton
-                        }
-                    }
-
-                HorizontalDragDivider(
-                    height: $composerDragHeight,
-                    range: 50...100,
-                    edge: .bottom,
-                    color: .borderSubtle
-                )
-
-                // Composer at bottom — .id() forces full recreation on thread
-                // switch, preventing stale @StateObject from carrying over
-                // composer text/state between different threads.
-                ComposerView(threadID: thread.id, dragHeight: composerDragHeight)
-                    .id(thread.id)
+                ChatView()
             } else {
-                // No thread selected — show actionable empty state
                 emptyStateView
             }
         }
@@ -74,13 +42,6 @@ public struct ContentView: View {
 
     private func toolbarView(thread: ThreadViewModel) -> some View {
         HStack(spacing: 8) {
-            // Note: the three pane-toggle buttons (sidebar / focus /
-            // right) used to live here, but they disappeared along
-            // with the center column when focus mode collapsed it,
-            // trapping the user with no way to exit focus mode. They
-            // now live in `MainContentView`'s floating toggle bar,
-            // which is always visible regardless of column state.
-
             VStack(alignment: .leading, spacing: 2) {
                 if isRenamingTitle {
                     TextField("Thread title", text: $renameTitleText)
@@ -113,9 +74,6 @@ public struct ContentView: View {
             Spacer()
 
             HStack(spacing: 8) {
-                // Environment picker: clicking cycles Local → Worktree → Local.
-                // Long-press / right-click would open the picker; for v1 a
-                // direct cycle click matches the Codex interaction model.
                 Button {
                     cycleExecutionEnv(thread: thread)
                 } label: {
@@ -140,9 +98,6 @@ public struct ContentView: View {
                 )
                 .help("Click to toggle execution environment (Local / Worktree)")
 
-                // Environment details: 5 fields per product doc §3.5.
-                // Uses a real Menu (not popover) so each row's hit area
-                // and hover highlight work correctly.
                 Menu {
                     Section("Environment") {
                         Button {
@@ -187,13 +142,11 @@ public struct ContentView: View {
                     }
                     Divider()
                     Button {
-                        // Trigger + Changes action — wires to the agent's
-                        // pending file edits in a follow-up patch.
+                        // Trigger + Changes action
                     } label: {
                         Label("Changes", systemImage: "plus.square")
                     }
                     Button {
-                        // Copy current branch to clipboard (git symbolic-ref).
                         if let branch = try? runGitSymbolicRef(cwd: thread.workingDirectory) {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(branch, forType: .string)
@@ -216,7 +169,6 @@ public struct ContentView: View {
                 .hoverHighlight(cornerRadius: 6, padding: EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                 .help("Environment details and actions")
 
-                // Plan mode indicator
                 if thread.mode == "plan" {
                     Text("Plan")
                         .font(.uiCaption)
@@ -229,7 +181,6 @@ public struct ContentView: View {
                         )
                 }
 
-                // Apply to main button (worktree mode)
                 if thread.executionEnv == "worktree" {
                     Menu {
                         ForEach(MergeStrategy.allCases, id: \.rawValue) { strategy in
@@ -282,8 +233,6 @@ public struct ContentView: View {
         default: return "laptopcomputer"
         }
     }
-
-    // MARK: - Environment
 
     private func breadcrumb(thread: ThreadViewModel) -> some View {
         let project = appViewModel.projects.first(where: { $0.threads.contains(where: { $0.id == thread.id }) })
@@ -374,28 +323,5 @@ public struct ContentView: View {
             .keyboardShortcut("n", modifiers: .command)
             Spacer()
         }
-    }
-
-    // MARK: - Scroll-to-Bottom Button
-
-    private var scrollToBottomButton: some View {
-        Button {
-            NotificationCenter.default.post(name: .chatScrollToBottom, object: nil)
-        } label: {
-            Image(systemName: "arrow.down")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(Color.black.opacity(0.6))
-                        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
-                )
-        }
-        .buttonStyle(.plain)
-        .padding(.trailing, 12)
-        .padding(.bottom, 12)
-        .transition(.opacity.combined(with: .scale(scale: 0.8)))
-        .animation(.easeOut(duration: 0.2), value: true)
     }
 }

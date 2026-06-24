@@ -1,4 +1,5 @@
 import SwiftUI
+import ClarcCore
 
 /// The full 4-tier permission modal shown when ⚙️ Custom⌄ is clicked.
 /// Per §5.4: "How should SwiftAgent actions be approved?" with 4 options.
@@ -51,7 +52,7 @@ public struct PermissionModal: View {
             dismiss()
         } label: {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: mode.iconName)
+                Image(systemName: mode.systemImage)
                     .font(.system(size: 16))
                     .frame(width: 18)
                     .foregroundColor(mode == selectedMode ? .accentPrimary : .textSecondary)
@@ -80,5 +81,17 @@ public struct PermissionModal: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension PermissionMode: @retroactive CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .default: return "Ask for approval before each action. Use when you want to review every step."
+        case .acceptEdits: return "Auto-accept edits, confirm other actions. Best for pair-programming."
+        case .plan: return "Explore and plan only — no execution. Safe review mode."
+        case .auto: return "Auto-approve all actions. Use only in trusted workspaces."
+        case .bypassPermissions: return "Skip all permission checks. Everything runs automatically."
+        }
     }
 }

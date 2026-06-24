@@ -1,4 +1,5 @@
 import SwiftUI
+import ClarcCore
 
 /// Permission mode picker (per §5.4).
 /// Phase 2: stub showing 4 labels, all non-functional except selection.
@@ -20,7 +21,7 @@ public struct PermissionPickerView: View {
                     selected = mode
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: mode.iconName)
+                        Image(systemName: mode.systemImage)
                             .frame(width: 16)
                             .foregroundColor(mode == selected ? .accentPrimary : .textSecondary)
 

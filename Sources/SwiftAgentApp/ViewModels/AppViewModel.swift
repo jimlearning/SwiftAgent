@@ -106,7 +106,7 @@ public final class AppViewModel: ObservableObject {
     /// All projects (loaded from DB).
     @Published public var projects: [ProjectViewModel] = []
 
-    /// Global threads (no project).
+    /// Legacy — kept empty. Threads are always project-scoped.
     @Published public var globalThreads: [ThreadViewModel] = []
 
     /// All threads keyed by ID.
@@ -158,9 +158,8 @@ public final class AppViewModel: ObservableObject {
     /// observe the same source. Empty until SkillsViewModel loads SKILL.md files.
     @Published public var skills: [SkillDescriptor] = []
 
-    /// Helper: a Binding into the selected thread's @Published properties.
-    /// Used by ComposerView's ModelPicker popover, which needs a Binding
-    /// into `selectedModel` to mutate it through the picker UI.
+    /// Helper: resolves a ThreadViewModel for the given thread ID. Used for
+    /// callers that need a direct reference to the published thread state.
     public func selectedThreadBinding(threadID: String) -> ThreadViewModel {
         // Caller is guaranteed to pass the current selected thread id;
         // we resolve fresh on each access so the Binding sees live mutations.
@@ -249,7 +248,6 @@ public final class AppViewModel: ObservableObject {
 
         var allProjects: [ProjectViewModel] = []
         var vmMap: [String: ThreadViewModel] = [:]
-        let globalList: [ThreadViewModel] = []
 
         for project in discovered {
             let displayName = (project.originalPath as NSString).lastPathComponent
@@ -350,10 +348,6 @@ public final class AppViewModel: ObservableObject {
         self.projects = allProjects.sorted { ($0.threads.first?.updatedAt ?? Date.distantPast) > ($1.threads.first?.updatedAt ?? Date.distantPast) }
         self.threadViewModels = vmMap
 
-        // Separate global threads (those without a matching project)
-        // For now, all threads are under projects.
-        self.globalThreads = globalList
-
         // Auto-select first thread and load its messages.
         if selectedThreadID == nil, let thread = allProjects.first?.threads.first {
             selectThread(thread)
@@ -437,9 +431,8 @@ public final class AppViewModel: ObservableObject {
             persistThreadToDB(thread, projectId: projectId)
         }
 
-        // Only promote to sidebar if not already there
+        // Only promote to sidebar if not already in a project
         let alreadyInSidebar = projects.contains(where: { $0.threads.contains(where: { $0.id == thread.id }) })
-            || globalThreads.contains(where: { $0.id == thread.id })
         if !alreadyInSidebar {
             DispatchQueue.main.async { [self] in
                 promoteThreadToSidebar(thread, projectId: projectId)
@@ -447,15 +440,11 @@ public final class AppViewModel: ObservableObject {
         }
     }
 
-    /// Insert the thread into the right `projects[].threads` or
-    /// `globalThreads` list, sorted by updatedAt (newest first).
+    /// Insert the thread into the right `projects[].threads` list, sorted by updatedAt.
     private func promoteThreadToSidebar(_ thread: ThreadViewModel, projectId: String?) {
         if let pid = projectId, let project = projects.first(where: { $0.path.lowercased() == pid.lowercased() }) {
             project.threads.insert(thread, at: 0)
             project.threads.sort { $0.updatedAt > $1.updatedAt }
-        } else {
-            globalThreads.insert(thread, at: 0)
-            globalThreads.sort { $0.updatedAt > $1.updatedAt }
         }
     }
 
@@ -544,13 +533,11 @@ public final class AppViewModel: ObservableObject {
         do {
             try store.deleteSession(sessionId: id, projectPath: cwd)
             threadViewModels.removeValue(forKey: id)
-            globalThreads.removeAll { $0.id == id }
             for project in projects {
                 project.threads.removeAll { $0.id == id }
             }
             if selectedThreadID == id {
-                selectedThreadID = globalThreads.first?.id
-                    ?? projects.first?.threads.first?.id
+                selectedThreadID = projects.first?.threads.first?.id
             }
         } catch {
             print("[AppViewModel] Delete thread failed: \(error)")

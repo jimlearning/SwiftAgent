@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
@@ -16,6 +16,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-collections", from: "1.0.0"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess", from: "4.2.0"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.0.0"),
+        .package(path: "Packages"),
     ],
     targets: [
         .target(
@@ -37,6 +38,8 @@ let package = Package(
                 .product(name: "Collections", package: "swift-collections"),
                 .product(name: "KeychainAccess", package: "KeychainAccess"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+                .product(name: "ClarcCore", package: "Packages"),
+                .product(name: "ClarcChatKit", package: "Packages"),
             ],
             path: "Sources/SwiftAgentApp",
             linkerSettings: [
