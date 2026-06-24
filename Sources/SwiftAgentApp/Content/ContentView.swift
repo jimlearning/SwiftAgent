@@ -20,7 +20,6 @@ public struct ContentView: View {
     @State private var isRenamingTitle: Bool = false
     @State private var renameTitleText: String = ""
     @State private var showEnvPopover: Bool = false
-    @State private var composerDragHeight: CGFloat = 50
 
     public init() {}
 
@@ -34,27 +33,8 @@ public struct ContentView: View {
                     apiKeyBanner
                 }
 
-                // Message list (main content area) — AppKit NSTableView with cell reuse
-                AppKitChatBridge(threadID: thread.id)
-                    .id(thread.id)  // Force-rebuild on thread switch so scroll position resets cleanly
-                    .overlay(alignment: .bottomTrailing) {
-                        if !thread.isNearBottom {
-                            scrollToBottomButton
-                        }
-                    }
-
-                HorizontalDragDivider(
-                    height: $composerDragHeight,
-                    range: 50...100,
-                    edge: .bottom,
-                    color: .borderSubtle
-                )
-
-                // Composer at bottom — .id() forces full recreation on thread
-                // switch, preventing stale @StateObject from carrying over
-                // composer text/state between different threads.
-                ComposerView(threadID: thread.id, dragHeight: composerDragHeight)
-                    .id(thread.id)
+                // Chat view — pure SwiftUI port of ClarcChatKit architecture
+                SwiftAgentChatView()
             } else {
                 // No thread selected — show actionable empty state
                 emptyStateView
@@ -376,26 +356,4 @@ public struct ContentView: View {
         }
     }
 
-    // MARK: - Scroll-to-Bottom Button
-
-    private var scrollToBottomButton: some View {
-        Button {
-            NotificationCenter.default.post(name: .chatScrollToBottom, object: nil)
-        } label: {
-            Image(systemName: "arrow.down")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(Color.black.opacity(0.6))
-                        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
-                )
-        }
-        .buttonStyle(.plain)
-        .padding(.trailing, 12)
-        .padding(.bottom, 12)
-        .transition(.opacity.combined(with: .scale(scale: 0.8)))
-        .animation(.easeOut(duration: 0.2), value: true)
-    }
 }

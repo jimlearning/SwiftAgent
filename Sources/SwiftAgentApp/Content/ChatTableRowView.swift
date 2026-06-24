@@ -168,7 +168,7 @@ public final class ChatTableRowView: NSTableCellView {
             return view
 
         case .thinking(let content, _):
-            let view = ThinkingBlockView()
+            let view = LegacyThinkingBlockView()
             let expanded = !(foldState?.isCollapsed(.thinking(messageID: message.id, blockIndex: index)) ?? false)
             view.configure(
                 content: content,
@@ -238,7 +238,7 @@ public final class ChatTableRowView: NSTableCellView {
 
             switch block {
             case .thinking:
-                if let thinkingBlock = view as? ThinkingBlockView {
+                if let thinkingBlock = view as? LegacyThinkingBlockView {
                     let shouldExpand = !fs.isCollapsed(.thinking(messageID: message.id, blockIndex: index))
                     thinkingBlock.configure(
                         content: block.thinkingContent ?? "",

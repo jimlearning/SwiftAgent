@@ -587,7 +587,7 @@ public final class TextBlockView: NSView, ChatBlockView {
 /// Collapsible thinking/reasoning card with brain icon.
 /// Collapsed: shows header only (icon + "Thinking..." / "Thought for Xs").
 /// Expanded: shows header + thinking text content.
-public final class ThinkingBlockView: ChatCardBlockView {
+public final class LegacyThinkingBlockView: ChatCardBlockView {
 
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
     private var isExpanded: Bool = false
