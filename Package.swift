@@ -16,6 +16,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-collections", from: "1.0.0"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess", from: "4.2.0"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.0.0"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.3.0"),
         .package(path: "Packages"),
     ],
     targets: [
@@ -38,6 +39,7 @@ let package = Package(
                 .product(name: "Collections", package: "swift-collections"),
                 .product(name: "KeychainAccess", package: "KeychainAccess"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "ClarcCore", package: "Packages"),
                 .product(name: "ClarcChatKit", package: "Packages"),
             ],
