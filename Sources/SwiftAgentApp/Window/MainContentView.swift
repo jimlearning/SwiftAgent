@@ -185,8 +185,8 @@ private func convertMessages(_ agentMessages: [AgentMessage]) -> [ChatMessage] {
             switch block {
             case .text(let text):
                 return .text(text)
-            case .thinking(let text, _):
-                return .thinking(text)
+            case .thinking(let text, let id, _):
+                return .thinking(text, id: id)
             case .toolUse(let tb):
                 let input = convertInputJSON(tb.rawInput)
                 return .toolCall(ToolCall(

@@ -618,7 +618,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             switch block {
             case .text(let text):
                 return .text(text)
-            case .thinking(let text, _):
+            case .thinking(let text, _, _):
                 return .thinking(text)
             case .toolUse(let toolUse):
                 if let input = toolUse.rawInput {
@@ -728,7 +728,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
                     case .text(let text):
                         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmed.isEmpty { assistantBlocks.append(.text(text)) }
-                    case .thinking(let text, _):
+                    case .thinking(let text, _, _):
                         assistantBlocks.append(.thinking(text))
                     case .toolUse(let toolUse):
                         if let input = toolUse.rawInput {
@@ -765,7 +765,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
                 let contentBlocks: [ContentBlock] = agentMsg.blocks.compactMap { block in
                     switch block {
                     case .text(let text): return .text(text)
-                    case .thinking(let text, _): return .thinking(text)
+                    case .thinking(let text, _, _): return .thinking(text)
                     case .toolUse(let toolUse):
                         if let input = toolUse.rawInput {
                             return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)

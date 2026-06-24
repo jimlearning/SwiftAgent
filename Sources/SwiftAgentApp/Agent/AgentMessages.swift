@@ -75,8 +75,8 @@ public struct AgentMessage: Identifiable, Equatable {
     public mutating func appendThinking(_ text: String) {
         renderToken &+= 1
         // Merge into the last block if it is thinking (streaming continuation).
-        if let lastBlock = blocks.last, case .thinking(let existing, let expanded) = lastBlock {
-            blocks[blocks.count - 1] = .thinking(existing + text, isExpanded: expanded)
+        if let lastBlock = blocks.last, case .thinking(let existing, let id, let expanded) = lastBlock {
+            blocks[blocks.count - 1] = .thinking(existing + text, id: id, isExpanded: expanded)
             return
         }
         // New thinking block at the end, preserving interleaved order.
@@ -127,7 +127,7 @@ public enum AgentMessageRole: String, Equatable, Sendable {
 
 public enum AgentMessageBlock: Equatable, Codable {
     case text(String)
-    case thinking(String, isExpanded: Bool = false)
+    case thinking(String, id: String = UUID().uuidString, isExpanded: Bool = false)
     case toolUse(ToolUseBlock)
     case toolResult(ToolResultBlock)
     case systemReminder(String)
@@ -148,8 +148,69 @@ public enum AgentMessageBlock: Equatable, Codable {
     }
 
     public var thinkingContent: String? {
-        if case .thinking(let text, _) = self { return text }
+        if case .thinking(let text, _, _) = self { return text }
         return nil
+    }
+
+    // MARK: Codable (backward-compatible with old 2-param thinking form)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.text) {
+            self = .text(try container.decode(String.self, forKey: .text))
+        } else if container.contains(.thinking) {
+            let nested = try container.nestedContainer(keyedBy: ThinkingCodingKeys.self, forKey: .thinking)
+            let text = try nested.decode(String.self, forKey: ._0)
+            let isExpanded = try nested.decodeIfPresent(Bool.self, forKey: .isExpanded) ?? false
+            // id was added later — default to a fresh UUID for old persisted data
+            let id = (try? nested.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+            self = .thinking(text, id: id, isExpanded: isExpanded)
+        } else if container.contains(.toolUse) {
+            let block = try container.decode(ToolUseBlock.self, forKey: .toolUse)
+            self = .toolUse(block)
+        } else if container.contains(.toolResult) {
+            let block = try container.decode(ToolResultBlock.self, forKey: .toolResult)
+            self = .toolResult(block)
+        } else if container.contains(.systemReminder) {
+            self = .systemReminder(try container.decode(String.self, forKey: .systemReminder))
+        } else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath,
+                                      debugDescription: "Unknown AgentMessageBlock case"))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode(text, forKey: .text)
+        case .thinking(let text, let id, let isExpanded):
+            var nested = container.nestedContainer(keyedBy: ThinkingCodingKeys.self, forKey: .thinking)
+            try nested.encode(text, forKey: ._0)
+            try nested.encode(id, forKey: .id)
+            try nested.encode(isExpanded, forKey: .isExpanded)
+        case .toolUse(let block):
+            try container.encode(block, forKey: .toolUse)
+        case .toolResult(let block):
+            try container.encode(block, forKey: .toolResult)
+        case .systemReminder(let text):
+            try container.encode(text, forKey: .systemReminder)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case thinking
+        case toolUse
+        case toolResult
+        case systemReminder
+    }
+
+    private enum ThinkingCodingKeys: String, CodingKey {
+        case _0
+        case id
+        case isExpanded
     }
 }
 
