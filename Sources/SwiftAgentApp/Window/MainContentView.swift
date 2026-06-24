@@ -187,12 +187,16 @@ private func convertMessages(_ agentMessages: [AgentMessage]) -> [ChatMessage] {
         case .assistant, .system: role = .assistant
         }
 
-        // First pass: collect tool-use blocks so tool-result blocks can
-        // inherit the matching tool's name and input.
+        // First pass: collect tool-use and tool-result blocks so
+        // results can be merged into their matching tool-use cards.
         var toolUseMap: [String: (name: String, input: [String: ClarcCore.JSONValue])] = [:]
+        var toolResultMap: [String: (content: String, isError: Bool)] = [:]
         for block in am.blocks {
             if case .toolUse(let tb) = block {
                 toolUseMap[tb.toolUseID] = (tb.toolName, convertInputJSON(tb.rawInput))
+            }
+            if case .toolResult(let tr) = block {
+                toolResultMap[tr.toolUseID] = (tr.content, tr.isError)
             }
         }
 
@@ -204,20 +208,22 @@ private func convertMessages(_ agentMessages: [AgentMessage]) -> [ChatMessage] {
                 return .thinking(text, id: id)
             case .toolUse(let tb):
                 let input = convertInputJSON(tb.rawInput)
+                let result = toolResultMap[tb.toolUseID]
                 return .toolCall(ToolCall(
                     id: tb.toolUseID,
                     name: tb.toolName,
                     input: input,
-                    result: nil,
-                    isError: false
+                    result: result?.content,
+                    isError: result?.isError ?? false
                 ))
             case .toolResult(let tr):
-                // Merge result into the matching tool-use card.
-                let match = toolUseMap[tr.toolUseID]
+                // Skip if already merged into a toolUse above (avoids duplicate IDs).
+                if toolUseMap[tr.toolUseID] != nil { return nil }
+                // Orphan result with no matching tool use — emit as standalone.
                 return .toolCall(ToolCall(
                     id: tr.toolUseID,
-                    name: match?.name ?? "",
-                    input: match?.input ?? [:],
+                    name: "",
+                    input: [:],
                     result: tr.content,
                     isError: tr.isError
                 ))
