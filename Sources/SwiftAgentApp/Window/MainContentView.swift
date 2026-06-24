@@ -157,6 +157,8 @@ struct MainContentView: View {
         syncCancellables.removeAll()
         guard let thread = appViewModel.selectedThread else { return }
 
+        chatBridge.modelDisplayName = thread.selectedModel
+
         thread.$messages
             .dropFirst()
             .sink { [weak chatBridge] msgs in
@@ -169,6 +171,13 @@ struct MainContentView: View {
                 let streaming = state == .executing
                 chatBridge?.isStreaming = streaming
                 chatBridge?.streamingStartDate = streaming ? thread?.executionStartTime : nil
+            }
+            .store(in: &syncCancellables)
+
+        thread.$selectedModel
+            .dropFirst()
+            .sink { [weak chatBridge] model in
+                chatBridge?.modelDisplayName = model
             }
             .store(in: &syncCancellables)
     }

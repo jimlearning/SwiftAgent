@@ -23,7 +23,9 @@ public struct ContentView: View {
                     apiKeyBanner
                 }
 
-                ChatView()
+                ChatView {
+                    ComposerAccessoryView()
+                }
             } else {
                 emptyStateView
             }

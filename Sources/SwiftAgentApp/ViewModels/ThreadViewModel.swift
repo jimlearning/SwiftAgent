@@ -50,7 +50,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     @Published public var title: String = "Untitled"
     @Published public var messages: [AgentMessage] = []
     @Published public var state: ThreadState = .idle
-    @Published public var selectedModel: String = "claude-sonnet-4-6"
+    @Published public var selectedModel: String = "deepseek-v4-pro"
     @Published public var mode: String = "code"
     @Published public var sandboxMode: String = "workspace-write"
     @Published public var executionEnv: String = "local"
