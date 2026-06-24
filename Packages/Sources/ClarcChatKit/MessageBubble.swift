@@ -41,49 +41,29 @@ struct MessageBubble: View {
                     errorBubble
                 } else {
                     // Assistant message: render blocks in order
-                    let hidden = message.isStreaming ? [] : message.blocks.compactMap(\.toolCall).filter { isTransientTool($0) && $0.hasNonEmptyResult }
-                    // Filter to only renderable blocks — exclude hidden transient tool blocks from ForEach
-                    // to prevent zero-height TupleViews from introducing VStack spacing.
-                    // Adjacent text blocks made contiguous by hidden tools are merged into a single bubble
-                    // (so continuous text Claude sent across turns due to tool_use appears as one bubble)
-                    let visibleBlocks = Self.mergeAdjacentTextBlocks(
-                        in: message.blocks.filter { block in
-                            if let text = block.text { return !text.isEmpty }
+                    let (renderItems, hidden) = buildRenderItems(from: message)
+
+                    // Render blocks in original order with summary at correct position
+                    ForEach(renderItems) { item in
+                        if item.isSummary {
+                            transientToolSummary(hidden: hidden)
+                        } else if let block = item.block {
+                            if let text = block.text, !text.isEmpty {
+                                assistantTextBubble(text: text, blockId: block.id, hasHiddenTools: !hidden.isEmpty)
+                            }
                             if let toolCall = block.toolCall {
-                                if message.isStreaming { return true }
-                                if isTransientTool(toolCall) { return false }
-                                // Agent/Edit/Write tools are always shown even without a result
-                                // Agent/Edit/Write/AskUserQuestion are always shown even without a result
-                                if toolCall.isKeepAlways { return true }
-                                // Other non-transient tools: only show when there is a result or error (prevents empty tool bubbles)
-                                return toolCall.result != nil || toolCall.isError
+                                if toolCall.name == "AskUserQuestion" {
+                                    AskUserQuestionView(toolCall: toolCall)
+                                } else {
+                                    ToolResultView(toolCall: toolCall, isMessageStreaming: message.isStreaming)
+                                }
                             }
-                            if block.isThinking { return true }
-                            return false
-                        }
-                    )
-
-                    // Hidden tool summary — shown before text (reflects tool execution → text response order)
-                    if !hidden.isEmpty {
-                        transientToolSummary(hidden: hidden)
-                    }
-
-                    ForEach(visibleBlocks) { block in
-                        if let text = block.text, !text.isEmpty {
-                            assistantTextBubble(text: text, blockId: block.id, hasHiddenTools: !hidden.isEmpty)
-                        }
-                        if let toolCall = block.toolCall {
-                            if toolCall.name == "AskUserQuestion" {
-                                AskUserQuestionView(toolCall: toolCall)
-                            } else {
-                                ToolResultView(toolCall: toolCall, isMessageStreaming: message.isStreaming)
+                            if block.isThinking {
+                                ThinkingBlockView(
+                                    block: block,
+                                    isMessageStreaming: message.isStreaming
+                                )
                             }
-                        }
-                        if block.isThinking {
-                            ThinkingBlockView(
-                                block: block,
-                                isMessageStreaming: message.isStreaming
-                            )
                         }
                     }
                 }
@@ -351,34 +331,66 @@ struct MessageBubble: View {
     // MARK: - Transient Tool Helpers
 
     /// Read, Grep, Glob, Bash etc. are collapsed into a summary after streaming completes
+    private func buildRenderItems(from message: ChatMessage) -> ([RenderItem], hidden: [ToolCall]) {
+        let hidden = message.isStreaming ? [] : message.blocks.compactMap(\.toolCall).filter { isTransientTool($0) && $0.hasNonEmptyResult }
+        let hiddenIDs = Set(hidden.map(\.id))
+        var summaryRendered = false
+        var renderItems: [RenderItem] = []
+        var pendingText: (id: String, text: String)? = nil
+
+        func flushText() {
+            guard let t = pendingText else { return }
+            renderItems.append(RenderItem(id: t.id, block: .text(t.text, id: t.id), isSummary: false))
+            pendingText = nil
+        }
+
+        for block in message.blocks {
+            if let text = block.text {
+                if !text.isEmpty {
+                    if let prev = pendingText {
+                        let needsSpace = !(prev.text.last?.isWhitespace ?? true) && !(text.first?.isWhitespace ?? true)
+                        pendingText = (id: prev.id, text: needsSpace ? prev.text + " " + text : prev.text + text)
+                    } else {
+                        pendingText = (id: block.id, text: text)
+                    }
+                }
+                continue
+            }
+
+            if let toolCall = block.toolCall {
+                if hiddenIDs.contains(toolCall.id) {
+                    if !summaryRendered {
+                        flushText()
+                        renderItems.append(RenderItem(id: "summary", block: nil, isSummary: true))
+                        summaryRendered = true
+                    }
+                    continue
+                }
+                flushText()
+                if message.isStreaming || toolCall.isKeepAlways || toolCall.result != nil || toolCall.isError {
+                    renderItems.append(RenderItem(id: block.id, block: block, isSummary: false))
+                }
+                continue
+            }
+
+            if block.isThinking {
+                let thinkingText = block.thinking ?? ""
+                if thinkingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !block.isThinkingRedacted {
+                    continue
+                }
+                flushText()
+                renderItems.append(RenderItem(id: block.id, block: block, isSummary: false))
+            }
+        }
+        flushText()
+
+        return (renderItems, hidden)
+    }
+
     private func isTransientTool(_ toolCall: ToolCall) -> Bool {
         let cat = ToolCategory(toolName: toolCall.name)
         return cat == .readOnly || cat == .execution
-    }
-
-    /// Merges adjacent text blocks made contiguous by hidden transient tools.
-    /// Displays continuous text Claude split across turns due to tool_use as a single bubble.
-    ///
-    /// Join rule: respects original trailing/leading whitespace; adds a single space only when
-    /// neither side has whitespace. Forced paragraph breaks would split bullets mid-list,
-    /// so they are avoided — even text following a complete sentence joins naturally with a single space.
-    private static func mergeAdjacentTextBlocks(in blocks: [MessageBlock]) -> [MessageBlock] {
-        var result: [MessageBlock] = []
-        for block in blocks {
-            if block.isText,
-               let lastIdx = result.indices.last,
-               result[lastIdx].isText {
-                let prev = result[lastIdx].text ?? ""
-                let curr = block.text ?? ""
-                let needsSpace = !(prev.last?.isWhitespace ?? true) && !(curr.first?.isWhitespace ?? true)
-                let joined = needsSpace ? prev + " " + curr : prev + curr
-                // Preserve original block id to ensure ForEach diff stability
-                result[lastIdx] = .text(joined, id: result[lastIdx].id)
-            } else {
-                result.append(block)
-            }
-        }
-        return result
     }
 
     @State private var showTransientTools = false
@@ -475,5 +487,16 @@ struct MessageBubble: View {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(text)
     }
+}
+
+// MARK: - Render Item (for ordered block rendering)
+
+/// A renderable item in the message block list.
+/// Used to interleave transient tool summaries at the correct position
+/// while preserving original block ordering.
+private struct RenderItem: Identifiable {
+    let id: String
+    let block: MessageBlock?
+    let isSummary: Bool
 }
 

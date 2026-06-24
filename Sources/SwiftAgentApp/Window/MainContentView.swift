@@ -60,11 +60,13 @@ struct MainContentView: View {
             setupChatBridge()
             windowState.currentSessionId = appViewModel.selectedThreadID ?? windowState.newSessionKey
             chatBridge.messages = convertMessages(appViewModel.selectedThread?.messages ?? [])
+            updateSelectedProject()
             subscribeToThread()
         }
         .onChange(of: appViewModel.selectedThreadID) { _, newID in
             windowState.currentSessionId = newID ?? windowState.newSessionKey
             chatBridge.messages = convertMessages(appViewModel.selectedThread?.messages ?? [])
+            updateSelectedProject()
             subscribeToThread()
         }
         .toolbar {
@@ -132,6 +134,19 @@ struct MainContentView: View {
         chatBridge.cancelStreamingHandler = { [self] in
             appViewModel.selectedThread?.cancel()
         }
+    }
+
+    // MARK: - Project Wiring
+
+    private func updateSelectedProject() {
+        guard let thread = appViewModel.selectedThread,
+              let projectId = thread.projectId,
+              let pvm = appViewModel.projects.first(where: { $0.path.lowercased() == projectId.lowercased() })
+        else {
+            windowState.selectedProject = nil
+            return
+        }
+        windowState.selectedProject = Project(id: UUID(), name: pvm.name, path: pvm.path)
     }
 
     // MARK: - Thread Observation (Combine → @Observable bridge)
