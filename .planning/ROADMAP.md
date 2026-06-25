@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: AgentRuntime Core Protocols** — All new type-level definitions: AgentRuntime, Providers (Model/Memory/Permission), simplified Tool, AgentProfile, AgentGraph placeholder. Existing code unchanged.
 - [x] **Phase 2: Session, Streaming & Structured Output** — AgentRuntime loop works end-to-end with mock ModelProvider. Snapshot streaming accumulates correctly. Type-driven output from Codable types.
-- [ ] **Phase 3: Provider Implementations** — Three ModelProviders (Anthropic, DeepSeek unified, OpenAI) + SQLiteMemoryStore + PermissionEngine upgrade. Wire-format isolation enforced.
+- [x] **Phase 3: Provider Implementations** — Three ModelProviders (Anthropic, DeepSeek unified, OpenAI) + SQLiteMemoryStore + PermissionEngine upgrade. Wire-format isolation enforced. (completed 2026-06-25)
 - [ ] **Phase 4: Migration, Wiring & Cleanup** — 60+ tools to simplified protocol. CLI + App wired to AgentRuntime. Deprecated types removed. All tests pass.
 
 ## Phase Details
@@ -74,7 +74,6 @@ Plans:
 
 **Plans**: 3 plans
 
-
 **Wave 1**
 
 - [x] 02-01-PLAN.md — Core streaming types: SessionEvent, PartiallyGenerated, GenerationSchema, RuntimeGenerationChannel
@@ -107,10 +106,10 @@ Plans:
 Plans:
 **Wave 1** *(all plans independent — zero file overlap)*
 
-- [ ] 03-01-PLAN.md — AnthropicProvider: absorbs LLMClient internals, Transcript→Anthropic Messages API, SSE→SessionEvent parsing (MODEL-02)
-- [ ] 03-02-PLAN.md — DeepSeekProvider: unified dual-path with APICompatibility switch, Anthropic+OpenAI compat endpoints (MODEL-03)
-- [ ] 03-03-PLAN.md — OpenAIProvider: Chat Completions API with function calling, multi-chunk tool accumulation, o4 reasoning (MODEL-04)
-- [ ] 03-04-PLAN.md — SQLiteMemoryStore + AgentPermissionBridge: persistent SQLite3 storage, AgentPermission→PermissionEngine adapter (MEM-02)
+- [x] 03-01-PLAN.md — AnthropicProvider: absorbs LLMClient internals, Transcript→Anthropic Messages API, SSE→SessionEvent parsing (MODEL-02)
+- [x] 03-02-PLAN.md — DeepSeekProvider: unified dual-path with APICompatibility switch, Anthropic+OpenAI compat endpoints (MODEL-03)
+- [x] 03-03-PLAN.md — OpenAIProvider: Chat Completions API with function calling, multi-chunk tool accumulation, o4 reasoning (MODEL-04)
+- [x] 03-04-PLAN.md — SQLiteMemoryStore + AgentPermissionBridge: persistent SQLite3 storage, AgentPermission→PermissionEngine adapter (MEM-02)
 
 ### Phase 4: Migration, Wiring & Cleanup
 
@@ -141,7 +140,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 |-------|----------------|--------|-----------|
 | 1. AgentRuntime Core Protocols | 3/3 | Complete    | 2026-06-25 |
 | 2. Session, Streaming & Structured Output | 3/3 | Complete    | 2026-06-25 |
-| 3. Provider Implementations | 0/4 | Planned | - |
+| 3. Provider Implementations | 4/4 | Complete   | 2026-06-25 |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
 
 ## Design Rationale (4-phase vs 8-phase)

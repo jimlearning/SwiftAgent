@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
+status: executing
 stopped_at: "Completed 02-03-PLAN.md — AgentRuntimeImpl actor with agent loop (271 lines), CollectingChannel (private actor), 8 integration tests. 7 files total (2 created: AgentRuntimeImpl.swift, AgentRuntimeImplTests.swift; 5 modified: AgentRuntime.swift, RuntimeGenerationChannel.swift, ToolOutputValue.swift, Transcript.swift, Phase2StreamingTests.swift). 3 commits. Phase 2 complete (3/3 plans). All 6 planned plans across Phase 1 and 2 completed."
-last_updated: "2026-06-25T10:18:48.450Z"
-last_activity: 2026-06-25
+last_updated: "2026-06-25T10:53:19.552Z"
+last_activity: 2026-06-25 -- Phase 03 execution started
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 6
+  total_plans: 10
   completed_plans: 6
   percent: 50
 ---
@@ -21,14 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** Models are peripherals, not the CPU — `AgentRuntime` is the architecture's center; every Provider (Model, Memory, Permission) sits behind a protocol
-**Current focus:** Phase 02 — Session, Streaming & Structured Output
+**Current focus:** Phase 03 — provider-implementations
 
 ## Current Position
 
-Phase: 3
+Phase: 03 (provider-implementations) — EXECUTING
+Plan: 1 of 4
 Next Phase: 03 (Provider Implementations) — PLANNING
-Status: Phase 02 complete — AgentRuntimeImpl actor works with mock providers
-Last activity: 2026-06-25
+Status: Executing Phase 03
+Last activity: 2026-06-25 -- Phase 03 execution started
 
 Progress: [██████████] 100% (all 6 planned plans complete)
 
