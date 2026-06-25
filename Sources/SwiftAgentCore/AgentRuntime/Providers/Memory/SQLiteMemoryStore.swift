@@ -45,11 +45,15 @@ public actor SQLiteMemoryStore: RuntimeMemoryStore {
         } else {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let swiftAgentDir = home.appendingPathComponent(".swift-agent")
-            // Ensure directory exists
-            try? FileManager.default.createDirectory(
-                at: swiftAgentDir,
-                withIntermediateDirectories: true
-            )
+            // Ensure directory exists — surface failure instead of silently ignoring
+            do {
+                try FileManager.default.createDirectory(
+                    at: swiftAgentDir,
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                throw AgentRuntimeError.storageFull(availableBytes: 0)
+            }
             self.dbPath = swiftAgentDir.appendingPathComponent("memory.db").path
         }
 
@@ -61,8 +65,9 @@ public actor SQLiteMemoryStore: RuntimeMemoryStore {
             nil
         )
         guard rc == SQLITE_OK, let handle = handle else {
+            let msg = handle.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "sqlite3_open_v2 returned \(rc) with nil handle"
             if let h = handle { sqlite3_close(h) }
-            throw AgentRuntimeError.storageFull(availableBytes: 0)
+            throw AgentRuntimeError.invalidResponse(reason: "Failed to open SQLite database at \(dbPath): \(msg)")
         }
         self.dbHandle = Handle(handle)
 
