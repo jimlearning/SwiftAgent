@@ -15,7 +15,7 @@ The journey proceeds through four phases: defining the AgentRuntime blueprint (a
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: AgentRuntime Core Protocols** — All new type-level definitions: AgentRuntime, Providers (Model/Memory/Permission), simplified Tool, AgentProfile, AgentGraph placeholder. Existing code unchanged.
+- [x] **Phase 1: AgentRuntime Core Protocols** — All new type-level definitions: AgentRuntime, Providers (Model/Memory/Permission), simplified Tool, AgentProfile, AgentGraph placeholder. Existing code unchanged.
 - [ ] **Phase 2: Session, Streaming & Structured Output** — AgentRuntime loop works end-to-end with mock ModelProvider. Snapshot streaming accumulates correctly. Type-driven output from Codable types.
 - [ ] **Phase 3: Provider Implementations** — Three ModelProviders (Anthropic, DeepSeek unified, OpenAI) + SQLiteMemoryStore + PermissionEngine upgrade. Wire-format isolation enforced.
 - [ ] **Phase 4: Migration, Wiring & Cleanup** — 60+ tools to simplified protocol. CLI + App wired to AgentRuntime. Deprecated types removed. All tests pass.
@@ -53,7 +53,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-03-PLAN.md — Top-level agent types: AgentTool protocol, AgentProfile, AgentGraph type-slots, AgentRuntime actor protocol (4 requirements)
+- [x] 01-03-PLAN.md — Top-level agent types: AgentTool protocol, AgentProfile, AgentGraph type-slots, AgentRuntime actor protocol (4 requirements)
 
 ### Phase 2: Session, Streaming & Structured Output
 
@@ -121,7 +121,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. AgentRuntime Core Protocols | 2/3 | In Progress|  |
+| 1. AgentRuntime Core Protocols | 3/3 | Complete | 2026-06-25 |
 | 2. Session, Streaming & Structured Output | 0/TBD | Not started | - |
 | 3. Provider Implementations | 0/TBD | Not started | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
@@ -149,4 +149,4 @@ Every Phase 1 type-slot is designed to accept predicted WWDC27 capabilities with
 | `Tool` protocol (~6 members) | AgentIntent auto-discovery | `AgentIntent` protocol refines `Tool` with auto-registration |
 
 ---
-*Last updated: 2026-06-25 — Phase 1 planned (3 plans, 16 requirements)*
+*Last updated: 2026-06-25 — Phase 1 complete (3 plans, 16 requirements fulfilled)*

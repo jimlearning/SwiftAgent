@@ -4,12 +4,12 @@
 
 ### AgentRuntime Core (RUNTIME-01 to RUNTIME-06)
 
-- [ ] **RUNTIME-01**: `AgentRuntime` as central actor replacing `QueryEngine` + `LLMClient` as the primary consumer API surface. Owns all subsystems: `ModelProvider`, `MemoryStore`, `PermissionEngine`, `ToolEngine`, `ContextManager`, `ProfileManager`, `GraphEngine` (placeholder), `HookSystem`. CLI and App wire to `AgentRuntime.shared`.
+- [x] **RUNTIME-01**: `AgentRuntime` as central actor replacing `QueryEngine` + `LLMClient` as the primary consumer API surface. Owns all subsystems: `ModelProvider`, `MemoryStore`, `PermissionEngine`, `ToolEngine`, `ContextManager`, `ProfileManager`, `GraphEngine` (placeholder), `HookSystem`. CLI and App wire to `AgentRuntime.shared`.
 - [x] **RUNTIME-02**: `LanguageModel` protocol as `ModelProvider` interface. Model has `capabilities: LanguageModelCapabilities` and creates model sessions. Models are plugins — one Provider type among several under AgentRuntime. `Sendable`, actor-safe.
 - [x] **RUNTIME-03**: `LanguageModelCapabilities` struct replacing dual `ModelInfo` types. Fields: `supportsStreaming`, `supportsToolUse`, `supportsThinking`, `supportsVision`, `contextWindow`, `maxOutputTokens`, `providerDisplayName`. Single source of truth across Core and App.
 - [x] **RUNTIME-04**: `AgentRuntimeError` enum — unified error type across ALL subsystems. Cases grouped by subsystem: model errors (`rateLimited`, `unauthorized`, `serverError`, `timeout`, `contextSizeExceeded`, `invalidResponse`), memory errors (`storageFull`, `keyNotFound`, `migrationFailed`), permission errors (`denied`, `sandboxViolation`), tool errors (`notFound`, `executionFailed`, `validationFailed`), graph errors (`cycleDetected`, `nodeFailed`).
 - [x] **RUNTIME-05**: `Transcript` struct — canonical conversation history with typed entries: `.instruction(String)`, `.prompt(String)`, `.response(String)`, `.toolCall(id:name:input:)`, `.toolOutput(id:output:)`, `.thinking(String)`, `.system(String)`. Replaces raw `[Message]` / `[ContentBlock]` in public API. Consumed by `MemoryStore` for persistent memory.
-- [ ] **RUNTIME-06**: `AgentProfile` struct — agent identity bundle: `name: String`, `instructions: String`, `tools: [any Tool]`, `model: any LanguageModel`, `permissionMode: AgentPermission`, `memoryScope: MemoryScope`. Forward-compatible with FoundationModels `DynamicProfile` runtime switching.
+- [x] **RUNTIME-06**: `AgentProfile` struct — agent identity bundle: `name: String`, `instructions: String`, `tools: [any Tool]`, `model: any LanguageModel`, `permissionMode: AgentPermission`, `memoryScope: MemoryScope`. Forward-compatible with FoundationModels `DynamicProfile` runtime switching.
 
 ### Memory Subsystem (MEM-01 to MEM-03)
 
@@ -24,7 +24,7 @@
 
 ### Simplified Tool Protocol (TOOL-01 to TOOL-03)
 
-- [ ] **TOOL-01**: Simplified `Tool` protocol (~6 core members): `var name: String { get }`, `var description: String { get }`, `associatedtype Input: Codable`, `var inputSchema: JSONSchema { get }`, `func call(_ input: Input) async throws -> ToolOutput`. Forward-compatible with predicted WWDC27 `AgentIntent` auto-discovery pattern. All cross-cutting members (30+ → removed) migrate to `ToolMetadata`.
+- [x] **TOOL-01**: Simplified `Tool` protocol (~6 core members): `var name: String { get }`, `var description: String { get }`, `associatedtype Input: Codable`, `var inputSchema: JSONSchema { get }`, `func call(_ input: Input) async throws -> ToolOutput`. Forward-compatible with predicted WWDC27 `AgentIntent` auto-discovery pattern. All cross-cutting members (30+ → removed) migrate to `ToolMetadata`.
 - [x] **TOOL-02**: `ToolMetadata` struct — per-tool operational data separated from protocol: `searchHint`, `isEnabled`, `isReadOnly`, `isConcurrencySafe`, `isDestructive`, `interruptBehavior`, `activityDescription`, `requiresApproval`, `permissionCategory`. Populated via `ToolEngine.register(tool:metadata:)` at registration time.
 - [x] **TOOL-03**: `ToolOutput` enum replacing `ToolResult` in public API. Cases: `string(String)`, `blocks([ContentBlock])`. `ContentBlock` becomes internal to each ModelProvider — consumers never see wire-format types.
 
@@ -43,7 +43,7 @@
 
 ### AgentGraph Placeholder (GRAPH-01)
 
-- [ ] **GRAPH-01**: `AgentGraph` protocol + `AgentNode` concept — **type-slots only, not implemented**. `AgentGraph` = ordered DAG of `AgentNode`s. Each `AgentNode` has: `agent: AgentProfile`, `inputs: [NodeInput]`, `outputs: [NodeOutput]`, `condition: NodeCondition?`. Placeholder for predicted WWDC27 AgentGraph / WorkflowGraph orchestration. Protocol surface designed so AgentRuntime can accept a Graph in a future phase without breaking changes.
+- [x] **GRAPH-01**: `AgentGraph` protocol + `AgentNode` concept — **type-slots only, not implemented**. `AgentGraph` = ordered DAG of `AgentNode`s. Each `AgentNode` has: `agent: AgentProfile`, `inputs: [NodeInput]`, `outputs: [NodeOutput]`, `condition: NodeCondition?`. Placeholder for predicted WWDC27 AgentGraph / WorkflowGraph orchestration. Protocol surface designed so AgentRuntime can accept a Graph in a future phase without breaking changes.
 
 ### Migration & Cleanup (MIG-01 to MIG-05)
 

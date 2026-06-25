@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-01-PLAN.md — 5 foundation type files, 2 commits, 6 requirements fulfilled. Advancing to 01-02.
-last_updated: "2026-06-25T04:06:17.482Z"
-last_activity: 2026-06-25 -- Plan 01-01 completed (5 files, 8 types)
+status: ready
+stopped_at: Completed 01-03-PLAN.md — 4 top-level Agent type files, 3 commits, 4 requirements fulfilled. Phase 1 complete (14 files, 34 types).
+last_updated: "2026-06-25T05:15:00Z"
+last_activity: 2026-06-25 -- Plan 01-03 completed (4 files, 14+ types)
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 0
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State
@@ -25,36 +25,40 @@ See: .planning/PROJECT.md (updated 2026-06-25)
 
 ## Current Position
 
-Phase: 01 (AgentRuntime Core Protocols) — EXECUTING
-Plan: 3 of 3 COMPLETE, advancing to Plan 2
-Status: Ready to execute
-Last activity: 2026-06-25 -- Plan 01-01 completed (5 files, 8 types)
+Phase: 01 (AgentRuntime Core Protocols) — COMPLETE
+Plan: 3 of 3 COMPLETE
+Status: Ready for Phase 2
+Last activity: 2026-06-25 -- Plan 01-03 completed (4 files, 14 protocols/structs/enums defined)
 
-Progress: [███░░░░░░░] 33%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 1
-- Average duration: ~6 min
-- Total execution time: 0.1 hours
+- Total plans completed: 3
+- Average duration: ~8 min
+- Total execution time: 0.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. AgentRuntime Core Protocols | 1/3 | ~6 min | ~6 min |
+| 1. AgentRuntime Core Protocols | 3/3 | ~24 min | ~8 min |
 | 2. Session, Streaming & Structured Output | TBD | - | - |
 | 3. Provider Implementations | TBD | - | - |
 | 4. Migration, Wiring & Cleanup | TBD | - | - |
 
 **Recent Trend:**
 
-- N/A (no plans executed yet)
+- 01-01: ~6 min (foundation types)
+- 01-02: ~8 min (provider protocols)
+- 01-03: ~10 min (top-level Agent types, 4 naming collisions auto-fixed)
 
 *Updated after each plan completion*
+| Phase 01-agentruntime-core-protocols P01 | 6 | 2 tasks | 5 files |
 | Phase 01-agentruntime-core-protocols P02 | 8 | 2 tasks | 4 files |
+| Phase 01-agentruntime-core-protocols P03 | 10 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -72,6 +76,11 @@ Decision log lives in PROJECT.md Key Decisions table. Recent decisions affecting
 - **Plan 01-01 case count:** AgentRuntimeError has 16 cases (per RESEARCH.md) not 15 (plan text had off-by-one)
 - [Phase ?]: InterruptBehavior reused from Types/Tool.swift (existing definition with .cancel and .block cases)
 - [Phase ?]: Runtime prefix convention for AgentRuntime types colliding with existing types (RuntimeMemoryStore, RuntimeMemoryEntry, RuntimeToolDefinition, AgentMemoryStore.swift)
+- [Plan 01-03]: RuntimeAgentTool renamed from AgentTool (plan concept name) to avoid collision with existing struct AgentTool: Tool in Tools/AgentTool.swift
+- [Plan 01-03]: RuntimeAgentTool.swift filename deconflicted from Tools/AgentTool.swift via SPM same-target filename collision
+- [Plan 01-03]: RuntimeContextManager renamed from ContextManager to avoid collision with existing struct ContextManager in Agent/ContextManager.swift
+- [Plan 01-03]: RuntimeHookSystem renamed from HookSystem to avoid collision with existing actor HookSystem in Hooks/HookSystem.swift
+- [Plan 01-03]: AgentRuntime protocol references actual type names (RuntimeMemoryStore, RuntimePermissionEngine, RuntimeAgentTool, RuntimeContextManager, RuntimeHookSystem) not plan concept names
 
 ### Pending Todos
 
@@ -89,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-25T04:06:17.475Z
-Stopped at: Completed 01-01-PLAN.md — 5 foundation type files, 2 commits, 6 requirements fulfilled. Advancing to 01-02.
+Last session: 2026-06-25T05:15:00Z
+Stopped at: Completed 01-03-PLAN.md — 4 top-level Agent type files, 3 commits, 4 requirements fulfilled. Phase 1 complete (14 files, 34 types).
 Resume file: None
