@@ -19,6 +19,7 @@ struct AnthropicRequestBuilder: Sendable {
     ///   - baseURL: Anthropic API base URL.
     ///   - modelID: Model identifier for the API.
     /// - Returns: A configured URLRequest ready to execute.
+    /// - Throws: `AgentRuntimeError.invalidResponse` if the body cannot be JSON-encoded.
     static func build(
         transcript: Transcript,
         tools: [RuntimeToolDefinition],
@@ -27,7 +28,7 @@ struct AnthropicRequestBuilder: Sendable {
         apiKey: String,
         baseURL: URL,
         modelID: String
-    ) -> URLRequest {
+    ) throws -> URLRequest {
         let (messages, system) = AnthropicTranscriptTranslator.translate(transcript, systemPrompt: systemPrompt)
         let toolDefs = tools.isEmpty ? nil : AnthropicToolTranslator.translate(tools)
 
@@ -76,10 +77,11 @@ struct AnthropicRequestBuilder: Sendable {
         request.setValue("node", forHTTPHeaderField: "x-stainless-runtime")
         request.setValue("v24.3.0", forHTTPHeaderField: "x-stainless-runtime-version")
 
-        // Encode body
-        if let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) {
-            request.httpBody = bodyData
+        // Encode body — surface failure instead of silently sending nil body
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) else {
+            throw AgentRuntimeError.invalidResponse(reason: "Failed to encode request body to JSON")
         }
+        request.httpBody = bodyData
 
         return request
     }

@@ -132,9 +132,11 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        if let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) {
-            request.httpBody = bodyData
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) else {
+            await channel.fail(with: .invalidResponse(reason: "Failed to encode request body to JSON"))
+            return
         }
+        request.httpBody = bodyData
 
         do {
             let (bytes, response) = try await session.bytes(for: request)

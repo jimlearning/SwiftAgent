@@ -93,15 +93,21 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
         options: GenerationOptions,
         streamingInto channel: GenerationChannel
     ) async throws {
-        let request = AnthropicRequestBuilder.build(
-            transcript: transcript,
-            tools: tools,
-            options: options,
-            systemPrompt: nil,
-            apiKey: apiKey,
-            baseURL: baseURL,
-            modelID: modelID
-        )
+        let request: URLRequest
+        do {
+            request = try AnthropicRequestBuilder.build(
+                transcript: transcript,
+                tools: tools,
+                options: options,
+                systemPrompt: nil,
+                apiKey: apiKey,
+                baseURL: baseURL,
+                modelID: modelID
+            )
+        } catch {
+            await channel.fail(with: .invalidResponse(reason: "Failed to build request: \(error.localizedDescription)"))
+            return
+        }
 
         do {
             let (bytes, response) = try await session.bytes(for: request)

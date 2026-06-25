@@ -162,9 +162,11 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         // CRITICAL: NO anthropic-beta header (PITFALLS.md Pitfall 1).
         // DeepSeek's endpoint silently rejects Anthropic beta headers.
 
-        if let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) {
-            request.httpBody = bodyData
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) else {
+            await channel.fail(with: .invalidResponse(reason: "Failed to encode request body to JSON"))
+            return
         }
+        request.httpBody = bodyData
 
         try await streamAndParse(request: request, channel: channel, compatibility: compatibility)
     }
@@ -208,9 +210,11 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        if let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) {
-            request.httpBody = bodyData
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) else {
+            await channel.fail(with: .invalidResponse(reason: "Failed to encode request body to JSON"))
+            return
         }
+        request.httpBody = bodyData
 
         try await streamAndParse(request: request, channel: channel, compatibility: compatibility)
     }
