@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-01-PLAN.md — 4 streaming type files, 1 test file, 3 commits, 2 requirements fulfilled. Phase 2 plan 1/3 complete (17 AgentRuntime files total).
-last_updated: "2026-06-25T09:56:25Z"
-last_activity: 2026-06-25 -- Phase 02-01 completed
+stopped_at: Completed 02-02-PLAN.md — 2 new files (SubsystemStubs.swift, MockProviders.swift), 1 protocol updated (ToolEngine), 1 Phase 1 fix (RuntimeMemoryEntry public init), 2 commits. Phase 2 plan 2/3 complete.
+last_updated: "2026-06-25T10:03:11Z"
+last_activity: 2026-06-25 -- Phase 02-02 completed
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
-  percent: 25
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -26,41 +26,43 @@ See: .planning/PROJECT.md (updated 2026-06-25)
 ## Current Position
 
 Phase: 02 (Session, Streaming & Structured Output) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Executing Phase 02
-Last activity: 2026-06-25 -- Phase 02-01 completed
+Last activity: 2026-06-25 -- Phase 02-02 completed
 
-Progress: [██████████] 100%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6
-- Average duration: ~8 min
-- Total execution time: 0.4 hours
+- Total plans completed: 5
+- Average duration: ~7 min
+- Total execution time: 0.5 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. AgentRuntime Core Protocols | 3/3 | ~24 min | ~8 min |
-| 2. Session, Streaming & Structured Output | TBD | - | - |
+| 2. Session, Streaming & Structured Output | 2/3 | ~14 min | ~7 min |
 | 3. Provider Implementations | TBD | - | - |
 | 4. Migration, Wiring & Cleanup | TBD | - | - |
-| 01 | 3 | - | - |
 
 **Recent Trend:**
 
 - 01-01: ~6 min (foundation types)
 - 01-02: ~8 min (provider protocols)
 - 01-03: ~10 min (top-level Agent types, 4 naming collisions auto-fixed)
+- 02-01: ~10 min (streaming types, 2 decisions)
+- 02-02: ~4 min (subsystem stubs + mock providers, 2 deviations auto-fixed)
 
 *Updated after each plan completion*
 | Phase 01-agentruntime-core-protocols P01 | 6 | 2 tasks | 5 files |
 | Phase 01-agentruntime-core-protocols P02 | 8 | 2 tasks | 4 files |
 | Phase 01-agentruntime-core-protocols P03 | 10 | 3 tasks | 4 files |
 | Phase 02-session-streaming-structured-output P01 | 10 | 3 tasks | 5 files |
+| Phase 02-session-streaming-structured-output P02 | 4 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -86,6 +88,9 @@ Decision log lives in PROJECT.md Key Decisions table. Recent decisions affecting
 - [Plan 02-01]: generationSchemaFromMirror parameter renamed from 'type' to 'metatype' to avoid shadowing Swift's type(of:) global function
 - [Plan 02-01]: SessionEvent uses snapshot semantics (accumulated total, not incremental delta) for textDelta/thinkingDelta — prevents double-render bug
 - [Plan 02-01]: Tests structured as post-send stream collection to avoid Swift 6 Sendable closure capture of mutable local state
+- [Plan 02-02]: All ToolEngine protocol methods made async to support actor-based implementations (DefaultToolEngine). Protocol remains Sendable, not Actor-constrained, so struct-based engines can also conform.
+- [Plan 02-02]: DefaultToolEngine.execute returns stubbed string output in Phase 2; type-safe execution path with permission gating deferred to Phase 3.
+- [Plan 02-02]: RuntimeMemoryEntry given public init (missing from Phase 1) — minimal addition that doesn't change the protocol contract, needed by test target.
 
 ### Pending Todos
 
@@ -103,6 +108,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-25T09:56:25Z
-Stopped at: Completed 02-01-PLAN.md — 4 streaming type files, 1 test file, 3 commits. Phase 2 plan 1/3 complete (17 AgentRuntime files total).
+Last session: 2026-06-25T10:03:11Z
+Stopped at: Completed 02-02-PLAN.md — 2 new files (SubsystemStubs.swift, MockProviders.swift), 2 modified files (AgentRuntime.swift, AgentMemoryStore.swift), 2 commits. Phase 2 plan 2/3 complete. 8 new symbols (4 stubs + 4 mocks + 1 inner type).
 Resume file: None
