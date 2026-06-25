@@ -535,7 +535,7 @@ extension OpenAIProviderTests {
         let function = toolDict["function"] as? [String: Any]
         XCTAssertEqual(function?["name"] as? String, "Bash")
         XCTAssertEqual(function?["description"] as? String, "Run a shell command")
-        XCTAssertEqual(function?["strict"] as? Bool, true)
+        XCTAssertNil(function?["strict"]) // strict only set when enableStrictMode=true
 
         let params = function?["parameters"] as? [String: Any]
         XCTAssertEqual(params?["type"] as? String, "object")

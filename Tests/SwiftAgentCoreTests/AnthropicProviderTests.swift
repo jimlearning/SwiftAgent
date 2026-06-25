@@ -589,14 +589,14 @@ extension AnthropicProviderTests {
 
     // MARK: Test: Request builder produces correct URLRequest
 
-    func test_requestBuilder_buildsCorrectRequest() {
+    func test_requestBuilder_buildsCorrectRequest() throws {
         let transcript = Transcript(entries: [
             .prompt("Hello"),
         ])
         let tools: [RuntimeToolDefinition] = []
         let options = GenerationOptions(maxTokens: 1000)
 
-        let request = AnthropicRequestBuilder.build(
+        let request = try AnthropicRequestBuilder.build(
             transcript: transcript,
             tools: tools,
             options: options,
