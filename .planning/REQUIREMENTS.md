@@ -1,4 +1,4 @@
-# Requirements: Forge Agent Runtime
+# Requirements: SwiftAgent Agent Runtime
 
 ## v1 Requirements
 
@@ -7,8 +7,8 @@
 - [ ] **RUNTIME-01**: `AgentRuntime` as central actor replacing `QueryEngine` + `LLMClient` as the primary consumer API surface. Owns all subsystems: `ModelProvider`, `MemoryStore`, `PermissionEngine`, `ToolEngine`, `ContextManager`, `ProfileManager`, `GraphEngine` (placeholder), `HookSystem`. CLI and App wire to `AgentRuntime.shared`.
 - [ ] **RUNTIME-02**: `LanguageModel` protocol as `ModelProvider` interface. Model has `capabilities: LanguageModelCapabilities` and creates model sessions. Models are plugins — one Provider type among several under AgentRuntime. `Sendable`, actor-safe.
 - [ ] **RUNTIME-03**: `LanguageModelCapabilities` struct replacing dual `ModelInfo` types. Fields: `supportsStreaming`, `supportsToolUse`, `supportsThinking`, `supportsVision`, `contextWindow`, `maxOutputTokens`, `providerDisplayName`. Single source of truth across Core and App.
-- [ ] **RUNTIME-04**: `AgentRuntimeError` enum — unified error type across ALL subsystems. Cases grouped by subsystem: model errors (`rateLimited`, `unauthorized`, `serverError`, `timeout`, `contextSizeExceeded`, `invalidResponse`), memory errors (`storageFull`, `keyNotFound`, `migrationFailed`), permission errors (`denied`, `sandboxViolation`), tool errors (`notFound`, `executionFailed`, `validationFailed`), graph errors (`cycleDetected`, `nodeFailed`).
-- [ ] **RUNTIME-05**: `Transcript` struct — canonical conversation history with typed entries: `.instruction(String)`, `.prompt(String)`, `.response(String)`, `.toolCall(id:name:input:)`, `.toolOutput(id:output:)`, `.thinking(String)`, `.system(String)`. Replaces raw `[Message]` / `[ContentBlock]` in public API. Consumed by `MemoryStore` for persistent memory.
+- [x] **RUNTIME-04**: `AgentRuntimeError` enum — unified error type across ALL subsystems. Cases grouped by subsystem: model errors (`rateLimited`, `unauthorized`, `serverError`, `timeout`, `contextSizeExceeded`, `invalidResponse`), memory errors (`storageFull`, `keyNotFound`, `migrationFailed`), permission errors (`denied`, `sandboxViolation`), tool errors (`notFound`, `executionFailed`, `validationFailed`), graph errors (`cycleDetected`, `nodeFailed`).
+- [x] **RUNTIME-05**: `Transcript` struct — canonical conversation history with typed entries: `.instruction(String)`, `.prompt(String)`, `.response(String)`, `.toolCall(id:name:input:)`, `.toolOutput(id:output:)`, `.thinking(String)`, `.system(String)`. Replaces raw `[Message]` / `[ContentBlock]` in public API. Consumed by `MemoryStore` for persistent memory.
 - [ ] **RUNTIME-06**: `AgentProfile` struct — agent identity bundle: `name: String`, `instructions: String`, `tools: [any Tool]`, `model: any LanguageModel`, `permissionMode: AgentPermission`, `memoryScope: MemoryScope`. Forward-compatible with FoundationModels `DynamicProfile` runtime switching.
 
 ### Memory Subsystem (MEM-01 to MEM-03)
@@ -19,14 +19,14 @@
 
 ### Permission Subsystem (PERM-01 to PERM-02)
 
-- [ ] **PERM-01**: `AgentPermission` enum — runtime-level permission taxonomy (not tool-level): `.readFiles(paths:)`, `.writeFiles(paths:)`, `.network(domains:)`, `.contacts`, `.calendar`, `.location`, `.camera`, `.microphone`, `.runCommands`, `.delete`, `.all`. Forward-compatible with predicted WWDC27 `AgentSandbox` and macOS permission model.
-- [ ] **PERM-02**: `PermissionEngine` upgraded — from tool-level gate to Runtime-level subsystem. All capability invocations (tool calls, memory reads/writes, network requests) route through unified permission check. Existing allow/deny/ask rules preserved. `AgentPermission` taxonomy maps to existing `PermissionRule` system.
+- [x] **PERM-01**: `AgentPermission` enum — runtime-level permission taxonomy (not tool-level): `.readFiles(paths:)`, `.writeFiles(paths:)`, `.network(domains:)`, `.contacts`, `.calendar`, `.location`, `.camera`, `.microphone`, `.runCommands`, `.delete`, `.all`. Forward-compatible with predicted WWDC27 `AgentSandbox` and macOS permission model.
+- [x] **PERM-02**: `PermissionEngine` upgraded — from tool-level gate to Runtime-level subsystem. All capability invocations (tool calls, memory reads/writes, network requests) route through unified permission check. Existing allow/deny/ask rules preserved. `AgentPermission` taxonomy maps to existing `PermissionRule` system.
 
 ### Simplified Tool Protocol (TOOL-01 to TOOL-03)
 
 - [ ] **TOOL-01**: Simplified `Tool` protocol (~6 core members): `var name: String { get }`, `var description: String { get }`, `associatedtype Input: Codable`, `var inputSchema: JSONSchema { get }`, `func call(_ input: Input) async throws -> ToolOutput`. Forward-compatible with predicted WWDC27 `AgentIntent` auto-discovery pattern. All cross-cutting members (30+ → removed) migrate to `ToolMetadata`.
 - [ ] **TOOL-02**: `ToolMetadata` struct — per-tool operational data separated from protocol: `searchHint`, `isEnabled`, `isReadOnly`, `isConcurrencySafe`, `isDestructive`, `interruptBehavior`, `activityDescription`, `requiresApproval`, `permissionCategory`. Populated via `ToolEngine.register(tool:metadata:)` at registration time.
-- [ ] **TOOL-03**: `ToolOutput` enum replacing `ToolResult` in public API. Cases: `string(String)`, `blocks([ContentBlock])`. `ContentBlock` becomes internal to each ModelProvider — consumers never see wire-format types.
+- [x] **TOOL-03**: `ToolOutput` enum replacing `ToolResult` in public API. Cases: `string(String)`, `blocks([ContentBlock])`. `ContentBlock` becomes internal to each ModelProvider — consumers never see wire-format types.
 
 ### ModelProvider Layer (MODEL-01 to MODEL-05)
 
@@ -34,7 +34,7 @@
 - [ ] **MODEL-02**: `AnthropicProvider` implementing `LanguageModelExecutor` — wraps current `LLMClient` internals. `StreamEvent`, `ContentBlock`, `ContentBlockAccumulator`, `safeParseJSON` become `private` / `internal` to this provider. All Anthropic-specific features (thinking, cache control, tool use, prompt caching) preserved.
 - [ ] **MODEL-03**: `DeepSeekProvider` implementing `LanguageModelExecutor` — single unified code path with internal `APICompatibility` switch (Anthropic-compat `/anthropic/v1/messages` vs OpenAI-compat `/v1/chat/completions`). Replaces dual `DeepSeekProvider` + `DeepSeekClient` paths.
 - [ ] **MODEL-04**: `OpenAIProvider` implementing `LanguageModelExecutor` — full Chat Completions API support. GPT-5.2, GPT-5.2-mini, o4 models. Function calling mapped to tool system. Replaces current stub.
-- [ ] **MODEL-05**: `GenerationChannel` protocol — provider-to-runtime streaming abstraction. Runtime receives typed `SessionEvent` values via `AsyncThrowingStream`, never raw SSE token strings. Abstracts over URLSession async bytes, WebSocket, or callback-based delivery.
+- [x] **MODEL-05**: `GenerationChannel` protocol — provider-to-runtime streaming abstraction. Runtime receives typed `SessionEvent` values via `AsyncThrowingStream`, never raw SSE token strings. Abstracts over URLSession async bytes, WebSocket, or callback-based delivery.
 
 ### Streaming & Structured Output (STREAM-01 to STREAM-02)
 

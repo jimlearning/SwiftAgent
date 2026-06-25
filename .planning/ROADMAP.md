@@ -48,7 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Foundation leaf types: AgentRuntimeError, Transcript, AgentPermission, PermissionEngine protocol, ToolOutput, GenerationChannel (6 requirements)
+- [x] 01-01-PLAN.md — Foundation leaf types: AgentRuntimeError, Transcript, AgentPermission, PermissionEngine protocol, ToolOutput, GenerationChannel (6 requirements)
 - [ ] 01-02-PLAN.md — Provider protocols: LanguageModel, LanguageModelCapabilities, LanguageModelExecutor, MemoryStore, AgentStateProtocol, ToolMetadata (6 requirements)
 
 **Wave 2** *(blocked on Wave 1 completion)*

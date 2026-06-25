@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Roadmap restructured for WWDC27 Agent OS direction; PROJECT.md, REQUIREMENTS.md (29 REQs), ROADMAP.md (4 phases), STATE.md updated
-last_updated: "2026-06-25T03:43:40.939Z"
-last_activity: 2026-06-25 — Roadmap updated for WWDC27 Agent OS direction; 29 requirements mapped across 4 phases
+stopped_at: Completed 01-01-PLAN.md — 5 foundation type files, 2 commits, 6 requirements fulfilled
+last_updated: "2026-06-25T03:53:00.000Z"
+last_activity: 2026-06-25 -- Plan 01-01 completed
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 3
+  completed_plans: 1
+  percent: 33
 ---
 
 # Project State
@@ -21,30 +21,30 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** Models are peripherals, not the CPU — `AgentRuntime` is the architecture's center; every Provider (Model, Memory, Permission) sits behind a protocol
-**Current focus:** Phase 1 (AgentRuntime Core Protocols — 16 requirements, all type-level definitions)
+**Current focus:** Phase 01 — AgentRuntime Core Protocols
 
 ## Current Position
 
-Phase: 1 of 4 (AgentRuntime Core Protocols)
-Plan: 0 of TBD in current phase
-Status: Ready to execute
-Last activity: 2026-06-25 — Roadmap updated for WWDC27 Agent OS direction; 29 requirements mapped across 4 phases
+Phase: 01 (AgentRuntime Core Protocols) — EXECUTING
+Plan: 1 of 3 COMPLETE, advancing to Plan 2
+Status: Executing Phase 01
+Last activity: 2026-06-25 -- Plan 01-01 completed (5 files, 8 types)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: N/A
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: ~6 min
+- Total execution time: 0.1 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. AgentRuntime Core Protocols | TBD | - | - |
+| 1. AgentRuntime Core Protocols | 1/3 | ~6 min | ~6 min |
 | 2. Session, Streaming & Structured Output | TBD | - | - |
 | 3. Provider Implementations | TBD | - | - |
 | 4. Migration, Wiring & Cleanup | TBD | - | - |
@@ -67,6 +67,8 @@ Decision log lives in PROJECT.md Key Decisions table. Recent decisions affecting
 - **Tool → AgentIntent forward compatibility** — simplified `Tool` protocol (~6 members) designed so `AgentIntent` auto-discovery can be layered on without breaking changes
 - **Shadow-mode migration for all consumer cutovers** — old path and new path run simultaneously; output equivalence validated before flag flip
 - All v1 decisions carried forward: LanguageModel protocol, snapshot streaming, wire-format isolation, DeepSeek unification, type-driven output
+- **Plan 01-01 naming deviations:** PermissionEngine protocol -> RuntimePermissionEngine (Swift struct/protocol collision); ToolOutput enum -> ToolOutputValue (existing ToolOutput union); PermissionEngine.swift -> AgentPermission.swift (SPM filename collision); Usage reused from StreamEvent.swift (existing definition)
+- **Plan 01-01 case count:** AgentRuntimeError has 16 cases (per RESEARCH.md) not 15 (plan text had off-by-one)
 
 ### Pending Todos
 
@@ -85,5 +87,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-06-25
-Stopped at: Roadmap restructured for WWDC27 Agent OS direction; PROJECT.md, REQUIREMENTS.md (29 REQs), ROADMAP.md (4 phases), STATE.md updated
+Stopped at: Completed 01-01-PLAN.md — 5 foundation type files, 2 commits, 6 requirements fulfilled. Advancing to 01-02.
 Resume file: None
