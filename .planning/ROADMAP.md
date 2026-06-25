@@ -1,267 +1,134 @@
-# Roadmap: SwiftAgent FoundationModels API Reorganization
+# Roadmap: Forge Agent Runtime
 
-**21 requirements** | **8 phases** | Standard granularity | Parallel execution enabled
+## Overview
 
-## Phase Dependency Graph
+Reorganize SwiftAgent's AI agent API from an Anthropic-specific LLM client into a **model-agnostic Agent Runtime** — an operating system kernel for AI agents where inference models, memory stores, and permission engines are swappable Provider plugins. The architecture targets Apple's FoundationModels WWDC25→26 trajectory and the predicted WWDC27 "Agent OS" direction where the framework splits into FoundationModels (inference only) and AgentKit (agent orchestration, memory, permissions, evaluation).
 
-```
-Phase 1: Foundation Types
-  ↓
-Phase 2: LanguageModelSession
-  ↓
-Phase 3: Simplified Tool Protocol
-  ↓
-┌─────────────────┬─────────────────┐
-Phase 4:           Phase 5:           Phase 6:
-AnthropicExecutor  Other Executors    Streaming & Structured Output
-  ↓                  ↓                  ↓
-└─────────────────┴─────────────────┘
-  ↓
-Phase 7: Tool Migration (depends on 3)
-  ↓
-Phase 8: Consumer Wiring & Cleanup (depends on all)
-```
+The journey proceeds through four phases: defining the AgentRuntime blueprint (all protocols, structs, enums, type-slots for future subsystems), building the runtime core (session loop, snapshot streaming, structured output), implementing all Provider backends (Model + Memory + Permission), and finally migrating 60+ tools, wiring CLI/App consumers, and removing deprecated types.
 
-Phases 4, 5, 6 can run in parallel after Phase 2. Phase 7 can start after Phase 3.
+## Phases
 
----
+**Phase Numbering:**
+- Integer phases (1, 2, 3, 4): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-### Phase 1: Foundation Types
-**Goal:** Define all new public types with zero behavioral change. All 258+ existing tests pass.
-**Mode:** mvp
+Decimal phases appear between their surrounding integers in numeric order.
 
-**Requirements:** API-01, API-02, API-04, API-06, API-21
+- [ ] **Phase 1: AgentRuntime Core Protocols** — All new type-level definitions: AgentRuntime, Providers (Model/Memory/Permission), simplified Tool, AgentProfile, AgentGraph placeholder. Existing code unchanged.
+- [ ] **Phase 2: Session, Streaming & Structured Output** — AgentRuntime loop works end-to-end with mock ModelProvider. Snapshot streaming accumulates correctly. Type-driven output from Codable types.
+- [ ] **Phase 3: Provider Implementations** — Three ModelProviders (Anthropic, DeepSeek unified, OpenAI) + SQLiteMemoryStore + PermissionEngine upgrade. Wire-format isolation enforced.
+- [ ] **Phase 4: Migration, Wiring & Cleanup** — 60+ tools to simplified protocol. CLI + App wired to AgentRuntime. Deprecated types removed. All tests pass.
 
-**Deliverables:**
-- `LanguageModel` protocol in `Sources/SwiftAgentCore/LLM/LanguageModel.swift`
-- `LanguageModelCapabilities` struct replacing dual `ModelInfo` types
-- `LanguageModelError` enum (8 cases)
-- `Transcript` struct with typed entries
-- `AgentProfile` struct
+## Phase Details
 
-**Success Criteria:**
-1. All new types compile and are `Sendable`
-2. Existing `ModelInfo` types marked `@available(*, deprecated)` with migration comment
-3. All 258+ existing tests pass unchanged
-4. New types have unit tests for Codable conformance, Sendable, and equality
+### Phase 1: AgentRuntime Core Protocols
+**Goal**: All new type-level definitions exist in the codebase — AgentRuntime, three Provider protocols (Model, Memory, Permission), simplified Tool, AgentGraph placeholder, unified error taxonomy. Compiling alongside existing code with zero behavioral change. This is the blueprint phase: new types are defined but nothing consumes them yet.
 
-**Critical Pitfalls (from PITFALLS.md):**
-- Do NOT remove old `ModelInfo` types yet — deprecation only
-- `Transcript` entries must map cleanly to existing `ContentBlock` for the transition period
+**Depends on**: Nothing (first phase)
 
----
+**Requirements**: RUNTIME-01, RUNTIME-02, RUNTIME-03, RUNTIME-04, RUNTIME-05, RUNTIME-06, MEM-01, MEM-03, PERM-01, PERM-02, TOOL-01, TOOL-02, TOOL-03, MODEL-01, MODEL-05, GRAPH-01
 
-### Phase 2: LanguageModelSession
-**Goal:** Build the unified public API that replaces `QueryEngine` + `LLMClient` as primary consumer surface.
-**Mode:** mvp
+**Success Criteria** (what must be TRUE):
+  1. `AgentRuntime` actor protocol defined with property slots for all subsystems: `modelProvider`, `memoryStore`, `permissionEngine`, `toolEngine`, `contextManager`, `profileManager`, `graphEngine` (placeholder), `hookSystem`. Central actor is the single consumer entry point replacing `QueryEngine` + `LLMClient`
+  2. `LanguageModel` protocol (ModelProvider interface) defined with `capabilities` property and `respond(to:streamingInto:)` method; `LanguageModelCapabilities` struct unified across Core and App
+  3. `AgentRuntimeError` enum exists with unified cases grouped by subsystem (model, memory, permission, tool, graph errors); replaces fragmented `LLMError` + `DeepSeekError`
+  4. `Transcript` struct with typed entries (`.instruction`, `.prompt`, `.response`, `.toolCall`, `.toolOutput`, `.thinking`, `.system`) defined as canonical conversation history
+  5. `AgentProfile` struct bundling agent identity: `name`, `instructions`, `tools`, `model`, `permissionMode`, `memoryScope`. Forward-compatible with `DynamicProfile`
+  6. `MemoryStore` protocol defined with `store/retrieve/search/summarize/forget` interface; `AgentState` property-wrapper protocol surface reserved (not implemented)
+  7. `AgentPermission` enum (runtime-level: `.readFiles`, `.writeFiles`, `.network`, `.runCommands`, etc.) and upgraded `PermissionEngine` protocol (subsystem-level, not tool-level)
+  8. Simplified `Tool` protocol (~6 members) coexists with existing 30+ member protocol; `ToolMetadata` struct defined; no tool files modified
+  9. `LanguageModelExecutor` protocol (Core internal) and `GenerationChannel` protocol defined as ModelProvider backend contract and streaming abstraction
+  10. `AgentGraph` protocol + `AgentNode` concept defined as type-slots (not implemented) — ordered DAG of AgentNodes, forward-compatible with WWDC27 AgentGraph
+  11. All 258+ existing tests pass without modification — new types are additive, not substitutive
 
-**Requirements:** API-03, API-05, API-14
+**Plans**: TBD
 
-**Deliverables:**
-- `LanguageModelSession` actor with transcript, tool registry, streaming state
-- `SessionEvent` enum (provider-agnostic events)
-- `GenerationChannel` protocol
-- Session-level `respond(to:generating:tools:)` method
+### Phase 2: Session, Streaming & Structured Output
+**Goal**: `AgentRuntime` can run an agent loop end-to-end (with mock ModelProvider), emitting provider-agnostic `SessionEvent` snapshots via `AsyncThrowingStream`. Snapshot streaming accumulates correctly (no double-render). `GenerationSchema` produces JSON schema from Codable types at runtime. The Runtime core works — models and memory providers are mocks, but the orchestration is real.
 
-**Success Criteria:**
-1. Session can accept a prompt and return typed `SessionEvent` values
-2. Transcript accumulates entries correctly across multi-turn conversation
-3. Session can be initialized with `AgentProfile` (name, instructions, tools)
-4. Unit tests for session lifecycle, transcript accumulation, event ordering
-5. No dependency on `QueryEngine` or `LLMClient` in public API surface
+**Depends on**: Phase 1
 
-**Critical Pitfalls:**
-- Actor reentrancy: re-check state after every `await` suspension point
-- Session must handle concurrent `respond()` calls gracefully (reject or queue)
+**Requirements**: STREAM-01, STREAM-02
 
----
+**Success Criteria** (what must be TRUE):
+  1. `AgentRuntime.respond(to:)` completes a turn with mock ModelProvider: prompt appended to Transcript, mock response received, Transcript updated, MemoryStore notified
+  2. `AgentRuntime.streamResponse(to:)` yields `SessionEvent` snapshots via `AsyncThrowingStream`, with correct progressive accumulation (text builds, no duplication)
+  3. `PartiallyGenerated<T>` snapshots diff correctly against previous state — a renderer consuming only snapshots produces identical output to a consumer of raw deltas (shadow-mode validation)
+  4. `GenerationSchema` protocol produces valid JSON schema from a Codable Swift type at runtime (e.g., `BashParams` struct → `{"type":"object","properties":{"command":{"type":"string"}}}`)
+  5. Runtime correctly routes: model calls → ModelProvider, permission checks → PermissionEngine, memory writes → MemoryStore, tool calls → ToolEngine
+  6. All existing tests pass; new test suites cover Runtime agent loop, snapshot accumulation, runtime schema generation, and subsystem routing
 
-### Phase 3: Simplified Tool Protocol
-**Goal:** Reduce `Tool` protocol from 30+ members to ~6. Cross-cutting concerns move to `ToolMetadata`.
+**Plans**: TBD
 
-**Requirements:** API-07, API-08, API-09
+### Phase 3: Provider Implementations
+**Goal**: All three ModelProviders (Anthropic, DeepSeek unified, OpenAI) respond through `LanguageModelExecutor`. AnthropicProvider absorbs LLMClient internals. DeepSeekProvider unifies dual code paths. SQLiteMemoryStore implements MemoryStore protocol. PermissionEngine upgraded to AgentPermission taxonomy. Provider-specific wire types (`ContentBlock`, `StreamEvent`, SSE parsing) are internal to each provider — consumers see only `SessionEvent` values.
 
-**Deliverables:**
-- Simplified `Tool` protocol (name, description, Input associatedtype, inputSchema, call)
-- `ToolMetadata` struct (searchHint, isEnabled, isReadOnly, isConcurrencySafe, isDestructive, etc.)
-- `ToolOutput` enum replacing `ToolResult` in public API
-- `ToolRegistry` updated to accept metadata at registration time
+**Depends on**: Phase 2
 
-**Success Criteria:**
-1. New `Tool` protocol has ≤8 required members (target: 6)
-2. `ToolMetadata` captures all 10+ cross-cutting members from old protocol
-3. Existing tools can be registered with metadata, no tool code changes required
-4. `ToolRegistry.toolDefinitions()` produces valid API-ready definitions from new protocol
-5. All tool-related tests pass or are updated to new API
+**Requirements**: MEM-02, MODEL-02, MODEL-03, MODEL-04
 
-**Critical Pitfalls (P0):**
-- `searchHint` has 55 overrides → must migrate to `ToolMetadata` BEFORE protocol change
-- `isEnabled` (39 overrides) tied to feature flags → gating mechanism must work post-migration
-- `shouldDefer` (33 overrides) → deferral logic preserved in `ToolMetadata.deferBehavior`
+**Success Criteria** (what must be TRUE):
+  1. `AnthropicProvider` translates `Transcript` to Anthropic Messages API format, streams responses through `GenerationChannel` as `SessionEvent` snapshots; all existing Anthropic streaming features (thinking, tool use, cache control) work through the new path
+  2. `DeepSeekProvider` handles both Anthropic-compat and OpenAI-compat endpoints from a single code path (internal `APICompatibility` switch); both paths produce identical `SessionEvent` output for equivalent inputs
+  3. `OpenAIProvider` maps Chat Completions API responses to `SessionEvent` snapshots with function calling support; replaces current stub
+  4. Provider-specific types (`ContentBlock`, `StreamEvent` enum, SSE event parsing logic) confined to `Sources/SwiftAgentCore/AgentRuntime/Providers/` — grep for `StreamEvent` outside the Providers directory returns zero results
+  5. `SQLiteMemoryStore` passes MemoryStore protocol conformance tests: store, retrieve, search (LIKE-based), summarize (heuristic), forget, namespace listing, schema migration
+  6. `PermissionEngine` accepts `AgentPermission` taxonomy and correctly gates tool calls, memory operations, and (simulated) network requests
+  7. All existing tests pass; new Provider test suites verify cross-provider output equivalence (identical Transcript + Tools → semantically identical SessionEvent sequences across all three ModelProviders)
 
----
+**Plans**: TBD
 
-### Phase 4: AnthropicExecutor
-**Goal:** Build first `LanguageModelExecutor` implementation wrapping existing `LLMClient` internals.
+### Phase 4: Migration, Wiring & Cleanup
+**Goal**: All 60+ tools adopt the simplified `Tool` protocol. CLI `ChatCommand` and App `ThreadViewModel` consume `AgentRuntime.shared` as their primary API surface with feature-flag gating and shadow-mode validation. Deprecated types (`LLMClient`, `StreamEvent`, `QueryEngine`, `ProviderRegistry`, dual `ModelInfo`, standalone `DeepSeekClient`) are removed. `MessageNormalizer` adapted to `Transcript` entries. Every existing test passes.
 
-**Requirements:** API-10, API-11
+**Depends on**: Phase 3
 
-**Deliverables:**
-- `LanguageModelExecutor` protocol (Core internal)
-- `AnthropicExecutor` implementing executor protocol
-- `LLMClient`, `LLMStreamParser`, `StreamEvent`, `ContentBlockAccumulator` moved inside executor
+**Requirements**: MIG-01, MIG-02, MIG-03, MIG-04, MIG-05
 
-**Success Criteria:**
-1. `AnthropicExecutor` produces `SessionEvent` values from Anthropic Messages API responses
-2. `safeParseJSON` and `ContentBlockAccumulator` preserved verbatim internally
-3. Streaming works: Claude Opus/Sonnet/Haiku all produce correct events
-4. Thinking/redacted thinking blocks translated correctly
-5. Test suite for executor against recorded API responses (no live API calls)
+**Success Criteria** (what must be TRUE):
+  1. All 60+ tools conform to simplified `Tool` protocol; per-tool metadata (`searchHint` 55 overrides, `isEnabled` 39 overrides, `shouldDefer` 33 overrides) migrated to `ToolEngine` registry without breaking tool search, feature gating, or deferred loading
+  2. CLI `ChatCommand` and App `ThreadViewModel` use `AgentRuntime.shared` for agent interactions; feature flag `AGENT_RUNTIME_ENABLED` gates new path; old `QueryEngine` + `LLMClient` path remains operational in shadow mode until output equivalence validated
+  3. Deprecated types fully removed from the codebase: `LLMClient` (absorbed into AnthropicProvider), `StreamEvent` enum (becomes provider-internal), `LLMStreamParser` (moves to AnthropicProvider), `QueryEngine` (replaced by AgentRuntime), `ProviderRegistry` (replaced by AgentRuntime provider registry), dual `ModelInfo` types (replaced by `LanguageModelCapabilities`), standalone `DeepSeekClient` (replaced by unified `DeepSeekProvider`)
+  4. `MessageNormalizer` (17-pass pipeline) adapted from `[ContentBlock]` → `[Transcript.Entry]` input; normalization behavior identical; validated against recorded API responses
+  5. Zero new `nonisolated(unsafe)` annotations added during migration; the count does not increase from the 3 existing
+  6. All 258+ existing tests pass after cleanup; no test files reference removed types; new test suites for all new types committed and passing
 
-**Critical Pitfalls:**
-- Do NOT rewrite `safeParseJSON` — it handles double-stringified JSON edge cases
-- Thinking block translation: Anthropic → SessionEvent mapping must preserve signature
+**Plans**: TBD
+**UI hint**: yes
 
----
+## Progress
 
-### Phase 5: Other Executors
-**Goal:** Unify DeepSeek into single executor, build OpenAI executor.
-**Mode:** mvp (runs in parallel with Phase 4)
+**Execution Order:**
+Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → runtime → providers → migration)
 
-**Requirements:** API-12, API-13
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. AgentRuntime Core Protocols | 0/TBD | Not started | - |
+| 2. Session, Streaming & Structured Output | 0/TBD | Not started | - |
+| 3. Provider Implementations | 0/TBD | Not started | - |
+| 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
 
-**Deliverables:**
-- `DeepSeekExecutor` — unified single code path replacing dual paths
-- `OpenAIExecutor` — replacing current stub with full implementation
-- Both implement `LanguageModelExecutor` protocol
+## Design Rationale (4-phase vs 8-phase)
 
-**Success Criteria:**
-1. `DeepSeekExecutor` handles both v4-pro and v4-flash models via single code path
-2. `OpenAIExecutor` supports GPT-5.2, GPT-5.2-mini, o4 models
-3. Both executors produce correct `SessionEvent` values
-4. Test suite for each executor against recorded API responses
+The original 8-phase plan split types, tools, executors, streaming, and migration into separate waves with parallel execution. The revised 4-phase structure recognizes the linear dependency chain while combining groups that are architecturally cohesive:
 
-**Critical Pitfalls:**
-- DeepSeek currently has two paths (Anthropic-compat `/anthropic/v1/messages` and standalone `/v1/chat/completions`) — pick ONE canonical path
-- OpenAI o-series models have different API behavior (no system prompt in some modes)
+- **Phase 1 combines all type-level work** (protocols, structs, enums, type-slots). All new types are additive with zero behavioral change — defining them together avoids the risk of defining half a protocol without its dependencies. The AgentRuntime protocol surface reveals the full architecture shape from day one.
+- **Phase 2 builds the Runtime loop + streaming + structured output together.** The Runtime is meaningless without streaming, and `PartiallyGenerated<T>` is the streaming payload. Building them separately creates integration risk. A mock ModelProvider validates the orchestration without waiting for real backends.
+- **Phase 3 implements all Providers together** (Model × 3 + Memory × 1 + Permission upgrade). All share the Provider contracts defined in Phase 1; building Anthropic first proves the contract, then DeepSeek/OpenAI/Memory are simpler additions. Wire-format isolation enforced by directory structure.
+- **Phase 4 is one continuous "land the plane" effort** — tool migration, consumer wiring, deprecated type removal, and MessageNormalizer adaptation. Wiring consumers before tools are migrated creates dead-end integration paths.
+
+## WWDC27 Forward Compatibility
+
+Every Phase 1 type-slot is designed to accept predicted WWDC27 capabilities without breaking changes:
+
+| Phase 1 Type-Slot | WWDC27 Prediction | Migration Path |
+|-------------------|-------------------|----------------|
+| `AgentGraph` protocol | AgentKit WorkflowGraph | Add `GraphEngine` implementation behind existing protocol |
+| `AgentNode` concept | Agent orchestration DAG | Add node types (Planner, Researcher, Coder, Reviewer) |
+| `AgentState` protocol surface | `@AgentState` property-wrapper | Swap Mirror-based runtime for macro when macOS 27+ available |
+| `AgentPermission` enum | macOS AgentSandbox | Map enum cases to system permission dialogs |
+| `MemoryStore` protocol | SemanticMemoryStore / VectorMemoryStore | Add provider implementations behind existing protocol |
+| `Tool` protocol (~6 members) | AgentIntent auto-discovery | `AgentIntent` protocol refines `Tool` with auto-registration |
 
 ---
-
-### Phase 6: Streaming & Structured Output
-**Goal:** Replace token-delta streaming with snapshot streaming. Add type-driven structured output.
-**Mode:** mvp (runs in parallel with Phases 4-5)
-
-**Requirements:** API-15, API-16
-
-**Deliverables:**
-- `PartiallyGenerated<T>` struct for snapshot streaming
-- Runtime schema generation from `Codable` types via `Mirror` + `CodingKeys`
-- `GenerationSchema` protocol for type-driven output
-- Shadow-mode comparison: old token-delta path runs alongside new snapshot path
-
-**Success Criteria:**
-1. `PartiallyGenerated<T>` produces correct incremental snapshots for a `Codable` struct
-2. Runtime schema generation produces valid JSON Schema from `Codable` types
-3. Shadow mode: new snapshot output matches old token-delta output for all 258+ tests
-4. No "HelloHello" double-rendering bug (snapshots not treated as deltas)
-
-**Critical Pitfalls:**
-- The "HelloHello" bug: consumers treating snapshots as deltas → double output
-- Shadow mode required BEFORE cutting over any consumer
-- `Mirror`-based approach may not handle all Codable edge cases (enums with associated values)
-
----
-
-### Phase 7: Tool Migration
-**Goal:** Migrate all 60+ tools to simplified protocol. Metadata extracted without per-tool code changes.
-
-**Requirements:** API-17
-
-**Deliverables:**
-- `ToolMetadata` populated for all 60+ tools in `ToolRegistry`
-- `searchHint` (55), `isEnabled` (39), `shouldDefer` (33) handled first
-- Protocol extension on old `Tool` protocol mapping members to metadata (transitional)
-- All 60+ tools compile and work with new session
-
-**Success Criteria:**
-1. All 60+ tools registered in `ToolRegistry` with complete metadata
-2. `searchHint` values preserved for all 55 overrides
-3. `isEnabled` feature-flag gating works for all 39 overrides
-4. No tool behavior change — only API surface change
-5. Tool-related tests all pass
-
-**Critical Pitfalls:**
-- `getActivityDescription` (12 overrides) — decide: metadata or keep as optional protocol member
-- `getToolUseSummary` (11 overrides) — same decision needed
-- Hook system coupled to `call()` signature — may need adapter during transition
-
----
-
-### Phase 8: Consumer Wiring & Cleanup
-**Goal:** Wire CLI and App to new API, remove deprecated types, all tests pass.
-
-**Requirements:** API-18, API-19, API-20
-
-**Deliverables:**
-- `ChatCommand` (CLI) wired to `LanguageModelSession` (feature-flagged)
-- `AppViewModel` (macOS App) wired to `LanguageModelSession` (feature-flagged)
-- Old types removed: `LLMClient`, `StreamEvent` (public), `LLMStreamParser` (public), `ProviderRegistry`, dual `ModelInfo`
-- Legacy adapter removed with hard deadline
-- All 258+ tests pass, new test suites for all new types
-
-**Success Criteria:**
-1. CLI `--use-new-api` flag enables `LanguageModelSession` path; without flag, old path works
-2. macOS App feature flag gates new session path
-3. No `StreamEvent` reference outside executor implementations
-4. Single `ModelInfo` type (via `LanguageModelCapabilities`)
-5. Single DeepSeek code path
-6. All 258+ existing tests pass + new test suites added
-7. No `LLMClient` public API references remain
-
-**Critical Pitfalls:**
-- Legacy adapter must have a hard removal deadline (not indefinite backward compat)
-- `MessageNormalizer` (17-pass pipeline) operates on `ContentBlock[]` — needs adaptation for `Transcript`
-
----
-
-## Requirement Coverage
-
-| REQ-ID | Phase | Requirement |
-|--------|-------|-------------|
-| API-01 | 1 | LanguageModel protocol |
-| API-02 | 1 | LanguageModelCapabilities |
-| API-03 | 2 | LanguageModelSession |
-| API-04 | 1 | LanguageModelError |
-| API-05 | 2 | SessionEvent |
-| API-06 | 1 | Transcript |
-| API-07 | 3 | Simplified Tool protocol |
-| API-08 | 3 | ToolMetadata |
-| API-09 | 3 | ToolOutput |
-| API-10 | 4 | LanguageModelExecutor protocol |
-| API-11 | 4 | AnthropicExecutor |
-| API-12 | 5 | DeepSeekExecutor |
-| API-13 | 5 | OpenAIExecutor |
-| API-14 | 2 | GenerationChannel |
-| API-15 | 6 | Snapshot streaming |
-| API-16 | 6 | Type-driven structured output |
-| API-17 | 7 | Tool migration (60+ tools) |
-| API-18 | 8 | Consumer wiring |
-| API-19 | 8 | Remove deprecated types |
-| API-20 | 8 | All tests pass |
-| API-21 | 1 | AgentProfile |
-
-**Coverage: 21/21 requirements mapped (100%)**
-
-## Parallel Execution Plan
-
-| Wave | Phases | Dependency |
-|------|--------|------------|
-| Wave 1 | Phase 1 | None |
-| Wave 2 | Phase 2 | Phase 1 |
-| Wave 3 | Phase 3 | Phase 2 |
-| Wave 4 | Phases 4, 5, 6 | Phase 2 (all three in parallel) |
-| Wave 5 | Phase 7 | Phase 3 |
-| Wave 6 | Phase 8 | Phases 4, 5, 6, 7 |
-
----
-*Last updated: 2026-06-25*
+*Last updated: 2026-06-25 — WWDC27 Agent OS direction*

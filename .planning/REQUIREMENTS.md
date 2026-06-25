@@ -1,93 +1,119 @@
-# Requirements: SwiftAgent FoundationModels API Reorganization
+# Requirements: Forge Agent Runtime
 
 ## v1 Requirements
 
-### Core Protocols (API-01 to API-06)
+### AgentRuntime Core (RUNTIME-01 to RUNTIME-06)
 
-- [ ] **API-01**: `LanguageModel` protocol defining model identity, capabilities, and session creation. Model has `capabilities: LanguageModelCapabilities` and creates `LanguageModelSession` instances. Model is `Sendable`, models are plugins.
-- [ ] **API-02**: `LanguageModelCapabilities` struct replacing dual `ModelInfo` types. Fields: `supportsStreaming`, `supportsToolUse`, `supportsThinking`, `supportsVision`, `contextWindow`, `maxOutputTokens`, `providerDisplayName`. Unified across Core and App.
-- [ ] **API-03**: `LanguageModelSession` as unified public API replacing `QueryEngine` + `LLMClient` as primary consumer surface. Owns transcript, tools, streaming state. Method: `respond(to:generating:tools:)` → `AsyncSequence<SessionEvent>`.
-- [ ] **API-04**: `LanguageModelError` enum replacing fragmented `LLMError` + `DeepSeekError`. Cases: `contextSizeExceeded`, `rateLimited(retryAfter:)`, `unauthorized`, `serverError(status:body:)`, `unsupportedCapability`, `timeout`, `invalidResponse`.
-- [ ] **API-05**: `SessionEvent` enum as provider-agnostic streaming events replacing token-level `StreamEvent`. Cases: `responseDelta(text:)`, `thinkingDelta(text:)`, `toolCallRequested(name:id:)`, `toolCallCompleted(id:output:)`, `turnCompleted(usage:)`, `error(SessionError)`.
-- [ ] **API-06**: `Transcript` struct maintaining conversation history as typed entries (`.instruction`, `.prompt`, `.response`, `.toolCall`, `.toolOutput`). Replaces raw `[Message]` / `[ContentBlock]` in public API.
+- [ ] **RUNTIME-01**: `AgentRuntime` as central actor replacing `QueryEngine` + `LLMClient` as the primary consumer API surface. Owns all subsystems: `ModelProvider`, `MemoryStore`, `PermissionEngine`, `ToolEngine`, `ContextManager`, `ProfileManager`, `GraphEngine` (placeholder), `HookSystem`. CLI and App wire to `AgentRuntime.shared`.
+- [ ] **RUNTIME-02**: `LanguageModel` protocol as `ModelProvider` interface. Model has `capabilities: LanguageModelCapabilities` and creates model sessions. Models are plugins — one Provider type among several under AgentRuntime. `Sendable`, actor-safe.
+- [ ] **RUNTIME-03**: `LanguageModelCapabilities` struct replacing dual `ModelInfo` types. Fields: `supportsStreaming`, `supportsToolUse`, `supportsThinking`, `supportsVision`, `contextWindow`, `maxOutputTokens`, `providerDisplayName`. Single source of truth across Core and App.
+- [ ] **RUNTIME-04**: `AgentRuntimeError` enum — unified error type across ALL subsystems. Cases grouped by subsystem: model errors (`rateLimited`, `unauthorized`, `serverError`, `timeout`, `contextSizeExceeded`, `invalidResponse`), memory errors (`storageFull`, `keyNotFound`, `migrationFailed`), permission errors (`denied`, `sandboxViolation`), tool errors (`notFound`, `executionFailed`, `validationFailed`), graph errors (`cycleDetected`, `nodeFailed`).
+- [ ] **RUNTIME-05**: `Transcript` struct — canonical conversation history with typed entries: `.instruction(String)`, `.prompt(String)`, `.response(String)`, `.toolCall(id:name:input:)`, `.toolOutput(id:output:)`, `.thinking(String)`, `.system(String)`. Replaces raw `[Message]` / `[ContentBlock]` in public API. Consumed by `MemoryStore` for persistent memory.
+- [ ] **RUNTIME-06**: `AgentProfile` struct — agent identity bundle: `name: String`, `instructions: String`, `tools: [any Tool]`, `model: any LanguageModel`, `permissionMode: AgentPermission`, `memoryScope: MemoryScope`. Forward-compatible with FoundationModels `DynamicProfile` runtime switching.
 
-### Simplified Tool Protocol (API-07 to API-09)
+### Memory Subsystem (MEM-01 to MEM-03)
 
-- [ ] **API-07**: Simplified `Tool` protocol with ~6 core members: `name: String`, `description: String`, `associatedtype Input: Codable`, `inputSchema: JSONSchema`, `func call(_ input: Input) async throws -> ToolOutput`. All rendering/metadata members move to `ToolMetadata`.
-- [ ] **API-08**: `ToolMetadata` struct holding per-tool operational data: `searchHint`, `isEnabled`, `isReadOnly`, `isConcurrencySafe`, `isDestructive`, `interruptBehavior`, `activityDescription`. Populated via `ToolRegistry` at registration time.
-- [ ] **API-09**: `ToolOutput` enum replacing `ToolResult` in public API. Cases: `string(String)`, `blocks([ContentBlock])`. Content blocks become internal detail of each executor.
+- [ ] **MEM-01**: `MemoryStore` protocol — persistent agent memory interface. Methods: `store(key:namespace:value:) async throws`, `retrieve(key:namespace:) async throws -> MemoryEntry?`, `search(query:namespace:) async throws -> [MemoryEntry]`, `summarize(namespace:) async throws -> String`, `forget(key:namespace:) async throws`, `listNamespace(_:) async throws -> [String]`. Provider-pluggable: SQLite (local), Firestore (cloud), Vector (semantic) implementations.
+- [ ] **MEM-02**: `SQLiteMemoryStore` implementing `MemoryStore` — local persistent storage. Replaces ad-hoc file-based persistence currently in `SwiftAgentStore`. Stores: user preferences, project context, session summaries, tool usage patterns. Schema versioned with migration support.
+- [ ] **MEM-03**: `AgentState` property-wrapper concept — **design only, not implemented**. Protocol surface: `@AgentState<T: Codable>(key:namespace:store:) var value: T` with automatic MemoryStore read/write. Type-slot reserved in MemoryStore protocol for future property-level persistence (mirrors predicted WWDC27 `@AgentState` similar to `@Observable` + SwiftData).
 
-### Executor Layer (API-10 to API-13)
+### Permission Subsystem (PERM-01 to PERM-02)
 
-- [ ] **API-10**: `LanguageModelExecutor` protocol (Core internal) as backend contract. Methods: `func respond(to request: GenerationRequest, streamingInto channel: GenerationChannel) async throws`. Each executor owns its wire format translation.
-- [ ] **API-11**: `AnthropicExecutor` implementing `LanguageModelExecutor`, wrapping current `LLMClient` internals. `StreamEvent`, `ContentBlock`, `ContentBlockAccumulator`, `safeParseJSON` become internal to this executor.
-- [ ] **API-12**: `DeepSeekExecutor` implementing `LanguageModelExecutor`, unifying dual DeepSeek paths (Anthropic-compat + standalone OpenAI-compat). Single executor, single code path.
-- [ ] **API-13**: `OpenAIExecutor` implementing `LanguageModelExecutor`, replacing current stub. Supports GPT/O-series models via OpenAI-compatible API.
+- [ ] **PERM-01**: `AgentPermission` enum — runtime-level permission taxonomy (not tool-level): `.readFiles(paths:)`, `.writeFiles(paths:)`, `.network(domains:)`, `.contacts`, `.calendar`, `.location`, `.camera`, `.microphone`, `.runCommands`, `.delete`, `.all`. Forward-compatible with predicted WWDC27 `AgentSandbox` and macOS permission model.
+- [ ] **PERM-02**: `PermissionEngine` upgraded — from tool-level gate to Runtime-level subsystem. All capability invocations (tool calls, memory reads/writes, network requests) route through unified permission check. Existing allow/deny/ask rules preserved. `AgentPermission` taxonomy maps to existing `PermissionRule` system.
 
-### Streaming Model (API-14 to API-15)
+### Simplified Tool Protocol (TOOL-01 to TOOL-03)
 
-- [ ] **API-14**: `GenerationChannel` protocol for executor-to-session streaming. Session receives typed events, never raw SSE tokens. Channel abstracts over `AsyncThrowingStream` or callback-based delivery.
-- [ ] **API-15**: Snapshot streaming via `PartiallyGenerated<T>` struct. For structured output requests, session emits typed progress snapshots as properties fill in, not raw JSON deltas. Runtime implementation using `Mirror` until `@Generable` macro is available (requires macOS 26+).
+- [ ] **TOOL-01**: Simplified `Tool` protocol (~6 core members): `var name: String { get }`, `var description: String { get }`, `associatedtype Input: Codable`, `var inputSchema: JSONSchema { get }`, `func call(_ input: Input) async throws -> ToolOutput`. Forward-compatible with predicted WWDC27 `AgentIntent` auto-discovery pattern. All cross-cutting members (30+ → removed) migrate to `ToolMetadata`.
+- [ ] **TOOL-02**: `ToolMetadata` struct — per-tool operational data separated from protocol: `searchHint`, `isEnabled`, `isReadOnly`, `isConcurrencySafe`, `isDestructive`, `interruptBehavior`, `activityDescription`, `requiresApproval`, `permissionCategory`. Populated via `ToolEngine.register(tool:metadata:)` at registration time.
+- [ ] **TOOL-03**: `ToolOutput` enum replacing `ToolResult` in public API. Cases: `string(String)`, `blocks([ContentBlock])`. `ContentBlock` becomes internal to each ModelProvider — consumers never see wire-format types.
 
-### Structured Output (API-16)
+### ModelProvider Layer (MODEL-01 to MODEL-05)
 
-- [ ] **API-16**: Type-driven structured output via `GenerationSchema` protocol. `Codable` types conform to produce JSON schema at runtime. Replaces manual `JSONSchema` construction. Forward-compatible with `@Generable` macro when deployment target allows.
+- [ ] **MODEL-01**: `LanguageModelExecutor` protocol (Core internal) — ModelProvider backend contract. Methods: `func respond(to request: ModelRequest, streamingInto channel: GenerationChannel) async throws`. Each executor owns its wire format translation, SSE parsing, and model-specific quirks entirely.
+- [ ] **MODEL-02**: `AnthropicProvider` implementing `LanguageModelExecutor` — wraps current `LLMClient` internals. `StreamEvent`, `ContentBlock`, `ContentBlockAccumulator`, `safeParseJSON` become `private` / `internal` to this provider. All Anthropic-specific features (thinking, cache control, tool use, prompt caching) preserved.
+- [ ] **MODEL-03**: `DeepSeekProvider` implementing `LanguageModelExecutor` — single unified code path with internal `APICompatibility` switch (Anthropic-compat `/anthropic/v1/messages` vs OpenAI-compat `/v1/chat/completions`). Replaces dual `DeepSeekProvider` + `DeepSeekClient` paths.
+- [ ] **MODEL-04**: `OpenAIProvider` implementing `LanguageModelExecutor` — full Chat Completions API support. GPT-5.2, GPT-5.2-mini, o4 models. Function calling mapped to tool system. Replaces current stub.
+- [ ] **MODEL-05**: `GenerationChannel` protocol — provider-to-runtime streaming abstraction. Runtime receives typed `SessionEvent` values via `AsyncThrowingStream`, never raw SSE token strings. Abstracts over URLSession async bytes, WebSocket, or callback-based delivery.
 
-### Migration & Cleanup (API-17 to API-20)
+### Streaming & Structured Output (STREAM-01 to STREAM-02)
 
-- [ ] **API-17**: Migrate all 60+ tools to simplified `Tool` protocol. Each tool's 30+ member overrides mapped to `ToolMetadata` entries via `ToolRegistry`. `searchHint` (55 overrides), `isEnabled` (39), `shouldDefer` (33) handled first.
-- [ ] **API-18**: Wire CLI (`ChatCommand`) and App (`AppViewModel`) to `LanguageModelSession`. Feature-flag gated. Old `QueryEngine` + `LLMClient` path remains until new path stable.
-- [ ] **API-19**: Remove deprecated types after new path validated in production: `LLMClient` (becomes `AnthropicExecutor` internal), `StreamEvent` (becomes executor-internal), `LLMStreamParser` (moves to executor), `ProviderRegistry` (replaced by model registry), dual `ModelInfo` types.
-- [ ] **API-20**: All 258+ existing tests pass after reorganization. Add new test suites for `LanguageModelSession`, each executor, simplified `Tool` protocol, and streaming model before removing old code paths.
+- [ ] **STREAM-01**: `SessionEvent` enum — provider-agnostic streaming events replacing Anthropic-specific `StreamEvent`. Cases: `responseDelta(text:)`, `thinkingDelta(text:)`, `toolCallRequested(id:name:input:)`, `toolCallCompleted(id:output:isError:)`, `turnCompleted(usage:stopReason:)`, `error(AgentRuntimeError)`. No consumer outside `AgentRuntime/Providers/` sees raw model output.
+- [ ] **STREAM-02**: Snapshot streaming via `PartiallyGenerated<T: Codable>` struct. For structured output requests, Runtime emits typed progress snapshots (properties fill in progressively), not raw JSON deltas. Runtime implementation using `Mirror` + `CodingKeys` until macOS 27+ deployment target enables `@Generable` macro. Shadow-mode validation: old delta path and new snapshot path run simultaneously; output equivalence verified before consumer cutover.
 
-### Agent Profile (API-21)
+### AgentGraph Placeholder (GRAPH-01)
 
-- [ ] **API-21**: `AgentProfile` struct bundling agent identity: `name`, `instructions`, `tools`, `model`, `permissionMode`. Maps to FoundationModels `DynamicProfile` concept. Session accepts profile at init, can swap at runtime.
+- [ ] **GRAPH-01**: `AgentGraph` protocol + `AgentNode` concept — **type-slots only, not implemented**. `AgentGraph` = ordered DAG of `AgentNode`s. Each `AgentNode` has: `agent: AgentProfile`, `inputs: [NodeInput]`, `outputs: [NodeOutput]`, `condition: NodeCondition?`. Placeholder for predicted WWDC27 AgentGraph / WorkflowGraph orchestration. Protocol surface designed so AgentRuntime can accept a Graph in a future phase without breaking changes.
+
+### Migration & Cleanup (MIG-01 to MIG-05)
+
+- [ ] **MIG-01**: Migrate all 60+ tools to simplified `Tool` protocol. Per-tool metadata extracted to `ToolMetadata` via `ToolEngine`. `searchHint` (55 overrides), `isEnabled` (39 overrides), `shouldDefer` (33 overrides) migrated first. `ToolUseContext` (70+ fields) decoupled from Tool protocol — remains as internal runtime context.
+- [ ] **MIG-02**: Wire CLI `ChatCommand` and App `ThreadViewModel` to `AgentRuntime.shared`. Feature flag `AGENT_RUNTIME_ENABLED` gates new path. Old `QueryEngine` + `LLMClient` path remains operational until new path validated in shadow mode (both paths run, output compared).
+- [ ] **MIG-03**: Remove deprecated types after shadow-mode validation: `LLMClient` (absorbed into AnthropicProvider), `StreamEvent` enum (becomes executor-internal), `LLMStreamParser` (moves to AnthropicProvider), `QueryEngine` (replaced by AgentRuntime), `ProviderRegistry` (replaced by AgentRuntime provider registry), dual `ModelInfo` types (replaced by `LanguageModelCapabilities`), `DeepSeekClient` standalone path (replaced by `DeepSeekProvider`).
+- [ ] **MIG-04**: All 258+ existing tests pass. New test suites added for new types before old code removal: `AgentRuntimeTests`, `MemoryStoreTests`, `PermissionEngineTests`, `ToolMetadataTests`, `AnthropicProviderTests`, `DeepSeekProviderTests`, `OpenAIProviderTests`, `SessionEventTests`, `PartiallyGeneratedTests`, `AgentProfileTests`, `TranscriptTests`.
+- [ ] **MIG-05**: `MessageNormalizer` (17-pass pipeline) adapted from `[ContentBlock]` input → `[Transcript.Entry]` input. Same normalization logic, new type. Validated against recorded API responses to ensure no behavioral change.
 
 ## v2 Requirements (Deferred)
 
-- `@Generable` / `@Guide` Swift macros for compile-time structured output (requires macOS 26+ deployment target)
-- Apple `SystemLanguageModel` executor (requires macOS 26+)
-- `PrivateCloudComputeLanguageModel` executor (requires macOS 26+)
-- Multi-Agent orchestration / AgentGraph
-- Vision/multimodal support via executor capability
+- `@Generable` / `@Guide` Swift macros for compile-time structured output (requires macOS 27+)
+- Apple `SystemLanguageModel` provider (requires macOS 27+)
+- `PrivateCloudComputeLanguageModel` provider (requires macOS 27+)
+- `AgentGraph` full implementation with `WorkflowGraph` execution engine
+- `@AgentState` property-wrapper full implementation with automatic MemoryStore persistence
+- `AgentIntent` auto-discovery (Tool → Intent automatic registration)
+- Multi-Agent concurrent orchestration via AgentGraph
+- Vision/multimodal support via ModelProvider capability
 - `DynamicProfile` runtime identity switching
 - RAG / Spotlight integration
+- `AgentSandbox` macOS-level sandboxing
+- `AgentProcess` background agent runtime
+- `AgentKit` framework extraction (separate from FoundationModels inference layer)
 
 ## Out of Scope
 
-- Multi-Agent orchestration in the API layer — executor concern, not session primitive (per Cognition/Google guidance)
-- Building `@Generable` Swift macros — use runtime equivalent until deployment target allows
-- On-device Apple model integration — requires macOS 26+
-- Modifying CLI or App UI layer beyond wiring to new API
-- Changing `ToolUseContext` (70+ fields) — separate refactoring phase
-- Modifying MCP, Hooks, or Permissions subsystems
+- `@Generable` Swift macros implementation — use runtime Mirror approach
+- On-device Apple model integration — requires macOS 27+
+- `AgentGraph` execution engine — type-slots only
+- `@AgentState` implementation — protocol design only
+- Multi-Agent concurrent orchestration — AgentGraph placeholder only
+- Vision/multimodal — ModelProvider capability flag only
+- Background Agent (`AgentProcess`) — future phase
+- Modifying CLI or App UI beyond wiring to `AgentRuntime`
+- Changing `ToolUseContext` (70+ fields) internals — decouple from Tool protocol only
 
 ## Traceability
 
 | REQ-ID | Requirement | Phase | Research Source |
 |--------|-------------|-------|-----------------|
-| API-01 | LanguageModel protocol | 1 | STACK.md §2, ARCHITECTURE.md §Boundary Design |
-| API-02 | LanguageModelCapabilities | 1 | FEATURES.md Table Stakes #1 |
-| API-03 | LanguageModelSession | 2 | STACK.md §3, ARCHITECTURE.md §Core Protocols |
-| API-04 | LanguageModelError | 1 | FEATURES.md Table Stakes #4 |
-| API-05 | SessionEvent | 2 | STACK.md §4, FEATURES.md Table Stakes #3 |
-| API-06 | Transcript | 1 | ARCHITECTURE.md §Core Public API |
-| API-07 | Simplified Tool protocol | 3 | FEATURES.md Table Stakes #2, PITFALLS.md §1 |
-| API-08 | ToolMetadata | 3 | PITFALLS.md §1 (searchHint/isEnabled migration) |
-| API-09 | ToolOutput | 3 | ARCHITECTURE.md §Tool protocol |
-| API-10 | LanguageModelExecutor | 4 | ARCHITECTURE.md §Core Internal Bridge |
-| API-11 | AnthropicExecutor | 4 | ARCHITECTURE.md §Per-Provider Executors |
-| API-12 | DeepSeekExecutor | 5 | FEATURES.md Table Stakes #5, PITFALLS.md §8 |
-| API-13 | OpenAIExecutor | 5 | FEATURES.md Table Stakes #6 |
-| API-14 | GenerationChannel | 2 | STACK.md §4, ARCHITECTURE.md §Streaming |
-| API-15 | Snapshot streaming | 6 | FEATURES.md Differentiator #1, PITFALLS.md §2 |
-| API-16 | Type-driven structured output | 6 | FEATURES.md Differentiator #2, STACK.md §6 |
-| API-17 | Tool migration | 7 | PITFALLS.md §1 (55 searchHint, 39 isEnabled, 33 shouldDefer) |
-| API-18 | Consumer wiring | 7 | ARCHITECTURE.md §Migration Strategy |
-| API-19 | Remove deprecated types | 8 | PITFALLS.md §12 (legacy adapter deadline) |
-| API-20 | All tests pass | All | PITFALLS.md §11 (test-first approach) |
-| API-21 | AgentProfile | 1 | FEATURES.md Differentiator #4, AboutAppleFoundationModels.md |
+| RUNTIME-01 | AgentRuntime central actor | 1 | AboutAppleFoundationModels.md AgentRuntime §14, ARCHITECTURE.md |
+| RUNTIME-02 | LanguageModel protocol | 1 | STACK.md §2, AboutAppleFoundationModels.md Model Abstraction §13 |
+| RUNTIME-03 | LanguageModelCapabilities | 1 | FEATURES.md Table Stakes #1 |
+| RUNTIME-04 | AgentRuntimeError | 1 | FEATURES.md Table Stakes #4, PITFALLS.md §9 |
+| RUNTIME-05 | Transcript | 1 | ARCHITECTURE.md Core Public API |
+| RUNTIME-06 | AgentProfile | 1 | AboutAppleFoundationModels.md Dynamic Profile §10 |
+| MEM-01 | MemoryStore protocol | 1 | AboutAppleFoundationModels.md Memory System §8, WWDC27 Prediction §4 |
+| MEM-02 | SQLiteMemoryStore | 3 | STACK.md, AboutAppleFoundationModels.md Memory §8 |
+| MEM-03 | AgentState concept (design) | 1 | AboutAppleFoundationModels.md WWDC27 Prediction §2 |
+| PERM-01 | AgentPermission enum | 1 | AboutAppleFoundationModels.md WWDC27 Prediction §5 |
+| PERM-02 | PermissionEngine upgrade | 1 | PITFALLS.md, AboutAppleFoundationModels.md Permissions |
+| TOOL-01 | Simplified Tool protocol | 1 | FEATURES.md Table Stakes #2, PITFALLS.md §1 |
+| TOOL-02 | ToolMetadata | 1 | PITFALLS.md §1 (searchHint/isEnabled migration) |
+| TOOL-03 | ToolOutput | 1 | ARCHITECTURE.md Tool protocol |
+| MODEL-01 | LanguageModelExecutor protocol | 1 | ARCHITECTURE.md Core Internal Bridge |
+| MODEL-02 | AnthropicProvider | 3 | ARCHITECTURE.md Per-Provider Executors |
+| MODEL-03 | DeepSeekProvider (unified) | 3 | FEATURES.md Table Stakes #5, PITFALLS.md §8 |
+| MODEL-04 | OpenAIProvider | 3 | FEATURES.md Table Stakes #6 |
+| MODEL-05 | GenerationChannel | 1 | STACK.md §4, ARCHITECTURE.md Streaming |
+| STREAM-01 | SessionEvent | 2 | STACK.md §4, FEATURES.md Table Stakes #3 |
+| STREAM-02 | PartiallyGenerated<T> snapshot | 2 | FEATURES.md Differentiator #1, PITFALLS.md §2 |
+| GRAPH-01 | AgentGraph type-slots | 1 | AboutAppleFoundationModels.md WWDC27 Prediction §1 |
+| MIG-01 | Tool migration (60+ tools) | 4 | PITFALLS.md §1 (55 searchHint, 39 isEnabled, 33 shouldDefer) |
+| MIG-02 | Consumer wiring (CLI + App) | 4 | ARCHITECTURE.md Migration Strategy |
+| MIG-03 | Remove deprecated types | 4 | PITFALLS.md §12 (legacy adapter deadline) |
+| MIG-04 | All tests pass + new suites | 4 | PITFALLS.md §11 (test-first approach) |
+| MIG-05 | MessageNormalizer adaptation | 4 | PITFALLS.md §7 |
+
+**Coverage: 29/29 requirements mapped (100%)**
 
 ---
 *Last updated: 2026-06-25*
