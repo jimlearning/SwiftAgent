@@ -121,7 +121,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. AgentRuntime Core Protocols | 3/3 | Complete | 2026-06-25 |
+| 1. AgentRuntime Core Protocols | 3/3 | Complete    | 2026-06-25 |
 | 2. Session, Streaming & Structured Output | 0/TBD | Not started | - |
 | 3. Provider Implementations | 0/TBD | Not started | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
