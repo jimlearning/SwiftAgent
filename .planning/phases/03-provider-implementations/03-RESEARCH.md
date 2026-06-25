@@ -606,27 +606,27 @@ public func retrieve<T: Codable & Sendable>(key: String, namespace: String) asyn
 | A5 | DeepSeek's Anthropic-compat endpoint handles the same request shape as Anthropic's first-party API minus beta headers and cache_control. | DeepSeek Provider | If DeepSeek has additional quirks (different max_tokens behavior, different stop reasons), the AnthropicCompat path needs DeepSeek-specific adjustments. Mitigation: existing LLMClient(baseURL: "https://api.deepseek.com/anthropic") already works in production. |
 | A6 | OpenAI's function calling can be mapped to SessionEvent toolCallRequested/toolCallCompleted without semantic loss. | OpenAI Provider | If OpenAI function calling has semantics that don't map cleanly (e.g., parallel tool calls with different lifecycle), the SessionEvent model may need extension. Mitigation: Phase 1 SessionEvent design already accounts for multi-tool-call turns. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the `SQLiteMemoryStore` live in `SwiftAgentCore` or `SwiftAgentApp`?**
    - What we know: The `RuntimeMemoryStore` protocol is in Core. The existing `MemoryStore` (file-based) is in Core/Storage/. The existing `Database` (SQLite wrapper) is in App/Storage/.
    - What's unclear: Whether Core should have a dependency on SQLite3. Adding `linkedLibrary("sqlite3")` to Core is straightforward, but some module layouts are cleaner if SQLite-dependent code lives in a separate target.
-   - Recommendation: Put SQLiteMemoryStore in Core with a `.linkedLibrary("sqlite3")` linker setting. This keeps the implementation with its protocol. The existing App/Storage/Database.swift can be deprecated later.
+   - RESOLVED: Put SQLiteMemoryStore in Core with a `.linkedLibrary("sqlite3")` linker setting. This keeps the implementation with its protocol. The existing App/Storage/Database.swift can be deprecated later.
 
 2. **How should the `LanguageModel` model identity work across providers?**
    - What we know: `LanguageModelCapabilities` has `providerDisplayName` but no `modelID` field. The Phase 1 design does not include model-specific identification in the capabilities struct. The existing AnthropicProvider has a list of `ModelInfo` with IDs like "claude-sonnet-4-6".
    - What's unclear: Whether the `LanguageModel` protocol needs a `modelID` property for the executor to know which model to call, or whether each provider instance is bound to a single model ID at construction time.
-   - Recommendation: Each provider struct holds its model ID at construction time (e.g., `AnthropicProvider(modelID: "claude-sonnet-4-6", apiKey: ...)`). The `capabilities` property returns model-specific capabilities. The `modelID` is a stored property on the provider, not in `LanguageModelCapabilities`.
+   - RESOLVED: Each provider struct holds its model ID at construction time (e.g., `AnthropicProvider(modelID: "claude-sonnet-4-6", apiKey: ...)`). The `capabilities` property returns model-specific capabilities. The `modelID` is a stored property on the provider, not in `LanguageModelCapabilities`.
 
 3. **Should the AnthropicProvider retain the CC-format request headers (x-stainless-*, anthropic-dangerous-direct-browser-access, metadata.user_id)?**
    - What we know: The current LLMClient sets these headers to match Claude Code's API client identification. They are required for API access with the current key format. Removing them may cause 401/403 errors.
    - What's unclear: Whether the new AnthropicProvider should present as "SwiftAgent" or maintain Claude Code compatibility.
-   - Recommendation: Retain all existing headers and the `claudeCodeBillingHeaderBlock()` system prompt injection verbatim. This is an API compatibility concern, not an architectural one. Can be changed later with API key migration.
+   - RESOLVED: Retain all existing headers and the `claudeCodeBillingHeaderBlock()` system prompt injection verbatim. This is an API compatibility concern, not an architectural one. Can be changed later with API key migration.
 
 4. **How are provider-specific GenerationOptions handled (e.g., OpenAI `response_format`, Anthropic `thinking` budget)?**
    - What we know: `GenerationOptions` has `maxTokens`, `temperature`, `reasoningBudget`, and `stream` fields. These are provider-agnostic. The existing LLMClient.ts has Anthropic-specific thinking config (`adaptive`, `enabled(budget)`, `disabled`).
    - What's unclear: Whether additional provider-specific options need to thread through `GenerationOptions` or stay internal to each provider.
-   - Recommendation: `GenerationOptions.reasoningBudget` maps to Anthropic `thinking.budget_tokens` and OpenAI `reasoning_effort`. Provider-specific options that have no cross-provider equivalent (e.g., Anthropic `output_config.effort`, OpenAI `response_format`) are configured at provider construction time, not per-request.
+   - RESOLVED: `GenerationOptions.reasoningBudget` maps to Anthropic `thinking.budget_tokens` and OpenAI `reasoning_effort`. Provider-specific options that have no cross-provider equivalent (e.g., Anthropic `output_config.effort`, OpenAI `response_format`) are configured at provider construction time, not per-request.
 
 ## Environment Availability
 
