@@ -49,7 +49,7 @@ Plans:
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Foundation leaf types: AgentRuntimeError, Transcript, AgentPermission, PermissionEngine protocol, ToolOutput, GenerationChannel (6 requirements)
-- [ ] 01-02-PLAN.md — Provider protocols: LanguageModel, LanguageModelCapabilities, LanguageModelExecutor, MemoryStore, AgentStateProtocol, ToolMetadata (6 requirements)
+- [x] 01-02-PLAN.md — Provider protocols: LanguageModel, LanguageModelCapabilities, LanguageModelExecutor, MemoryStore, AgentStateProtocol, ToolMetadata (6 requirements)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -121,7 +121,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. AgentRuntime Core Protocols | 0/3 | Planned | - |
+| 1. AgentRuntime Core Protocols | 2/3 | In Progress|  |
 | 2. Session, Streaming & Structured Output | 0/TBD | Not started | - |
 | 3. Provider Implementations | 0/TBD | Not started | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
