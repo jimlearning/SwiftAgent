@@ -1,4 +1,4 @@
-# Roadmap: Forge Agent Runtime
+# Roadmap: SwiftAgent Agent Runtime
 
 ## Overview
 
@@ -41,7 +41,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   10. `AgentGraph` protocol + `AgentNode` concept defined as type-slots (not implemented) — ordered DAG of AgentNodes, forward-compatible with WWDC27 AgentGraph
   11. All 258+ existing tests pass without modification — new types are additive, not substitutive
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Foundation leaf types: AgentRuntimeError, Transcript, AgentPermission, PermissionEngine protocol, ToolOutput, GenerationChannel (6 requirements)
+- [ ] 01-02-PLAN.md — Provider protocols: LanguageModel, LanguageModelCapabilities, LanguageModelExecutor, MemoryStore, AgentStateProtocol, ToolMetadata (6 requirements)
+- [ ] 01-03-PLAN.md — Top-level agent types: AgentTool protocol, AgentProfile, AgentGraph type-slots, AgentRuntime actor protocol (4 requirements)
 
 ### Phase 2: Session, Streaming & Structured Output
 **Goal**: `AgentRuntime` can run an agent loop end-to-end (with mock ModelProvider), emitting provider-agnostic `SessionEvent` snapshots via `AsyncThrowingStream`. Snapshot streaming accumulates correctly (no double-render). `GenerationSchema` produces JSON schema from Codable types at runtime. The Runtime core works — models and memory providers are mocks, but the orchestration is real.
@@ -103,7 +108,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. AgentRuntime Core Protocols | 0/TBD | Not started | - |
+| 1. AgentRuntime Core Protocols | 0/3 | Planned | - |
 | 2. Session, Streaming & Structured Output | 0/TBD | Not started | - |
 | 3. Provider Implementations | 0/TBD | Not started | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
@@ -131,4 +136,4 @@ Every Phase 1 type-slot is designed to accept predicted WWDC27 capabilities with
 | `Tool` protocol (~6 members) | AgentIntent auto-discovery | `AgentIntent` protocol refines `Tool` with auto-registration |
 
 ---
-*Last updated: 2026-06-25 — WWDC27 Agent OS direction*
+*Last updated: 2026-06-25 — Phase 1 planned (3 plans, 16 requirements)*
