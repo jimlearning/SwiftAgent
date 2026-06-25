@@ -3,8 +3,26 @@ import Foundation
 // MARK: - Placeholder Subsystem Protocols
 
 /// Tool registry and execution engine.
-/// Placeholder protocol — full definition in Phase 2.
-public protocol ToolEngine: Sendable { }
+///
+/// All methods are `async` to support actor-based implementations
+/// (e.g., DefaultToolEngine). The protocol itself remains `Sendable`
+/// rather than `Actor`-constrained so concrete types can choose
+/// actor or non-actor storage.
+public protocol ToolEngine: Sendable {
+    /// Register a tool with its metadata.
+    func register(tool: any RuntimeAgentTool, metadata: ToolMetadata) async
+
+    /// Retrieve the normalized definition for a tool by name.
+    func getDefinition(name: String) async -> RuntimeToolDefinition?
+
+    /// Retrieve all registered tool definitions for passing to an executor.
+    func getAllDefinitions() async -> [RuntimeToolDefinition]
+
+    /// Execute a tool by name with JSON-encoded input data.
+    /// Returns the tool's output. Throws AgentRuntimeError if tool not found
+    /// or execution fails.
+    func execute(name: String, input: Data) async throws -> ToolOutputValue
+}
 
 /// Context window management and compaction.
 ///
