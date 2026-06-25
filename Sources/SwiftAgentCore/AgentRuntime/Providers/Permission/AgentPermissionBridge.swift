@@ -74,9 +74,16 @@ public struct AgentPermissionBridge: RuntimePermissionEngine, Sendable {
             return mode == .plan
 
         case .contacts, .calendar, .location, .camera, .microphone, .delete:
-            // Deny-by-default for unestablished permissions.
-            // These have no corresponding rules in the existing PermissionEngine.
-            return false
+            // Route through PermissionEngine so rules can be configured for these.
+            // Without matching rules, PermissionEngine denies by default (same as before),
+            // but now operators can add rules to selectively grant them.
+            let verdict = await engine.check(
+                toolName: permission.toolName,
+                input: [:],
+                mode: mode,
+                context: .default
+            )
+            return verdict.decision == .allow
         }
     }
 }

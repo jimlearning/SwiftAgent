@@ -47,6 +47,24 @@ public enum AgentPermission: Sendable, CaseIterable {
     /// Plan-only mode — no mutations allowed.
     case plan
 
+    /// Tool name used when routing this permission through the PermissionEngine.
+    /// Allows operators to configure per-tool rules for each permission category.
+    public var toolName: String {
+        switch self {
+        case .runCommands: return "Bash"
+        case .readFiles: return "Read"
+        case .writeFiles: return "Write"
+        case .network: return "WebFetch"
+        case .contacts: return "Contacts"
+        case .calendar: return "Calendar"
+        case .location: return "Location"
+        case .camera: return "Camera"
+        case .microphone: return "Microphone"
+        case .delete: return "Delete"
+        case .all, .default, .plan: return ""
+        }
+    }
+
     /// Manual CaseIterable conformance required because cases with
     /// associated values cannot be auto-synthesized. Associated-value
     /// cases return empty sets in allCases.
