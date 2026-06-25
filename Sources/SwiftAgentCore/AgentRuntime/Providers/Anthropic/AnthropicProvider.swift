@@ -93,7 +93,52 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
         options: GenerationOptions,
         streamingInto channel: GenerationChannel
     ) async throws {
-        // Stub — wired in Task 2
-        await channel.fail(with: .invalidResponse(reason: "Not yet implemented"))
+        let request = AnthropicRequestBuilder.build(
+            transcript: transcript,
+            tools: tools,
+            options: options,
+            systemPrompt: nil,
+            apiKey: apiKey,
+            baseURL: baseURL,
+            modelID: modelID
+        )
+
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                await channel.fail(with: .serverError(statusCode: status, body: nil))
+                return
+            }
+
+            // Convert URLSession.AsyncBytes.lines to AsyncStream<String> for the parser
+            let lineStream = AsyncStream<String> { continuation in
+                Task {
+                    do {
+                        for try await line in bytes.lines {
+                            if Task.isCancelled { break }
+                            continuation.yield(line)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish()
+                    }
+                }
+            }
+
+            let parser = AnthropicSSEParser()
+            try await parser.parse(lines: lineStream, channel: channel)
+        } catch let error as AgentRuntimeError {
+            await channel.fail(with: error)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorTimedOut {
+                await channel.fail(with: .timeout)
+            } else {
+                await channel.fail(with: .serverError(statusCode: 0, body: error.localizedDescription))
+            }
+        }
     }
 }
