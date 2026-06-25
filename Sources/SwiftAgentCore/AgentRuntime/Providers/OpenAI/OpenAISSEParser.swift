@@ -139,16 +139,17 @@ actor OpenAISSEParser {
                 continue
             }
 
-            let argsData = acc.argumentsBuffer.data(using: .utf8) ?? Data()
-
-            // Validate arguments JSON (T-03-13: malformed inputs at finish_reason still emitted)
-            if let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any],
-               let encoded = try? JSONSerialization.data(withJSONObject: parsed) {
-                results.append((id, name, encoded))
+            // Use safeParseJSON for robustness against double-stringified arguments
+            // (T-03-13: malformed inputs at finish_reason still emitted as empty dict)
+            let parsed = AnthropicContentAccumulator.safeParseJSON(acc.argumentsBuffer)
+            let input: [String: Any]
+            if let dict = parsed as? [String: Any] {
+                input = dict
             } else {
-                // Emit raw arguments string as best-effort
-                results.append((id, name, argsData))
+                input = [:]
             }
+            let data = (try? JSONSerialization.data(withJSONObject: input)) ?? Data()
+            results.append((id, name, data))
         }
 
         return results
