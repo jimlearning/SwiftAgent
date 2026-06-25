@@ -102,7 +102,15 @@ Plans:
   6. `PermissionEngine` accepts `AgentPermission` taxonomy and correctly gates tool calls, memory operations, and (simulated) network requests
   7. All existing tests pass; new Provider test suites verify cross-provider output equivalence (identical Transcript + Tools → semantically identical SessionEvent sequences across all three ModelProviders)
 
-**Plans**: 3 plans
+**Plans**: 4 plans
+
+Plans:
+**Wave 1** *(all plans independent — zero file overlap)*
+
+- [ ] 03-01-PLAN.md — AnthropicProvider: absorbs LLMClient internals, Transcript→Anthropic Messages API, SSE→SessionEvent parsing (MODEL-02)
+- [ ] 03-02-PLAN.md — DeepSeekProvider: unified dual-path with APICompatibility switch, Anthropic+OpenAI compat endpoints (MODEL-03)
+- [ ] 03-03-PLAN.md — OpenAIProvider: Chat Completions API with function calling, multi-chunk tool accumulation, o4 reasoning (MODEL-04)
+- [ ] 03-04-PLAN.md — SQLiteMemoryStore + AgentPermissionBridge: persistent SQLite3 storage, AgentPermission→PermissionEngine adapter (MEM-02)
 
 ### Phase 4: Migration, Wiring & Cleanup
 
@@ -133,7 +141,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 |-------|----------------|--------|-----------|
 | 1. AgentRuntime Core Protocols | 3/3 | Complete    | 2026-06-25 |
 | 2. Session, Streaming & Structured Output | 3/3 | Complete    | 2026-06-25 |
-| 3. Provider Implementations | 0/TBD | Not started | - |
+| 3. Provider Implementations | 0/4 | Planned | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
 
 ## Design Rationale (4-phase vs 8-phase)
@@ -160,3 +168,4 @@ Every Phase 1 type-slot is designed to accept predicted WWDC27 capabilities with
 
 ---
 *Last updated: 2026-06-25 — Phase 1 complete, Phase 2 complete (6 plans, 18 requirements fulfilled)*
+*Phase 3 planned — 4 plans covering 4 requirements (MEM-02, MODEL-02, MODEL-03, MODEL-04)*
