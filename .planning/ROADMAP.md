@@ -9,6 +9,7 @@ The journey proceeds through four phases: defining the AgentRuntime blueprint (a
 ## Phases
 
 **Phase Numbering:**
+
 - Integer phases (1, 2, 3, 4): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
@@ -22,6 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: AgentRuntime Core Protocols
+
 **Goal**: All new type-level definitions exist in the codebase — AgentRuntime, three Provider protocols (Model, Memory, Permission), simplified Tool, AgentGraph placeholder, unified error taxonomy. Compiling alongside existing code with zero behavioral change. This is the blueprint phase: new types are defined but nothing consumes them yet.
 
 **Depends on**: Nothing (first phase)
@@ -29,6 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Requirements**: RUNTIME-01, RUNTIME-02, RUNTIME-03, RUNTIME-04, RUNTIME-05, RUNTIME-06, MEM-01, MEM-03, PERM-01, PERM-02, TOOL-01, TOOL-02, TOOL-03, MODEL-01, MODEL-05, GRAPH-01
 
 **Success Criteria** (what must be TRUE):
+
   1. `AgentRuntime` actor protocol defined with property slots for all subsystems: `modelProvider`, `memoryStore`, `permissionEngine`, `toolEngine`, `contextManager`, `profileManager`, `graphEngine` (placeholder), `hookSystem`. Central actor is the single consumer entry point replacing `QueryEngine` + `LLMClient`
   2. `LanguageModel` protocol (ModelProvider interface) defined with `capabilities` property and `respond(to:streamingInto:)` method; `LanguageModelCapabilities` struct unified across Core and App
   3. `AgentRuntimeError` enum exists with unified cases grouped by subsystem (model, memory, permission, tool, graph errors); replaces fragmented `LLMError` + `DeepSeekError`
@@ -42,13 +45,18 @@ Decimal phases appear between their surrounding integers in numeric order.
   11. All 258+ existing tests pass without modification — new types are additive, not substitutive
 
 **Plans**: 3 plans
-
 Plans:
+**Wave 1**
+
 - [ ] 01-01-PLAN.md — Foundation leaf types: AgentRuntimeError, Transcript, AgentPermission, PermissionEngine protocol, ToolOutput, GenerationChannel (6 requirements)
 - [ ] 01-02-PLAN.md — Provider protocols: LanguageModel, LanguageModelCapabilities, LanguageModelExecutor, MemoryStore, AgentStateProtocol, ToolMetadata (6 requirements)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 01-03-PLAN.md — Top-level agent types: AgentTool protocol, AgentProfile, AgentGraph type-slots, AgentRuntime actor protocol (4 requirements)
 
 ### Phase 2: Session, Streaming & Structured Output
+
 **Goal**: `AgentRuntime` can run an agent loop end-to-end (with mock ModelProvider), emitting provider-agnostic `SessionEvent` snapshots via `AsyncThrowingStream`. Snapshot streaming accumulates correctly (no double-render). `GenerationSchema` produces JSON schema from Codable types at runtime. The Runtime core works — models and memory providers are mocks, but the orchestration is real.
 
 **Depends on**: Phase 1
@@ -56,6 +64,7 @@ Plans:
 **Requirements**: STREAM-01, STREAM-02
 
 **Success Criteria** (what must be TRUE):
+
   1. `AgentRuntime.respond(to:)` completes a turn with mock ModelProvider: prompt appended to Transcript, mock response received, Transcript updated, MemoryStore notified
   2. `AgentRuntime.streamResponse(to:)` yields `SessionEvent` snapshots via `AsyncThrowingStream`, with correct progressive accumulation (text builds, no duplication)
   3. `PartiallyGenerated<T>` snapshots diff correctly against previous state — a renderer consuming only snapshots produces identical output to a consumer of raw deltas (shadow-mode validation)
@@ -66,6 +75,7 @@ Plans:
 **Plans**: TBD
 
 ### Phase 3: Provider Implementations
+
 **Goal**: All three ModelProviders (Anthropic, DeepSeek unified, OpenAI) respond through `LanguageModelExecutor`. AnthropicProvider absorbs LLMClient internals. DeepSeekProvider unifies dual code paths. SQLiteMemoryStore implements MemoryStore protocol. PermissionEngine upgraded to AgentPermission taxonomy. Provider-specific wire types (`ContentBlock`, `StreamEvent`, SSE parsing) are internal to each provider — consumers see only `SessionEvent` values.
 
 **Depends on**: Phase 2
@@ -73,6 +83,7 @@ Plans:
 **Requirements**: MEM-02, MODEL-02, MODEL-03, MODEL-04
 
 **Success Criteria** (what must be TRUE):
+
   1. `AnthropicProvider` translates `Transcript` to Anthropic Messages API format, streams responses through `GenerationChannel` as `SessionEvent` snapshots; all existing Anthropic streaming features (thinking, tool use, cache control) work through the new path
   2. `DeepSeekProvider` handles both Anthropic-compat and OpenAI-compat endpoints from a single code path (internal `APICompatibility` switch); both paths produce identical `SessionEvent` output for equivalent inputs
   3. `OpenAIProvider` maps Chat Completions API responses to `SessionEvent` snapshots with function calling support; replaces current stub
@@ -84,6 +95,7 @@ Plans:
 **Plans**: TBD
 
 ### Phase 4: Migration, Wiring & Cleanup
+
 **Goal**: All 60+ tools adopt the simplified `Tool` protocol. CLI `ChatCommand` and App `ThreadViewModel` consume `AgentRuntime.shared` as their primary API surface with feature-flag gating and shadow-mode validation. Deprecated types (`LLMClient`, `StreamEvent`, `QueryEngine`, `ProviderRegistry`, dual `ModelInfo`, standalone `DeepSeekClient`) are removed. `MessageNormalizer` adapted to `Transcript` entries. Every existing test passes.
 
 **Depends on**: Phase 3
@@ -91,6 +103,7 @@ Plans:
 **Requirements**: MIG-01, MIG-02, MIG-03, MIG-04, MIG-05
 
 **Success Criteria** (what must be TRUE):
+
   1. All 60+ tools conform to simplified `Tool` protocol; per-tool metadata (`searchHint` 55 overrides, `isEnabled` 39 overrides, `shouldDefer` 33 overrides) migrated to `ToolEngine` registry without breaking tool search, feature gating, or deferred loading
   2. CLI `ChatCommand` and App `ThreadViewModel` use `AgentRuntime.shared` for agent interactions; feature flag `AGENT_RUNTIME_ENABLED` gates new path; old `QueryEngine` + `LLMClient` path remains operational in shadow mode until output equivalence validated
   3. Deprecated types fully removed from the codebase: `LLMClient` (absorbed into AnthropicProvider), `StreamEvent` enum (becomes provider-internal), `LLMStreamParser` (moves to AnthropicProvider), `QueryEngine` (replaced by AgentRuntime), `ProviderRegistry` (replaced by AgentRuntime provider registry), dual `ModelInfo` types (replaced by `LanguageModelCapabilities`), standalone `DeepSeekClient` (replaced by unified `DeepSeekProvider`)
