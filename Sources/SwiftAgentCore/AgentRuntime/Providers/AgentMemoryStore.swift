@@ -13,6 +13,22 @@ public struct RuntimeMemoryEntry: Sendable, Codable {
     public let createdAt: Date
     public let updatedAt: Date
     public let metadata: [String: String]
+
+    public init(
+        key: String,
+        namespace: String,
+        value: Data,
+        createdAt: Date,
+        updatedAt: Date,
+        metadata: [String: String]
+    ) {
+        self.key = key
+        self.namespace = namespace
+        self.value = value
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.metadata = metadata
+    }
 }
 
 // MARK: - RuntimeMemoryStore
