@@ -880,6 +880,14 @@ public struct ToolUseContext: Sendable {
     }
 }
 
+extension ToolUseContext {
+    /// Default context for permission checks and simple operations.
+    public static let `default` = ToolUseContext(
+        workingDirectory: FileManager.default.currentDirectoryPath,
+        sessionID: "default"
+    )
+}
+
 // MARK: - ToolUseContext Supporting Types
 
 /// A recorded tool permission decision. Matches CC's toolDecisions map value.
