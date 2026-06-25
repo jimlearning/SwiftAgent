@@ -90,4 +90,15 @@ public protocol AgentRuntime: Actor {
 
     /// Hook system for lifecycle events.
     var hookSystem: any RuntimeHookSystem { get }
+
+    /// Run a single conversation turn with the given prompt.
+    /// Appends prompt to transcript, invokes the model, processes tool calls,
+    /// and updates the memory store. Returns the updated transcript.
+    func respond(to prompt: String) async throws -> Transcript
+
+    /// Stream a conversation turn, yielding SessionEvent values progressively.
+    /// Each event is a provider-agnostic snapshot of the current state.
+    /// The consumer iterates `for try await event in stream` to receive
+    /// text deltas, tool calls, and turn completion.
+    func streamResponse(to prompt: String) -> AsyncThrowingStream<SessionEvent, Error>
 }
