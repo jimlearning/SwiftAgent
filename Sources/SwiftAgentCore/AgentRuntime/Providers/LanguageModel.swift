@@ -44,3 +44,22 @@ public struct LanguageModelCapabilities: Sendable, Equatable {
         self.providerDisplayName = providerDisplayName
     }
 }
+
+// MARK: - LanguageModel
+
+/// Model provider interface. Every inference backend conforms to this.
+/// Mirrors Apple's FoundationModels `LanguageModel` protocol.
+///
+/// Model providers hold configuration (API key, base URL, model ID)
+/// but not mutable runtime state — hence `Sendable`, not Actor.
+public protocol LanguageModel: Sendable {
+    /// Declared capabilities of this model.
+    var capabilities: LanguageModelCapabilities { get }
+
+    /// Human-readable display name for UI.
+    var displayName: String { get }
+
+    /// Create an executor for this model. Called by AgentRuntime
+    /// when a session needs to perform inference.
+    func makeExecutor() -> any LanguageModelExecutor
+}
