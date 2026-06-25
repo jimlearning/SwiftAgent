@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md — 2 new files (SubsystemStubs.swift, MockProviders.swift), 1 protocol updated (ToolEngine), 1 Phase 1 fix (RuntimeMemoryEntry public init), 2 commits. Phase 2 plan 2/3 complete.
-last_updated: "2026-06-25T10:03:11Z"
-last_activity: 2026-06-25 -- Phase 02-02 completed
+stopped_at: Completed 02-03-PLAN.md — AgentRuntimeImpl actor with agent loop, subsystem routing, reentrancy guard, CollectingChannel, 8 integration tests. 7 files total (2 created, 5 modified), 3 commits. Phase 2 complete (3/3 plans).
+last_updated: "2026-06-25T10:15:38Z"
+last_activity: 2026-06-25 -- Phase 02-03 completed (Phase 2 fully complete)
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 100
 ---
 
 # Project State
@@ -25,27 +25,27 @@ See: .planning/PROJECT.md (updated 2026-06-25)
 
 ## Current Position
 
-Phase: 02 (Session, Streaming & Structured Output) — EXECUTING
-Plan: 3 of 3
-Status: Executing Phase 02
-Last activity: 2026-06-25 -- Phase 02-02 completed
+Phase: 02 (Session, Streaming & Structured Output) — COMPLETE
+Next Phase: 03 (Provider Implementations) — PLANNING
+Status: Phase 02 complete — AgentRuntimeImpl actor works with mock providers
+Last activity: 2026-06-25 -- Phase 02-03 completed
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100% (all 6 planned plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 5
-- Average duration: ~7 min
-- Total execution time: 0.5 hours
+- Total plans completed: 6
+- Average duration: ~8 min
+- Total execution time: 0.7 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. AgentRuntime Core Protocols | 3/3 | ~24 min | ~8 min |
-| 2. Session, Streaming & Structured Output | 2/3 | ~14 min | ~7 min |
+| 2. Session, Streaming & Structured Output | 3/3 | ~24 min | ~8 min |
 | 3. Provider Implementations | TBD | - | - |
 | 4. Migration, Wiring & Cleanup | TBD | - | - |
 
@@ -56,6 +56,7 @@ Progress: [████████░░] 83%
 - 01-03: ~10 min (top-level Agent types, 4 naming collisions auto-fixed)
 - 02-01: ~10 min (streaming types, 2 decisions)
 - 02-02: ~4 min (subsystem stubs + mock providers, 2 deviations auto-fixed)
+- 02-03: ~10 min (AgentRuntimeImpl agent loop, 3 deviations auto-fixed)
 
 *Updated after each plan completion*
 | Phase 01-agentruntime-core-protocols P01 | 6 | 2 tasks | 5 files |
@@ -63,6 +64,7 @@ Progress: [████████░░] 83%
 | Phase 01-agentruntime-core-protocols P03 | 10 | 3 tasks | 4 files |
 | Phase 02-session-streaming-structured-output P01 | 10 | 3 tasks | 5 files |
 | Phase 02-session-streaming-structured-output P02 | 4 | 2 tasks | 4 files |
+| Phase 02-session-streaming-structured-output P03 | 10 | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -91,6 +93,9 @@ Decision log lives in PROJECT.md Key Decisions table. Recent decisions affecting
 - [Plan 02-02]: All ToolEngine protocol methods made async to support actor-based implementations (DefaultToolEngine). Protocol remains Sendable, not Actor-constrained, so struct-based engines can also conform.
 - [Plan 02-02]: DefaultToolEngine.execute returns stubbed string output in Phase 2; type-safe execution path with permission gating deferred to Phase 3.
 - [Plan 02-02]: RuntimeMemoryEntry given public init (missing from Phase 1) — minimal addition that doesn't change the protocol contract, needed by test target.
+- [Plan 02-03]: RuntimeGenerationChannel.complete() no longer calls continuation.finish() — the agent loop owns the finish decision, enabling multi-iteration tool-call loops through the same stream continuation.
+- [Plan 02-03]: ToolOutputValue gained stringValue computed property — needed for constructing .toolOutput transcript entries during tool execution.
+- [Plan 02-03]: Transcript and Entry gained Codable conformance — required for RuntimeMemoryStore.store(key:namespace:value:) which accepts T: Codable.
 
 ### Pending Todos
 
@@ -108,6 +113,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-25T10:03:11Z
-Stopped at: Completed 02-02-PLAN.md — 2 new files (SubsystemStubs.swift, MockProviders.swift), 2 modified files (AgentRuntime.swift, AgentMemoryStore.swift), 2 commits. Phase 2 plan 2/3 complete. 8 new symbols (4 stubs + 4 mocks + 1 inner type).
+Last session: 2026-06-25T10:15:38Z
+Stopped at: Completed 02-03-PLAN.md — AgentRuntimeImpl actor with agent loop (271 lines), CollectingChannel (private actor), 8 integration tests. 7 files total (2 created: AgentRuntimeImpl.swift, AgentRuntimeImplTests.swift; 5 modified: AgentRuntime.swift, RuntimeGenerationChannel.swift, ToolOutputValue.swift, Transcript.swift, Phase2StreamingTests.swift). 3 commits. Phase 2 complete (3/3 plans). All 6 planned plans across Phase 1 and 2 completed.
 Resume file: None

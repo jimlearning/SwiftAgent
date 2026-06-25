@@ -16,7 +16,7 @@ The journey proceeds through four phases: defining the AgentRuntime blueprint (a
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: AgentRuntime Core Protocols** — All new type-level definitions: AgentRuntime, Providers (Model/Memory/Permission), simplified Tool, AgentProfile, AgentGraph placeholder. Existing code unchanged.
-- [ ] **Phase 2: Session, Streaming & Structured Output** — AgentRuntime loop works end-to-end with mock ModelProvider. Snapshot streaming accumulates correctly. Type-driven output from Codable types.
+- [x] **Phase 2: Session, Streaming & Structured Output** — AgentRuntime loop works end-to-end with mock ModelProvider. Snapshot streaming accumulates correctly. Type-driven output from Codable types.
 - [ ] **Phase 3: Provider Implementations** — Three ModelProviders (Anthropic, DeepSeek unified, OpenAI) + SQLiteMemoryStore + PermissionEngine upgrade. Wire-format isolation enforced.
 - [ ] **Phase 4: Migration, Wiring & Cleanup** — 60+ tools to simplified protocol. CLI + App wired to AgentRuntime. Deprecated types removed. All tests pass.
 
@@ -78,11 +78,11 @@ Plans:
 **Wave 1**
 
 - [x] 02-01-PLAN.md — Core streaming types: SessionEvent, PartiallyGenerated, GenerationSchema, RuntimeGenerationChannel
-- [ ] 02-02-PLAN.md — Subsystem stubs (DefaultToolEngine, NoOp stubs) + Mock providers (MockLanguageModel, MockMemoryStore, MockPermissionEngine)
+- [x] 02-02-PLAN.md — Subsystem stubs (DefaultToolEngine, NoOp stubs) + Mock providers (MockLanguageModel, MockMemoryStore, MockPermissionEngine)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-03-PLAN.md — AgentRuntimeImpl actor: agent loop, subsystem routing, reentrancy guard, integration tests
+- [x] 02-03-PLAN.md — AgentRuntimeImpl actor: agent loop, subsystem routing, reentrancy guard, integration tests
 
 ### Phase 3: Provider Implementations
 
@@ -132,7 +132,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. AgentRuntime Core Protocols | 3/3 | Complete    | 2026-06-25 |
-| 2. Session, Streaming & Structured Output | 1/3 | Executing | - |
+| 2. Session, Streaming & Structured Output | 3/3 | Complete    | 2026-06-25 |
 | 3. Provider Implementations | 0/TBD | Not started | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
 
@@ -159,4 +159,4 @@ Every Phase 1 type-slot is designed to accept predicted WWDC27 capabilities with
 | `Tool` protocol (~6 members) | AgentIntent auto-discovery | `AgentIntent` protocol refines `Tool` with auto-registration |
 
 ---
-*Last updated: 2026-06-25 — Phase 1 complete (3 plans, 16 requirements fulfilled)*
+*Last updated: 2026-06-25 — Phase 1 complete, Phase 2 complete (6 plans, 18 requirements fulfilled)*
