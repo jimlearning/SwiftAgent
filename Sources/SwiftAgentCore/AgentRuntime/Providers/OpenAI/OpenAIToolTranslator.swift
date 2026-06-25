@@ -11,11 +11,16 @@ struct OpenAIToolTranslator: Sendable {
     /// Convert an array of RuntimeToolDefinition to OpenAI function-calling format.
     ///
     /// Each output dict has: `type`, `function.name`, `function.description`,
-    /// `function.parameters`, and `function.strict`.
+    /// `function.parameters`, and optionally `function.strict`.
     ///
-    /// - Parameter tools: The tool definitions to translate.
+    /// - Parameters:
+    ///   - tools: The tool definitions to translate.
+    ///   - enableStrictMode: If true, sets `strict: true` on function schemas.
+    ///     Only enable when all tool schemas meet OpenAI strict-mode requirements
+    ///     (all properties listed in `required`, `additionalProperties: false`,
+    ///     no `default` values). Defaults to `false`.
     /// - Returns: An array of dicts in OpenAI function-calling format.
-    static func translate(_ tools: [RuntimeToolDefinition]) -> [[String: Any]] {
+    static func translate(_ tools: [RuntimeToolDefinition], enableStrictMode: Bool = false) -> [[String: Any]] {
         tools.map { tool in
             var function: [String: Any] = [
                 "name": tool.name,
@@ -45,8 +50,10 @@ struct OpenAIToolTranslator: Sendable {
                 function["parameters"] = ["type": "object"]
             }
 
-            // OpenAI strict mode for models that support it
-            function["strict"] = true
+            // OpenAI strict mode — only when caller opts in and schemas are compatible
+            if enableStrictMode {
+                function["strict"] = true
+            }
 
             return [
                 "type": "function",
