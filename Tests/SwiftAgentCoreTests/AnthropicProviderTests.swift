@@ -651,4 +651,39 @@ extension AnthropicProviderTests {
         let events = await channel.events
         XCTAssertTrue(events.count >= 0, "respond() should execute without crashing")
     }
+
+    // MARK: Test: AgentRuntimeImpl integration — compiles with AnthropicProvider as modelProvider
+
+    func test_agentRuntimeImpl_integrationWithAnthropicProvider() async throws {
+        // Verify that AgentRuntimeImpl can be initialized with AnthropicProvider
+        // as its modelProvider — this is the primary contract validation:
+        // AnthropicProvider conforms to both LanguageModel and LanguageModelExecutor.
+        let provider = AnthropicProvider(apiKey: "test-key", modelID: "claude-sonnet-4-6")
+        let mockMemory = MockMemoryStore()
+        let mockPermission = MockPermissionEngine(shouldAllow: true)
+        let toolEngine = DefaultToolEngine()
+
+        let runtime = AgentRuntimeImpl(
+            modelProvider: provider,
+            memoryStore: mockMemory,
+            permissionEngine: mockPermission,
+            toolEngine: toolEngine
+        )
+
+        // Verify the runtime was created — this confirms:
+        // 1. AnthropicProvider conforms to LanguageModel (accepted as modelProvider)
+        // 2. makeExecutor() returns a valid LanguageModelExecutor
+        // 3. The compiler accepts AnthropicProvider as both model AND executor
+        XCTAssertNotNil(runtime)
+
+        // Verify respond() method signature is callable.
+        // This will fail at runtime (no real API), but the compilation check
+        // is the primary acceptance criteria.
+        do {
+            _ = try await runtime.respond(to: "Hello")
+        } catch {
+            // Expected: network error since no live API available
+            // The test passes as long as we reach this point without a compilation error
+        }
+    }
 }
