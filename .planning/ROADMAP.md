@@ -72,7 +72,17 @@ Plans:
   5. Runtime correctly routes: model calls → ModelProvider, permission checks → PermissionEngine, memory writes → MemoryStore, tool calls → ToolEngine
   6. All existing tests pass; new test suites cover Runtime agent loop, snapshot accumulation, runtime schema generation, and subsystem routing
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Core streaming types: SessionEvent, PartiallyGenerated, GenerationSchema, RuntimeGenerationChannel
+- [ ] 02-02-PLAN.md — Subsystem stubs (DefaultToolEngine, NoOp stubs) + Mock providers (MockLanguageModel, MockMemoryStore, MockPermissionEngine)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-03-PLAN.md — AgentRuntimeImpl actor: agent loop, subsystem routing, reentrancy guard, integration tests
 
 ### Phase 3: Provider Implementations
 
@@ -92,7 +102,7 @@ Plans:
   6. `PermissionEngine` accepts `AgentPermission` taxonomy and correctly gates tool calls, memory operations, and (simulated) network requests
   7. All existing tests pass; new Provider test suites verify cross-provider output equivalence (identical Transcript + Tools → semantically identical SessionEvent sequences across all three ModelProviders)
 
-**Plans**: TBD
+**Plans**: 3 plans
 
 ### Phase 4: Migration, Wiring & Cleanup
 
@@ -111,7 +121,7 @@ Plans:
   5. Zero new `nonisolated(unsafe)` annotations added during migration; the count does not increase from the 3 existing
   6. All 258+ existing tests pass after cleanup; no test files reference removed types; new test suites for all new types committed and passing
 
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: yes
 
 ## Progress
@@ -122,7 +132,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. AgentRuntime Core Protocols | 3/3 | Complete    | 2026-06-25 |
-| 2. Session, Streaming & Structured Output | 0/TBD | Not started | - |
+| 2. Session, Streaming & Structured Output | 0/3 | Planned | - |
 | 3. Provider Implementations | 0/TBD | Not started | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
 

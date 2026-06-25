@@ -665,21 +665,15 @@ public actor RuntimeGenerationChannel: GenerationChannel {
 | A4 | The existing `JSONSchema` type (Types/Tool.swift line 401) is sufficient for GenerationSchema output without modification [ASSUMED] | Architecture Patterns (Pattern 4) | Low -- JSONSchema already has type, properties, required, and description fields. If schema generation needs additional JSON Schema features (pattern, minLength), properties are available on JSONSchemaProperty. |
 | A5 | `PartiallyGenerated<T>.snapshot` can be decoded from accumulated JSON deltas via `JSONDecoder` even when some properties are not yet present (Swift handles missing keys with Optional properties) [ASSUMED] | Architecture Patterns (Pattern 3) | Medium -- if model emits invalid JSON fragments or keys that don't match the struct, JSONDecoder will fail and the snapshot will be nil. Mitigated by trying decode and falling back to previous snapshot on failure. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should `PartiallyGenerated<T>` expose raw JSON deltas for debugging?**
-   - What we know: The success criteria require shadow-mode validation (comparing snapshot path output with delta path output). This requires access to accumulated raw text for comparison.
-   - What's unclear: Whether this should be a public API field or an internal-only debug property.
+1. **Should `PartiallyGenerated<T>` expose raw JSON deltas for debugging?** (RESOLVED)
    - Recommendation: Include `rawAccumulatedText: String` as a public field (used by test suites for validation). Mark as debug-only in documentation.
 
-2. **How minimal should the Phase 2 ToolEngine, RuntimeContextManager, ProfileManager, and RuntimeHookSystem implementations be?**
-   - What we know: Phase 1 defined them as placeholder protocols. The agent loop needs to call them (e.g., `toolEngine.get(name:)` for tool execution). But full implementations belong in later phases.
-   - What's unclear: Whether a stub that always returns empty/nil is sufficient, or if real behavior is needed for the loop to function.
-   - Recommendation: Implement minimal viable versions. ToolEngine: dictionary-backed registry with register/retrieve. Others: no-op stubs that default-initialize. The loop only calls toolEngine and memoryStore during Phase 2 execution; contextManager, profileManager, and hookSystem are called but their stubs are non-blocking.
+2. **How minimal should the Phase 2 ToolEngine, RuntimeContextManager, ProfileManager, and RuntimeHookSystem implementations be?** (RESOLVED)
+   - Recommendation: Implement minimal viable versions. ToolEngine: dictionary-backed registry with register/retrieve. Others: no-op stubs that default-initialize.
 
-3. **Does `RuntimeGenerationChannel` need to be a `public actor` or `internal`?**
-   - What we know: Consumers (CLI/App) receive `AsyncThrowingStream<SessionEvent>`, never the channel directly. The channel is an implementation detail.
-   - What's unclear: Whether test suites need direct channel access for validation.
+3. **Does `RuntimeGenerationChannel` need to be a `public actor` or `internal`?** (RESOLVED)
    - Recommendation: Make it `public` for test visibility but document as "internal to AgentRuntime -- do not use directly."
 
 ## Environment Availability
