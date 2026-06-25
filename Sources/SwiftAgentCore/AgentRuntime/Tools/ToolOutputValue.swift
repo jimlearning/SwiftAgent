@@ -12,6 +12,15 @@ public enum ToolOutputValue: Sendable {
 
     /// Structured content blocks (provider-agnostic, no Anthropic types).
     case blocks([OutputBlock])
+
+    /// Convenience accessor for the output as a single string.
+    /// String output is returned directly; blocks are joined by newline.
+    public var stringValue: String {
+        switch self {
+        case .string(let s): return s
+        case .blocks(let blocks): return blocks.map(\.content).joined(separator: "\n")
+        }
+    }
 }
 
 // MARK: - OutputBlock

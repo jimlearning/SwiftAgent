@@ -28,6 +28,11 @@ public actor RuntimeGenerationChannel: GenerationChannel {
     /// Updated via replacement (not append) by `send(thinkingDelta:)`.
     private var accumulatedThinking: String = ""
 
+    /// Records tool calls that were streamed through this channel.
+    /// Used by the agent loop to inspect which tools were requested
+    /// after the executor finishes, so it can execute them and re-prompt.
+    public private(set) var recordedToolCalls: [(id: String, name: String, input: Data)] = []
+
     // MARK: - Initialization
 
     public init() {}
@@ -58,9 +63,10 @@ public actor RuntimeGenerationChannel: GenerationChannel {
         continuation?.yield(.thinkingDelta(accumulatedThinking))
     }
 
-    /// Yield a tool call request.
+    /// Yield a tool call request and record it for the agent loop.
     public func send(toolCallRequest id: String, name: String, input: Data) async {
         guard !isFinished else { return }
+        recordedToolCalls.append((id, name, input))
         continuation?.yield(.toolCallRequested(id: id, name: name, input: input))
     }
 
@@ -71,14 +77,13 @@ public actor RuntimeGenerationChannel: GenerationChannel {
         continuation?.yield(.toolCallCompleted(id: id, output: output, isError: false))
     }
 
-    /// Finish the turn successfully.
-    /// Sets `isFinished = true`, yields `.turnCompleted`, then calls
-    /// `continuation.finish()`. All subsequent sends are silently dropped.
+    /// Yield a turn-completion event. Sets `isFinished = true` so
+    /// subsequent sends are silently dropped. Does NOT call
+    /// `continuation.finish()` — the agent loop owns that decision.
     public func complete(stopReason: String?, usage: Usage?) async {
         guard !isFinished else { return }
         isFinished = true
         continuation?.yield(.turnCompleted(usage: usage, stopReason: stopReason))
-        continuation?.finish()
     }
 
     /// Finish the turn with an error.

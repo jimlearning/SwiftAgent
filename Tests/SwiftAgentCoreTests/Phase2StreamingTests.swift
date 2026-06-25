@@ -107,8 +107,10 @@ final class Phase2StreamingTests: XCTestCase {
         )
         await channel.setContinuation(continuation)
 
-        // Complete the turn — this sets isFinished=true and finishes the continuation
+        // Complete the turn — this sets isFinished=true and yields turnCompleted.
+        // The agent loop owns the finish() decision; test must finish manually.
         await channel.complete(stopReason: "end_turn", usage: nil)
+        continuation.finish()
 
         // This send should be silently dropped by the isFinished guard
         await channel.send(textDelta: "This should be dropped")
@@ -140,6 +142,7 @@ final class Phase2StreamingTests: XCTestCase {
         await channel.send(textDelta: "Hello")
         await channel.send(textDelta: "Hello world")
         await channel.complete(stopReason: "end_turn", usage: nil)
+        continuation.finish()
 
         // Collect events from the stream after all sends are done
         var events: [SessionEvent] = []

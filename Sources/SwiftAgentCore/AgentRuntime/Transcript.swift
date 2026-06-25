@@ -2,7 +2,7 @@ import Foundation
 
 /// Canonical conversation history with typed entries.
 /// Provider-agnostic. Consumed by MemoryStore for persistent memory.
-public struct Transcript: Sendable {
+public struct Transcript: Sendable, Codable {
     public var entries: [Entry]
 
     public init(entries: [Entry] = []) {
@@ -10,7 +10,7 @@ public struct Transcript: Sendable {
     }
 
     /// Typed transcript entry — each case captures one kind of conversation event.
-    public enum Entry: Sendable {
+    public enum Entry: Sendable, Codable {
         /// System-level instruction (e.g., system prompt).
         case instruction(String)
 
