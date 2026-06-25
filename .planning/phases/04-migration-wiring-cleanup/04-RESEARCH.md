@@ -1166,27 +1166,15 @@ The old `ToolUseContext.mode` (PermissionMode) maps to `AgentPermissionBridge` w
 | A7 | After App wiring, `ThreadRepository` and `ThreadViewModel` can read from `SQLiteMemoryStore` instead of file-based `SwiftAgentStore`. | Consumer Wiring Touchpoints | MEDIUM -- persistence schema differences could break existing App views. |
 | A8 | `EvalCommand` can be rewritten or safely removed without blocking other functionality. | Deprecated Type Dependency Graph | LOW -- EvalCommand is a testing/evaluation tool, not a production feature. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Compactor fate**
-   - What we know: `Compactor.swift` depends on `LLMClient` (which will be deleted). Compaction is a conversation-summarization feature.
-   - What's unclear: Should compaction be rewritten for Transcript or deferred to a future phase?
-   - Recommendation: Defer compaction to a future phase. The agent loop in `LanguageModelSessionImpl` has a 50-iteration max and uses `SessionContextManager` (placeholder) for future context window management. Remove `Compactor.swift` with other deprecated types.
+1. **Compactor fate** — RESOLVED: Delete with deprecated types. `Compactor.swift` is removed in 04-05 Task 3 along with LLMClient, StreamRenderer, and other deprecated Core files. Deferred to future phase per recommendation.
 
-2. **EvalCommand fate**
-   - What we know: `EvalCommand.swift` depends on `LLMClient`, `QueryEngine`, `ToolUseContext`. It is a CLI evaluation/testing tool.
-   - What's unclear: Is EvalCommand used in CI or by developers?
-   - Recommendation: Rewrite using `LanguageModelSessionImpl` or remove. Check CI scripts for references.
+2. **EvalCommand fate** — RESOLVED: Delete. `EvalCommand.swift` is removed in 04-06 Task 2 along with other App-side deprecated files. No CI scripts reference it; safe to remove.
 
-3. **SubAgentManager integration with new AgentTool**
-   - What we know: `AgentTool` spawns sub-agents via `SubAgentManager` which creates `QueryEngine` instances. After migration, `AgentTool` captures `LanguageModelSessionImpl` (or creates child sessions).
-   - What's unclear: Does the new architecture support child sessions? LanguageModelSessionImpl has no sub-session concept.
-   - Recommendation: AgentTool creates a new `LanguageModelSessionImpl` with the same providers but a fresh transcript. The `agentId`/`agentType` distinction is encoded in the tool's construction.
+3. **SubAgentManager integration with new AgentTool** — RESOLVED: AgentTool migrated in 04-04 Task 1. Creates child `LanguageModelSessionImpl` with same providers but fresh transcript. `SubAgentManager` deleted in 04-05 Task 3.
 
-4. **DefaultToolEngine production readiness**
-   - What we know: `DefaultToolEngine` was built in Phase 2 as part of subsystem stubs. It implements `ToolEngine` protocol.
-   - What's unclear: Is it a stub returning mock data, or a production implementation that executes real tools?
-   - Recommendation: [ASSUMED] Check DefaultToolEngine implementation before planning tool registration tasks. If stub-only, plan a task to implement real tool execution.
+4. **DefaultToolEngine production readiness** — RESOLVED: Given real tool execution in 04-01 Task 3. `DefaultToolEngine.execute(name:input:)` decodes `Data` into typed `Arguments` and invokes `call(arguments:)` returning real `ToolOutputValue`, not stub strings. Production-ready before any tool migration begins.
 
 ## Project Constraints (from CLAUDE.md)
 
