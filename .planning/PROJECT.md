@@ -1,4 +1,4 @@
-# Project: SwiftAgent → Forge Agent Runtime
+# Project: SwiftAgent Agent Runtime
 
 ## What This Is
 
@@ -51,7 +51,7 @@ AgentRuntime
   │
   ├── MemoryProvider
   │   ├── SQLiteMemoryStore        ← local persistent memory
-  │   ├── FirestoreMemoryStore     ← cloud-synced memory (Forge backend)
+  │   ├── FirestoreMemoryStore     ← cloud-synced memory
   │   └── VectorMemoryStore        ← semantic search
   │
   └── PermissionProvider
