@@ -199,7 +199,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
 
     /// Create a PermissionEngine with allow rules for the specified tool names.
     private func makePermissionEngine(allowTools: [String] = []) -> PermissionEngine {
-        let store = PermissionStore()
+        var store = PermissionStore()
         for toolName in allowTools {
             store.addRule(PermissionRule(
                 source: .userSettings,
@@ -212,7 +212,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
 
     /// Create a PermissionEngine with deny rules for the specified tool names.
     private func makePermissionEngine(denyTools: [String]) -> PermissionEngine {
-        let store = PermissionStore()
+        var store = PermissionStore()
         for toolName in denyTools {
             store.addRule(PermissionRule(
                 source: .userSettings,
