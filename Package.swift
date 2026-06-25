@@ -22,7 +22,8 @@ let package = Package(
     targets: [
         .target(
             name: "SwiftAgentCore",
-            path: "Sources/SwiftAgentCore"
+            path: "Sources/SwiftAgentCore",
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .executableTarget(
             name: "SwiftAgentCLI",
