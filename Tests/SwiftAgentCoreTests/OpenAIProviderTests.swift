@@ -508,8 +508,8 @@ extension OpenAIProviderTests {
         }
         XCTAssertEqual(completeEvents.count, 1)
         let usage = completeEvents[0]
-        XCTAssertEqual(usage?.inputTokens, 10)
-        XCTAssertEqual(usage?.outputTokens, 20)
+        XCTAssertEqual(usage.inputTokens, 10)
+        XCTAssertEqual(usage.outputTokens, 20)
     }
 
     // MARK: Test 12: Tool translation — basic
