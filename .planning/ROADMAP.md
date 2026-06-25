@@ -113,7 +113,7 @@ Plans:
 
 ### Phase 4: Migration, Wiring & Cleanup
 
-**Goal**: All 60+ tools adopt the simplified `Tool` protocol. CLI `ChatCommand` and App `ThreadViewModel` consume `AgentRuntime.shared` as their primary API surface with feature-flag gating and shadow-mode validation. Deprecated types (`LLMClient`, `StreamEvent`, `QueryEngine`, `ProviderRegistry`, dual `ModelInfo`, standalone `DeepSeekClient`) are removed. `MessageNormalizer` adapted to `Transcript` entries. Every existing test passes.
+**Goal**: All 60+ tools adopt the simplified `Tool` protocol. CLI `ChatCommand` and App `ThreadViewModel` consume `LanguageModelSessionImpl` as their primary API surface with direct replacement (per D-08, no feature flags). Deprecated types (`LLMClient`, `StreamEvent`, `QueryEngine`, `ProviderRegistry`, `DeepSeekClient`, `AgentSessionManager`, `App/LLM/`, `Storage/`, `MessageNormalizer`, old `Tool` protocol + `ToolUseContext`) are removed. Per-provider normalization replaces shared `MessageNormalizer` (per D-17). Every existing test passes.
 
 **Depends on**: Phase 3
 
@@ -121,14 +121,37 @@ Plans:
 
 **Success Criteria** (what must be TRUE):
 
-  1. All 60+ tools conform to simplified `Tool` protocol; per-tool metadata (`searchHint` 55 overrides, `isEnabled` 39 overrides, `shouldDefer` 33 overrides) migrated to `ToolEngine` registry without breaking tool search, feature gating, or deferred loading
-  2. CLI `ChatCommand` and App `ThreadViewModel` use `AgentRuntime.shared` for agent interactions; feature flag `AGENT_RUNTIME_ENABLED` gates new path; old `QueryEngine` + `LLMClient` path remains operational in shadow mode until output equivalence validated
-  3. Deprecated types fully removed from the codebase: `LLMClient` (absorbed into AnthropicProvider), `StreamEvent` enum (becomes provider-internal), `LLMStreamParser` (moves to AnthropicProvider), `QueryEngine` (replaced by AgentRuntime), `ProviderRegistry` (replaced by AgentRuntime provider registry), dual `ModelInfo` types (replaced by `LanguageModelCapabilities`), standalone `DeepSeekClient` (replaced by unified `DeepSeekProvider`)
-  4. `MessageNormalizer` (17-pass pipeline) adapted from `[ContentBlock]` → `[Transcript.Entry]` input; normalization behavior identical; validated against recorded API responses
-  5. Zero new `nonisolated(unsafe)` annotations added during migration; the count does not increase from the 3 existing
-  6. All 258+ existing tests pass after cleanup; no test files reference removed types; new test suites for all new types committed and passing
+  1. All 60+ tools conform to simplified `Tool` protocol; per-tool metadata migrated to `ToolMetadata` registered via `ToolEngine`
+  2. CLI `ChatCommand` and App `ThreadViewModel` use `LanguageModelSessionImpl.streamResponse(to:)` for agent interactions; old `QueryEngine` + `LLMClient` + `AgentSessionManager` paths removed
+  3. Deprecated types fully removed: `LLMClient`, `StreamEvent`, `LLMStreamParser`, `QueryEngine`, `ToolExecutor`, `SubAgentManager`, `Compactor`, `RetryPolicy`, `SortedJSON`, `ChatToolInputAccumulator`, `ChatToolExecutionScheduler`, `StatusLine`, old `Tool` protocol + `ToolUseContext`, `AgentSessionManager`, `AppAgentProvider`, `App/LLM/` (5 files), `App/DeepSeek/` (4 files), `ProviderRegistry`, `Storage/` (8 files), `MessageNormalizer`, `EvalCommand`
+  4. `MessageNormalizer` (848 lines, 17-pass pipeline) deleted; normalization handled per-provider (D-17) — each provider translates `Transcript` → API wire format internally
+  5. Zero new `nonisolated(unsafe)` annotations; the count decreases from 4 to 2 (LLMClient removed, SwiftAgentPaths removed; only TerminalView closures remain)
+  6. All 258+ existing tests pass after cleanup; no test files reference removed types
 
-**Plans**: 3 plans
+**Plans**: 6 plans
+
+Plans:
+**Wave 1** *(foundation — all downstream plans depend on this)*
+
+- [ ] 04-01-PLAN.md — Foundation plumbing: rename RuntimeAgentTool.Input→Arguments + call(_:)→call(arguments:) per D-07; extract JSONSchema/InterruptBehavior from Types/Tool.swift; implement real type-erased tool execution in DefaultToolEngine.execute() (MIG-01)
+
+**Wave 2** *(tool migration batches — depends on Wave 1)*
+
+- [ ] 04-02-PLAN.md — Batch 1: 15 read-only tools (FileRead, Grep, Glob, WebSearch, WebFetch, ListSkills, ToolSearch, etc.) + Batch1ToolRegistry (MIG-01)
+
+**Wave 3** *(protocol deletion + remaining tool batches — depends on Wave 2)*
+
+- [ ] 04-03-PLAN.md — Delete old Tool protocol + ToolUseContext per D-06; Batch 2 (4 file mutation tools) + Batch 3 (5 command execution tools) + old Tools/ directory cleanup (MIG-01, MIG-03)
+- [ ] 04-04-PLAN.md — Batches 4+5: 20 task/agent/workflow tools + 16 MCP/config/cron/misc tools; relocate shared types from old Tools/; rename RuntimeAgentTool→Tool (MIG-01)
+
+**Wave 4** *(CLI consumer wiring — depends on Wave 3)*
+
+- [ ] 04-05-PLAN.md — Rewire ChatCommand to LanguageModelSessionImpl per D-08/D-09; build fresh SessionEventRenderer per D-10; delete 13 deprecated Core types (LLMClient, QueryEngine, StreamEvent, ToolExecutor, SubAgentManager, Compactor, LLMStreamParser, RetryPolicy, SortedJSON, ChatToolInputAccumulator, ChatToolExecutionScheduler, StatusLine) per D-12 (MIG-02, MIG-03)
+
+**Wave 5** *(App consumer wiring + final cleanup — depends on Wave 4)*
+
+- [ ] 04-06-PLAN.md — Rewire ThreadViewModel to LanguageModelSessionImpl per D-11; delete App/Agent/ (3), App/LLM/ (5), App/DeepSeek/ (4), Storage/ (8), MessageNormalizer, EvalCommand per D-12/D-13/D-14/D-15/D-16/D-17; fix 15 test files; verify full test suite passes (MIG-02, MIG-03, MIG-04, MIG-05)
+
 **UI hint**: yes
 
 ## Progress
@@ -141,7 +164,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 | 1. AgentRuntime Core Protocols | 3/3 | Complete    | 2026-06-25 |
 | 2. Session, Streaming & Structured Output | 3/3 | Complete    | 2026-06-25 |
 | 3. Provider Implementations | 4/4 | Complete   | 2026-06-25 |
-| 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
+| 4. Migration, Wiring & Cleanup | 0/6 | Planned | - |
 
 ## Design Rationale (4-phase vs 8-phase)
 
@@ -166,5 +189,5 @@ Every Phase 1 type-slot is designed to accept predicted WWDC27 capabilities with
 | `Tool` protocol (~6 members) | AgentIntent auto-discovery | `AgentIntent` protocol refines `Tool` with auto-registration |
 
 ---
-*Last updated: 2026-06-25 — Phase 1 complete, Phase 2 complete (6 plans, 18 requirements fulfilled)*
-*Phase 3 planned — 4 plans covering 4 requirements (MEM-02, MODEL-02, MODEL-03, MODEL-04)*
+*Last updated: 2026-06-25 — Phase 1 complete, Phase 2 complete, Phase 3 complete (10 plans, 22 requirements fulfilled)*
+*Phase 4 planned — 6 plans covering 5 requirements (MIG-01, MIG-02, MIG-03, MIG-04, MIG-05)*
