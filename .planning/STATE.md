@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready for Phase 2
-stopped_at: Completed 01-03-PLAN.md — 4 top-level Agent type files, 3 commits, 4 requirements fulfilled. Phase 1 complete (14 files, 34 types).
-last_updated: "2026-06-25T09:45:49.593Z"
-last_activity: 2026-06-25 -- Phase 2 planning complete
+status: executing
+stopped_at: Completed 02-01-PLAN.md — 4 streaming type files, 1 test file, 3 commits, 2 requirements fulfilled. Phase 2 plan 1/3 complete (17 AgentRuntime files total).
+last_updated: "2026-06-25T09:56:25Z"
+last_activity: 2026-06-25 -- Phase 02-01 completed
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 6
+  completed_plans: 4
   percent: 25
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-25)
 
 **Core value:** Models are peripherals, not the CPU — `AgentRuntime` is the architecture's center; every Provider (Model, Memory, Permission) sits behind a protocol
-**Current focus:** Phase 01 — AgentRuntime Core Protocols
+**Current focus:** Phase 02 — Session, Streaming & Structured Output
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Ready for Phase 2
-Last activity: 2026-06-25 -- Phase 2 planning complete
+Phase: 02 (Session, Streaming & Structured Output) — EXECUTING
+Plan: 2 of 3
+Status: Executing Phase 02
+Last activity: 2026-06-25 -- Phase 02-01 completed
 
 Progress: [██████████] 100%
 
@@ -60,6 +60,7 @@ Progress: [██████████] 100%
 | Phase 01-agentruntime-core-protocols P01 | 6 | 2 tasks | 5 files |
 | Phase 01-agentruntime-core-protocols P02 | 8 | 2 tasks | 4 files |
 | Phase 01-agentruntime-core-protocols P03 | 10 | 3 tasks | 4 files |
+| Phase 02-session-streaming-structured-output P01 | 10 | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,9 @@ Decision log lives in PROJECT.md Key Decisions table. Recent decisions affecting
 - [Plan 01-03]: RuntimeContextManager renamed from ContextManager to avoid collision with existing struct ContextManager in Agent/ContextManager.swift
 - [Plan 01-03]: RuntimeHookSystem renamed from HookSystem to avoid collision with existing actor HookSystem in Hooks/HookSystem.swift
 - [Plan 01-03]: AgentRuntime protocol references actual type names (RuntimeMemoryStore, RuntimePermissionEngine, RuntimeAgentTool, RuntimeContextManager, RuntimeHookSystem) not plan concept names
+- [Plan 02-01]: generationSchemaFromMirror parameter renamed from 'type' to 'metatype' to avoid shadowing Swift's type(of:) global function
+- [Plan 02-01]: SessionEvent uses snapshot semantics (accumulated total, not incremental delta) for textDelta/thinkingDelta — prevents double-render bug
+- [Plan 02-01]: Tests structured as post-send stream collection to avoid Swift 6 Sendable closure capture of mutable local state
 
 ### Pending Todos
 
@@ -99,6 +103,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-25T05:15:00Z
-Stopped at: Completed 01-03-PLAN.md — 4 top-level Agent type files, 3 commits, 4 requirements fulfilled. Phase 1 complete (14 files, 34 types).
+Last session: 2026-06-25T09:56:25Z
+Stopped at: Completed 02-01-PLAN.md — 4 streaming type files, 1 test file, 3 commits. Phase 2 plan 1/3 complete (17 AgentRuntime files total).
 Resume file: None

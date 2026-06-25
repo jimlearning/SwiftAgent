@@ -77,7 +77,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Core streaming types: SessionEvent, PartiallyGenerated, GenerationSchema, RuntimeGenerationChannel
+- [x] 02-01-PLAN.md — Core streaming types: SessionEvent, PartiallyGenerated, GenerationSchema, RuntimeGenerationChannel
 - [ ] 02-02-PLAN.md — Subsystem stubs (DefaultToolEngine, NoOp stubs) + Mock providers (MockLanguageModel, MockMemoryStore, MockPermissionEngine)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -132,7 +132,7 @@ Phases execute sequentially: 1 → 2 → 3 → 4 (dependency chain: types → ru
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. AgentRuntime Core Protocols | 3/3 | Complete    | 2026-06-25 |
-| 2. Session, Streaming & Structured Output | 0/3 | Planned | - |
+| 2. Session, Streaming & Structured Output | 1/3 | Executing | - |
 | 3. Provider Implementations | 0/TBD | Not started | - |
 | 4. Migration, Wiring & Cleanup | 0/TBD | Not started | - |
 

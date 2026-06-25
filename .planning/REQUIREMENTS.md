@@ -38,8 +38,8 @@
 
 ### Streaming & Structured Output (STREAM-01 to STREAM-02)
 
-- [ ] **STREAM-01**: `SessionEvent` enum — provider-agnostic streaming events replacing Anthropic-specific `StreamEvent`. Cases: `responseDelta(text:)`, `thinkingDelta(text:)`, `toolCallRequested(id:name:input:)`, `toolCallCompleted(id:output:isError:)`, `turnCompleted(usage:stopReason:)`, `error(AgentRuntimeError)`. No consumer outside `AgentRuntime/Providers/` sees raw model output.
-- [ ] **STREAM-02**: Snapshot streaming via `PartiallyGenerated<T: Codable>` struct. For structured output requests, Runtime emits typed progress snapshots (properties fill in progressively), not raw JSON deltas. Runtime implementation using `Mirror` + `CodingKeys` until macOS 27+ deployment target enables `@Generable` macro. Shadow-mode validation: old delta path and new snapshot path run simultaneously; output equivalence verified before consumer cutover.
+- [x] **STREAM-01**: `SessionEvent` enum — provider-agnostic streaming events replacing Anthropic-specific `StreamEvent`. Cases: `responseDelta(text:)`, `thinkingDelta(text:)`, `toolCallRequested(id:name:input:)`, `toolCallCompleted(id:output:isError:)`, `turnCompleted(usage:stopReason:)`, `error(AgentRuntimeError)`. No consumer outside `AgentRuntime/Providers/` sees raw model output.
+- [x] **STREAM-02**: Snapshot streaming via `PartiallyGenerated<T: Codable>` struct. For structured output requests, Runtime emits typed progress snapshots (properties fill in progressively), not raw JSON deltas. Runtime implementation using `Mirror` + `CodingKeys` until macOS 27+ deployment target enables `@Generable` macro. Shadow-mode validation: old delta path and new snapshot path run simultaneously; output equivalence verified before consumer cutover.
 
 ### AgentGraph Placeholder (GRAPH-01)
 
