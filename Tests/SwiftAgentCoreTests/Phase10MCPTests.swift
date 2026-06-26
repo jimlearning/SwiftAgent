@@ -86,16 +86,14 @@ struct MCPToolBridgeTests {
     func buildToolResult() {
         let result = MCPToolResult(content: "hello", isError: false)
         let toolResult = MCPToolBridge.buildToolResult(result)
-        #expect(toolResult.content == "hello")
-        #expect(!toolResult.isError)
+        #expect(toolResult.stringValue == "hello")
     }
 
     @Test
     func buildToolResultError() {
         let result = MCPToolResult(content: "something went wrong", isError: true)
         let toolResult = MCPToolBridge.buildToolResult(result)
-        #expect(toolResult.content == "something went wrong")
-        #expect(toolResult.isError)
+        #expect(toolResult.stringValue == "something went wrong")
     }
 }
 

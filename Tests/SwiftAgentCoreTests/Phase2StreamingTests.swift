@@ -98,10 +98,10 @@ final class Phase2StreamingTests: XCTestCase {
         }
     }
 
-    // MARK: - RuntimeGenerationChannel Tests
+    // MARK: - StreamingGenerationChannel Tests
 
-    func testRuntimeGenerationChannelFinishGating() async throws {
-        let channel = RuntimeGenerationChannel()
+    func testStreamingGenerationChannelFinishGating() async throws {
+        let channel = StreamingGenerationChannel()
         let (stream, continuation) = AsyncThrowingStream<SessionEvent, Error>.makeStream(
             bufferingPolicy: .bufferingNewest(10)
         )
@@ -131,8 +131,8 @@ final class Phase2StreamingTests: XCTestCase {
         }
     }
 
-    func testRuntimeGenerationChannelTextSnapshot() async throws {
-        let channel = RuntimeGenerationChannel()
+    func testStreamingGenerationChannelTextSnapshot() async throws {
+        let channel = StreamingGenerationChannel()
         let (stream, continuation) = AsyncThrowingStream<SessionEvent, Error>.makeStream(
             bufferingPolicy: .bufferingNewest(10)
         )

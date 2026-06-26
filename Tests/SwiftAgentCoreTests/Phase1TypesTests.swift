@@ -61,32 +61,27 @@ struct ConversationTests {
 
 struct ToolTests {
     struct MockReadTool: Tool {
+        typealias Arguments = [String: JSONValue]
         var name: String { "View" }
-        func description(input: [String: JSONValue], options: ToolDescriptionOptions) async -> String { "Read files" }
+        var description: String { "Read files" }
         var inputSchema: JSONSchema { JSONSchema(type: "object", properties: ["path": JSONSchemaProperty(type: "string")]) }
-        var isReadOnly: Bool { true }
-        var isConcurrencySafe: Bool { true }
 
-        func call(input: [String: JSONValue], context: ToolUseContext, canUseTool: CanUseToolFn?, parentMessage: Message?, onProgress: ToolCallProgress?) async throws -> ToolResult {
-            return ToolResult(content: "file contents")
+        func call(arguments: [String: JSONValue]) async throws -> ToolOutputValue {
+            .string("file contents")
         }
     }
 
     @Test
     func toolProtocolDefaults() {
         let tool = MockReadTool()
-        #expect(tool.isReadOnly == true)
-        #expect(tool.isConcurrencySafe == true)
         #expect(tool.name == "View")
         #expect(tool.inputSchema.type == "object")
     }
 
     @Test
     func toolContextInitialization() {
-        let ctx = ToolUseContext(workingDirectory: "/tmp", sessionID: "s1")
+        let ctx = ToolUseContext(workingDirectory: "/tmp")
         #expect(ctx.workingDirectory == "/tmp")
-        #expect(ctx.sessionID == "s1")
-        #expect(ctx.approvalToken == nil)
     }
 
     @Test

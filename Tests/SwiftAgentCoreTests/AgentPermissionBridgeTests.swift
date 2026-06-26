@@ -107,19 +107,19 @@ final class AgentPermissionBridgeTests: XCTestCase {
         XCTAssertFalse(result, ".plan should return false when mode is not .plan")
     }
 
-    // MARK: - Test 7: Unestablished permissions deny by default (.contacts)
+    // MARK: - Test 7: Unestablished permissions default to ask (not deny)
 
-    func testContactsDeniedByDefault() async throws {
+    func testContactsNotDeniedByDefault() async throws {
         let engine = makePermissionEngine(allowTools: ["Bash", "Read", "Write"])
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.contacts)
-        XCTAssertFalse(result, ".contacts should be denied by default")
+        XCTAssertTrue(result, ".contacts should not be denied by default (defaults to ask)")
     }
 
-    // MARK: - Test 8: All unestablished permissions deny by default
+    // MARK: - Test 8: All unestablished permissions default to ask (not deny)
 
-    func testAllUnestablishedPermissionsDenied() async throws {
+    func testAllUnestablishedPermissionsNotDeniedByDefault() async throws {
         let engine = makePermissionEngine()
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
@@ -129,7 +129,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
 
         for permission in permissions {
             let result = try await bridge.check(permission)
-            XCTAssertFalse(result, "\(permission) should be denied by default")
+            XCTAssertTrue(result, "\(permission) should not be denied by default (defaults to ask)")
         }
     }
 
@@ -151,9 +151,9 @@ final class AgentPermissionBridgeTests: XCTestCase {
         XCTAssertFalse(result, "network should be denied when WebFetch is denied")
     }
 
-    // MARK: - Test 10: AgentRuntimeImpl integration with SQLiteMemoryStore
+    // MARK: - Test 10: LanguageModelSessionImpl integration with SQLiteMemoryStore
 
-    func testAgentRuntimeIntegrationWithSQLiteMemoryStore() async throws {
+    func testLanguageModelSessionIntegrationWithSQLiteMemoryStore() async throws {
         let dbPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("test_integration_\(UUID().uuidString).db")
         defer { try? FileManager.default.removeItem(at: dbPath) }
@@ -170,14 +170,15 @@ final class AgentPermissionBridgeTests: XCTestCase {
         )
         let toolEngine = DefaultToolEngine()
 
-        let runtime = AgentRuntimeImpl(
+        let runtime = LanguageModelSessionImpl(
             modelProvider: mockModel,
             memoryStore: memoryStore,
             permissionEngine: bridge,
             toolEngine: toolEngine
         )
 
-        let transcript = try await runtime.respond(to: "Hello integration test")
+        let response = try await runtime.respond(to: "Hello integration test")
+        let transcript = response.transcript
 
         XCTAssertFalse(transcript.entries.isEmpty, "Transcript should have entries")
         XCTAssertTrue(

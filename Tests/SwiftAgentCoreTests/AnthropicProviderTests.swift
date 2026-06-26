@@ -309,7 +309,7 @@ extension AnthropicProviderTests {
             required: ["command"]
         )
         let tools = [
-            RuntimeToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
         ]
 
         let result = AnthropicToolTranslator.translate(tools)
@@ -353,7 +353,7 @@ extension AnthropicProviderTests {
         )
 
         let tools = [
-            RuntimeToolDefinition(name: "Search", description: "Search files", inputSchema: schema),
+            SessionToolDefinition(name: "Search", description: "Search files", inputSchema: schema),
         ]
 
         let result = AnthropicToolTranslator.translate(tools)
@@ -593,7 +593,7 @@ extension AnthropicProviderTests {
         let transcript = Transcript(entries: [
             .prompt("Hello"),
         ])
-        let tools: [RuntimeToolDefinition] = []
+        let tools: [SessionToolDefinition] = []
         let options = GenerationOptions(maxTokens: 1000)
 
         let request = try AnthropicRequestBuilder.build(
@@ -652,10 +652,10 @@ extension AnthropicProviderTests {
         XCTAssertTrue(events.count >= 0, "respond() should execute without crashing")
     }
 
-    // MARK: Test: AgentRuntimeImpl integration — compiles with AnthropicProvider as modelProvider
+    // MARK: Test: LanguageModelSessionImpl integration — compiles with AnthropicProvider as modelProvider
 
     func test_agentRuntimeImpl_integrationWithAnthropicProvider() async throws {
-        // Verify that AgentRuntimeImpl can be initialized with AnthropicProvider
+        // Verify that LanguageModelSessionImpl can be initialized with AnthropicProvider
         // as its modelProvider — this is the primary contract validation:
         // AnthropicProvider conforms to both LanguageModel and LanguageModelExecutor.
         let provider = AnthropicProvider(apiKey: "test-key", modelID: "claude-sonnet-4-6")
@@ -663,7 +663,7 @@ extension AnthropicProviderTests {
         let mockPermission = MockPermissionEngine(shouldAllow: true)
         let toolEngine = DefaultToolEngine()
 
-        let runtime = AgentRuntimeImpl(
+        let runtime = LanguageModelSessionImpl(
             modelProvider: provider,
             memoryStore: mockMemory,
             permissionEngine: mockPermission,

@@ -523,7 +523,7 @@ extension OpenAIProviderTests {
             required: ["command"]
         )
         let tools = [
-            RuntimeToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
         ]
 
         let result = OpenAIToolTranslator.translate(tools)
@@ -565,7 +565,7 @@ extension OpenAIProviderTests {
         XCTAssertEqual(provider.capabilities.maxOutputTokens, 32_768)
     }
 
-    // MARK: Test 14: AgentRuntimeImpl integration compiles with OpenAIProvider
+    // MARK: Test 14: LanguageModelSessionImpl integration compiles with OpenAIProvider
 
     func test_agentRuntimeImpl_integrationWithOpenAIProvider() async throws {
         let provider = OpenAIProvider(apiKey: "sk-test", modelID: "gpt-5.2")
@@ -573,7 +573,7 @@ extension OpenAIProviderTests {
         let mockPermission = MockPermissionEngine(shouldAllow: true)
         let toolEngine = DefaultToolEngine()
 
-        let runtime = AgentRuntimeImpl(
+        let runtime = LanguageModelSessionImpl(
             modelProvider: provider,
             memoryStore: mockMemory,
             permissionEngine: mockPermission,

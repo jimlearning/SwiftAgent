@@ -59,7 +59,7 @@ public struct MockLanguageModelExecutor: LanguageModelExecutor, Sendable {
 
     public func respond(
         to transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         streamingInto channel: GenerationChannel
     ) async throws {
@@ -89,9 +89,9 @@ public struct MockLanguageModelExecutor: LanguageModelExecutor, Sendable {
 
 // MARK: - MockMemoryStore
 
-/// In-memory RuntimeMemoryStore for testing. Stores Codable values
+/// In-memory SessionMemoryStore for testing. Stores Codable values
 /// in a nested dictionary keyed by namespace and key.
-public actor MockMemoryStore: RuntimeMemoryStore {
+public actor MockMemoryStore: SessionMemoryStore {
     private var storage: [String: [String: Data]] = [:]
 
     public init() {}
@@ -106,16 +106,16 @@ public actor MockMemoryStore: RuntimeMemoryStore {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    public func search(query: String, namespace: String) async throws -> [RuntimeMemoryEntry] {
+    public func search(query: String, namespace: String) async throws -> [SessionMemoryEntry] {
         guard let ns = storage[namespace] else { return [] }
         let lowerQuery = query.lowercased()
-        return ns.compactMap { (key: String, data: Data) -> RuntimeMemoryEntry? in
+        return ns.compactMap { (key: String, data: Data) -> SessionMemoryEntry? in
             let valueString = String(data: data, encoding: .utf8) ?? ""
             guard key.lowercased().contains(lowerQuery)
                     || valueString.lowercased().contains(lowerQuery) else {
                 return nil
             }
-            return RuntimeMemoryEntry(
+            return SessionMemoryEntry(
                 key: key,
                 namespace: namespace,
                 value: data,
@@ -142,8 +142,8 @@ public actor MockMemoryStore: RuntimeMemoryStore {
 
 // MARK: - MockPermissionEngine
 
-/// Configurable mock RuntimePermissionEngine that returns a canned Bool.
-public struct MockPermissionEngine: RuntimePermissionEngine, Sendable {
+/// Configurable mock SessionPermissionEngine that returns a canned Bool.
+public struct MockPermissionEngine: SessionPermissionEngine, Sendable {
     /// The value returned by all `check(_:)` calls.
     public var shouldAllow: Bool
 

@@ -653,7 +653,7 @@ extension DeepSeekProviderTests {
         XCTAssertEqual(completeOA.count, 1)
     }
 
-    // MARK: Test 13: AgentRuntimeImpl integration
+    // MARK: Test 13: LanguageModelSessionImpl integration
 
     func test_agentRuntimeImpl_integrationWithDeepSeekProvider() async throws {
         let provider = DeepSeekProvider(apiKey: "sk-test", modelID: "deepseek-chat", compatibility: .openAICompatible)
@@ -661,14 +661,14 @@ extension DeepSeekProviderTests {
         let mockPermission = MockPermissionEngine(shouldAllow: true)
         let toolEngine = DefaultToolEngine()
 
-        let runtime = AgentRuntimeImpl(
+        let runtime = LanguageModelSessionImpl(
             modelProvider: provider,
             memoryStore: mockMemory,
             permissionEngine: mockPermission,
             toolEngine: toolEngine
         )
 
-        // Verify AgentRuntimeImpl accepts DeepSeekProvider as modelProvider
+        // Verify LanguageModelSessionImpl accepts DeepSeekProvider as modelProvider
         // This confirms:
         // 1. DeepSeekProvider conforms to LanguageModel
         // 2. makeExecutor() returns a valid LanguageModelExecutor
@@ -697,7 +697,7 @@ extension DeepSeekProviderTests {
             required: ["command"]
         )
         let tools = [
-            RuntimeToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
         ]
 
         let result = DeepSeekToolTranslator.translateAnthropicCompat(tools)
@@ -718,7 +718,7 @@ extension DeepSeekProviderTests {
             additionalProperties: false
         )
         let tools = [
-            RuntimeToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
         ]
 
         let result = DeepSeekToolTranslator.translateOpenAICompat(tools)
@@ -742,7 +742,7 @@ extension DeepSeekProviderTests {
     func test_toolTranslator_openAICompat_emptySchema() {
         let schema = JSONSchema(type: "object")
         let tools = [
-            RuntimeToolDefinition(name: "Simple", description: "Simple tool", inputSchema: schema),
+            SessionToolDefinition(name: "Simple", description: "Simple tool", inputSchema: schema),
         ]
 
         let result = DeepSeekToolTranslator.translateOpenAICompat(tools)
