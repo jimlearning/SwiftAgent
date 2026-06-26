@@ -44,13 +44,6 @@ struct ChatCommand: AsyncParsableCommand {
     var mcpClientsList = MCPClientsHolder()
 
     func run() async throws {
-        // Capture terminal state before LineEditor puts it in raw mode.
-        // promptUserForQuestions needs a fully correct cooked-mode terminal,
-        // and OR-ing flags on top of raw mode is fragile (c_cc, ICRNL, etc.).
-        var orig = termios()
-        tcgetattr(STDIN_FILENO, &orig)
-        let originalTermios = SendableTermios(value: orig)
-
         // Resolve API key
         let resolver = APIKeyResolver()
         let key = apiKey ?? resolver.resolve() ?? ""
@@ -68,7 +61,7 @@ struct ChatCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        let baseURL = ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"] ?? "https://api.deepseek.com/anthropic"
+        let baseURL = ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"] ?? "https://api.deepseek.com"
 
         let capability = TerminalCapability()
         let theme: ColorTheme = noColor ? .monochrome : .default
@@ -92,19 +85,46 @@ struct ChatCommand: AsyncParsableCommand {
             emitBlock("Debug logging enabled → \(dl.logFilePath)\n")
         }
 
-        // Set up client and tools
-        let client = LLMClient(apiKey: key, baseURL: baseURL, model: sharedModel.current, debugLogger: debugLog)
-        let registry = ToolRegistry()
+        let cwd = FileManager.default.currentDirectoryPath
+
+        // Set up LanguageModelSession with DeepSeek provider
         let taskManager = TaskManager()
-        let toolExecutor = ToolExecutor(registry: registry)
-        let subAgentEngine = QueryEngine(
-            client: client,
-            toolExecutor: toolExecutor,
-            contextManager: ContextManager(),
-            promptBuilder: SystemPromptBuilder()
+        let provider = DeepSeekProvider(
+            apiKey: key,
+            baseURL: URL(string: baseURL),
+            modelID: sharedModel.current
         )
-        let subAgentManager = SubAgentManager(engine: subAgentEngine, taskManager: taskManager)
-        registerBuiltinTools(into: registry, taskManager: taskManager, subAgentManager: subAgentManager)
+        let memoryStore = try SQLiteMemoryStore()
+        let toolEngine = DefaultToolEngine()
+        let permissionBridge = AgentPermissionBridge(engine: PermissionEngine())
+
+        // Register all tools from batch registries
+        let batch1 = Batch1ToolRegistry.tools(
+            workingDirectory: cwd,
+            mcpClients: [],
+            taskManager: taskManager,
+            availableTools: []
+        )
+        let batch23 = Batch23ToolRegistry.tools(workingDirectory: cwd)
+        var toolNames = Set<String>()
+        for (tool, metadata) in batch1 + batch23 {
+            toolNames.insert(tool.name)
+            await toolEngine.register(tool: tool, metadata: metadata)
+        }
+
+        let systemPrompt = SystemPromptBuilder.defaultPrompt(
+            workingDirectory: cwd,
+            toolNames: toolNames,
+            model: sharedModel.current
+        )
+
+        let agentSession = LanguageModelSessionImpl(
+            modelProvider: provider,
+            memoryStore: memoryStore,
+            permissionEngine: permissionBridge,
+            toolEngine: toolEngine,
+            systemPrompt: systemPrompt
+        )
 
         let editor = LineEditor()
 
@@ -117,12 +137,11 @@ struct ChatCommand: AsyncParsableCommand {
         let currentEscapeTask = EscapeTaskHolder()
 
         // ── Bootstrap MCP servers ──
-        let cwd = FileManager.default.currentDirectoryPath
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
         let mcpBootstrapper = MCPBootstrapper()
         let mcpToolDefs = await mcpBootstrapper.bootstrap(cwd: cwd, home: homeDir)
 
-        // Register each discovered MCP tool into the ToolRegistry
+        // Register each discovered MCP tool into the ToolEngine
         for def in mcpToolDefs {
             let parts = def.name.split(separator: "__", maxSplits: 2, omittingEmptySubsequences: true)
             if parts.count >= 3, parts[0] == "mcp" {
@@ -135,16 +154,21 @@ struct ChatCommand: AsyncParsableCommand {
                     inputSchema: def.inputSchema,
                     bootstrapper: mcpBootstrapper
                 )
-                registry.register(dynamicTool)
+                await toolEngine.register(tool: dynamicTool, metadata: ToolMetadata(
+                    searchHint: "MCP tool \(serverName)",
+                    isReadOnly: false,
+                    isConcurrencySafe: false,
+                    isDestructive: false,
+                    interruptBehavior: .cancel,
+                    activityDescription: "Calling MCP tool",
+                    requiresApproval: true
+                ))
             }
         }
 
         // Store clients in the holder for use in ToolUseContext
         let mcpClientMap = await mcpBootstrapper.clients
         mcpClientsList.clients = Array(mcpClientMap.values)
-
-        // Collect MCP server instructions for system prompt injection
-        let mcpInstructions = await mcpBootstrapper.serverInstructions
 
         // Log MCP startup status
         if !mcpClientMap.isEmpty {
@@ -155,14 +179,6 @@ struct ChatCommand: AsyncParsableCommand {
         for (server, error) in mcpFailures {
             emitBlock("[bold]MCP:[/] [yellow]\(server)[/] — \(error)")
         }
-
-        // Refresh toolDefs after MCP registration
-        let toolDefs = await registry.toolDefinitions()
-
-        // Build system prompt once — rebuilding on every API call breaks prompt caching.
-        // Must happen AFTER MCP bootstrap to include server instructions.
-        let toolNames = Set(toolDefs.map { $0.name })
-        let cachedSystemPrompt = buildSystemPrompt(model: sharedModel.current, toolNames: toolNames)
 
         // ── Set up inline popup data sources (@ and / completions) ──
         let sessionStore = SessionStore()  // needed early for SessionDataSource in popup
@@ -236,39 +252,13 @@ struct ChatCommand: AsyncParsableCommand {
         var sessionId = UUID().uuidString
         let sessionState = SessionState()
 
-        // Conversation history accumulates across turns so the LLM has full context.
-        // Each turn appends user message → assistant message(s) → tool results.
-        var conversationHistory: [Message] = []
-
-        // If --session flag provided, load the previous session
+        // If --session flag provided, print notice (full resume requires memory store integration)
         if let resumeID = session {
-            if let loaded = try? sessionStore.load(resumeID) {
-                conversationHistory = loaded.conversation.messages
-                sessionId = resumeID
-                let msgCount = conversationHistory.count
-                let titleSuffix = loaded.title.map { ": \"\($0)\"" } ?? ""
-                emitBlock("Resumed session \(resumeID.prefix(8))...\(titleSuffix) (\(msgCount) messages)")
-            } else {
-                // Try fuzzy match by partial title or ID prefix
-                if let match = try? sessionStore.listRecent(limit: 50).first(where: {
-                    $0.id.hasPrefix(resumeID) || ($0.title?.localizedCaseInsensitiveContains(resumeID) ?? false)
-                }) {
-                    if let loaded = try? sessionStore.load(match.id) {
-                        conversationHistory = loaded.conversation.messages
-                        sessionId = match.id
-                        let msgCount = conversationHistory.count
-                        emitBlock("Resumed session: \"\(match.title ?? match.id)\" (\(msgCount) messages)")
-                    }
-                } else {
-                    emitBlock("Session '\(resumeID)' not found. Starting fresh.")
-                }
-            }
+            emitBlock("Session resume requested: \(resumeID). Transcript loading from memory store not yet implemented.")
         }
 
         // ── Collapsed tool result tracking ──
         let toolResultCache = ToolResultCache()
-        let collapseDetector = CollapseDetector()
-        let summaryFormatter = CollapsedSummaryFormatter(capability: capability)
 
 
         // Nanobot-style REPL
@@ -317,7 +307,6 @@ struct ChatCommand: AsyncParsableCommand {
                 if cmd == "/exit" || cmd == "/quit" { break }
                 if cmd == "/clear" {
                     print(renderer.clearScreen())
-                    conversationHistory = []
                     continue
                 }
                 if cmd == "/expand" {
@@ -346,15 +335,8 @@ struct ChatCommand: AsyncParsableCommand {
                 if cmd == "/resume" && parts.count == 1 {
                     let sessions = (try? sessionStore.listRecent(limit: 20)) ?? []
                     if let picked = sessionPicker(sessions: sessions) {
-                        if let loaded = try? sessionStore.load(picked) {
-                            conversationHistory = loaded.conversation.messages
-                            sessionId = picked
-                            let msgCount = conversationHistory.count
-                            let titleSuffix = loaded.title.map { ": \"\($0)\"" } ?? ""
-                            emitBlock("Resumed session \(picked.prefix(8))...\(titleSuffix) (\(msgCount) messages)")
-                        } else {
-                            emitBlock("Session '\(picked)' not found on disk.")
-                        }
+                        sessionId = picked
+                        emitBlock("Resumed session \(picked.prefix(8))... (transcript restore from memory store pending)")
                     }
                     continue
                 }
@@ -373,15 +355,8 @@ struct ChatCommand: AsyncParsableCommand {
                 case .exit:
                     break  // will exit outer loop
                 case .resume(let resumeID):
-                    if let loaded = try? sessionStore.load(resumeID) {
-                        conversationHistory = loaded.conversation.messages
-                        sessionId = resumeID
-                        let msgCount = conversationHistory.count
-                        let titleSuffix = loaded.title.map { ": \"\($0)\"" } ?? ""
-                        emitBlock("Resumed session \(resumeID.prefix(8))...\(titleSuffix) (\(msgCount) messages)")
-                    } else {
-                        emitBlock("Session '\(resumeID)' not found on disk.")
-                    }
+                    sessionId = resumeID
+                    emitBlock("Resumed session \(resumeID.prefix(8))... (transcript restore from memory store pending)")
                 }
                 // .exit needs to break the outer while loop
                 if case .exit = outcome {
@@ -419,53 +394,10 @@ struct ChatCommand: AsyncParsableCommand {
                 continue
             }
 
-            // Append user message to conversation history.
-            // On the first turn, prepend MCP server instructions as a
-            // <system-reminder> block — matching Claude Code's injection
-            // mechanism which places MCP instructions in the conversation
-            // where the model is forced to attend to them.
-            let historyCount = conversationHistory.count
-
-            // On the first turn, inject system-reminder blocks as SEPARATE
-            // text content blocks — matching Claude Code's message structure
-            // where each <system-reminder> is its own {type: "text", text: "..."}
-            // block. This preserves semantic separation for the LLM.
-            let userContent: [ContentBlock]
-            if historyCount == 0 {
-                var blocks: [ContentBlock] = []
-
-                // Block 1: Deferred tools announcement (if any tools are deferred)
-                let deferredNames = toolDefs
-                    .filter { $0.deferLoading }
-                    .map { $0.name }
-                if let deferredReminder = buildDeferredToolsReminder(deferredNames: deferredNames) {
-                    blocks.append(.text(deferredReminder))
-                }
-
-                // Block 2: MCP server instructions (if any)
-                if let mcpReminder = buildMcpSystemReminder(instructions: mcpInstructions),
-                   !mcpInstructions.isEmpty {
-                    blocks.append(.text(mcpReminder))
-                }
-
-                // Block 3: CLAUDE.md + project memory + current date
-                if let claudeReminder = buildClaudeMdReminder() {
-                    blocks.append(.text(claudeReminder))
-                }
-
-                // Block 4: User input (always last, separate block)
-                blocks.append(.text(input))
-                userContent = blocks
-            } else {
-                userContent = [.text(input)]
-            }
-            conversationHistory.append(Message(type: .user, content: userContent))
-
             // Shared cancellation flag: ESC sets it, agent loop checks it
             let isCancelled = AtomicBool()
 
             // Background line reader — collects full lines during agent execution.
-            // Bare ESC → cancel; typed text + Enter → queued message.
             currentEscapeTask.task = Task { [isCancelled, lineBuffer] in
                 for await line in editor.backgroundLineReader(onCancel: {
                     isCancelled.value = true
@@ -474,54 +406,24 @@ struct ChatCommand: AsyncParsableCommand {
                 }
             }
 
-            // Interactive user input handler for AskUserQuestionTool.
-            // Defined inside the while loop so it can cancel/restart the
-            // escape-watcher Task. The watcher must be stopped before
-            // promptUserForQuestions switches to cooked mode, otherwise
-            // its poll()+read() loop steals the user's input byte-by-byte.
-            let userInputHandler: UserInputPromptHandler = { [currentEscapeTask, isCancelled] questions in
-                spinnerPause.paused = true
-                // Cancel both the outer for-await task AND the inner
-                // backgroundLineReader task (which otherwise becomes a
-                // zombie stealing stdin bytes from the cooked-mode prompt).
-                currentEscapeTask.task?.cancel()
-                await editor.stopBackgroundReader()
-                defer {
-                    spinnerPause.paused = false
-                    // Restart escape watcher for any remaining LLM rounds
-                    currentEscapeTask.task = Task { [isCancelled] in
-                        if await editor.interceptEscape() {
-                            isCancelled.value = true
-                        }
-                    }
-                }
-                var term = originalTermios.value
-                return await promptUserForQuestions(questions, originalTermios: &term)
-            }
-
             // Track current tool name for spinner display
             let currentTool = CurrentToolTracker()
 
-            // Spinner runs during the entire agent loop (may involve multiple
-            // LLM calls and tool executions)
+            // Spinner runs during the entire agent stream
             let spinnerTask = Task {
                 var frame = 0
                 while !Task.isCancelled {
-                    // Pause spinner during interactive user prompts (AskUserQuestion)
-                    // so its \r\e[K output doesn't clear the user's typed input.
                     if spinnerPause.paused {
                         try? await Task.sleep(nanoseconds: 50_000_000)
                         continue
                     }
-                    // When showing thinking text, pause the spinner so thinking
-                    // can render in-place without flicker.
                     if showThinking, currentTool.isThinking {
                         try? await Task.sleep(nanoseconds: 100_000_000)
                         continue
                     }
                     let line: String
-                    if let display = currentTool.displayLine {
-                        line = "\r\u{001B}[K  \(renderer.spinnerFrame(index: frame)) \(display)"
+                    if let name = currentTool.name {
+                        line = "\r\u{001B}[K  \(renderer.spinnerFrame(index: frame)) \(name)"
                     } else {
                         line = renderer.renderThinkingLine(frame: frame)
                     }
@@ -534,300 +436,59 @@ struct ChatCommand: AsyncParsableCommand {
                 fflush(stdout)
             }
 
-            var responseText = ""
             var wasCancelled = false
-            var cumulativeCacheRead = 0
-            var cumulativeCacheCreation = 0
-            var cumulativeInputTokens = 0
             let turnStart = Date()
 
-            do {
-                // No artificial iteration limit — the model decides when to stop
-                // by returning text without tool calls (stop_reason: "end_turn").
-                // The user can always ESC to cancel.
+            var eventRenderer = SessionEventRenderer(
+                terminal: renderer,
+                theme: theme,
+                showThinking: showThinking
+            )
 
-                while true {
-                    // Check for ESC cancellation before each LLM round
+            let stream = await agentSession.streamResponse(to: input)
+
+            do {
+                for try await event in stream {
                     if isCancelled.value { wasCancelled = true; break }
 
-                    var turnText = ""
-                    var thinkingText = ""
-                    var toolInputAccumulator = ChatToolInputAccumulator()
-                    var stopReason: String?
-
-                    let sysPrompt = cachedSystemPrompt
-                    // Filter tools to match CC's deferred-tool behavior:
-                    // Undiscovered deferred tools are REMOVED from the array
-                    // (the model cannot call them). Discovered tools are
-                    // included with full schemas (deferLoading: false).
-                    // Matches CC's claude.ts:1154-1167.
-                    let discovered = extractDiscoveredToolNames(messages: conversationHistory)
-                    let adjustedToolDefs = filterDeferredTools(toolDefs, discovered: discovered)
-                    // Build betas: include advanced-tool-use when deferred tools exist.
-                    // CC: "required for defer_loading to be accepted" (claude.ts:1174)
-                    var betas = Betas.claudeCodeRequestHeaders
-                    let hasDeferred = adjustedToolDefs.contains { $0.deferLoading }
-                    if hasDeferred, !betas.contains(Betas.toolSearch1P) { betas.append(Betas.toolSearch1P) }
-                    let stream = client.send(
-                        messages: conversationHistory,
-                        model: sharedModel.current,
-                        systemPrompt: sysPrompt,
-                        maxTokens: 32000,
-                        tools: adjustedToolDefs,
-                        thinking: .adaptive,
-                        betas: betas
-                    )
-
-                    for try await event in stream {
-                        // Check for ESC cancellation during stream
-                        if isCancelled.value { wasCancelled = true; break }
-                        switch event {
-                        case .textDelta(let text):
-                            if currentTool.isThinking {
-                                // End thinking: if we were showing thinking text,
-                                // reset dim mode + newline so thinking stays on
-                                // screen. Otherwise just clear the spinner.
-                                if showThinking {
-                                    print("\u{001B}[0m\n")
-                                } else {
-                                    print("\r\u{001B}[K", terminator: "")
-                                }
-                                currentTool.isThinking = false
-                            }
-                            turnText += text
-
-                        case .thinkingDelta(let text):
-                            currentTool.isThinking = true
-                            thinkingText += text
-                            if showThinking {
-                                // Stream thinking in dim mode, clearing the spinner
-                                // line on first delta. Thinking text stays on screen
-                                // after the turn because we emit a reset+newline on
-                                // the next textDelta or contentBlockStart.
-                                if thinkingText == text {
-                                    // First delta: clear spinner, indent, start dim
-                                    print("\r\u{001B}[K  \u{001B}[2m\(text)", terminator: "")
-                                } else {
-                                    print(text, terminator: "")
-                                }
-                                fflush(stdout)
-                            }
-
-                        case .contentBlockStart(_, let block):
-                            if currentTool.isThinking {
-                                if showThinking {
-                                    print("\u{001B}[0m\n")
-                                } else {
-                                    print("\r\u{001B}[K", terminator: "")
-                                }
-                                currentTool.isThinking = false
-                            }
-                            if case .toolUse(let name, let id) = block {
-                                toolInputAccumulator.startTool(name: name, id: id)
-                                // Suppress SendUserMessage spinner — it's a transparent
-                                // delivery mechanism, not a user-facing tool.
-                                if name != "SendUserMessage" {
-                                    currentTool.name = name
-                                }
-                            }
-
-                        case .inputJSONDelta(let delta):
-                            toolInputAccumulator.appendInputJSONDelta(delta)
-
-                        case .messageStart(let msg):
-                            // message_start carries full usage (input_tokens, cache fields)
-                            // per Anthropic API. message_delta only has output_tokens.
-                            if let u = msg.usage {
-                                cumulativeInputTokens = u.inputTokens
-                                cumulativeCacheRead = u.cacheReadInputTokens
-                                cumulativeCacheCreation = u.cacheCreationInputTokens
-                            }
-
-                        case .messageDelta(let reason, let usage):
-                            stopReason = reason
-                            if let u = usage {
-                                sessionState.addTokens(in: u.inputTokens, out: u.outputTokens)
-                                // message_delta.usage typically only has output_tokens
-                                // per Anthropic API spec. Accumulate defensively.
-                                if u.cacheReadInputTokens > 0 {
-                                    cumulativeCacheRead += u.cacheReadInputTokens
-                                }
-                                if u.cacheCreationInputTokens > 0 {
-                                    cumulativeCacheCreation += u.cacheCreationInputTokens
-                                }
-                                if u.inputTokens > 0 {
-                                    cumulativeInputTokens += u.inputTokens
-                                }
-                            }
-
-                        case .contentBlockStop:
-                            toolInputAccumulator.stopCurrentBlock()
-                            currentTool.name = nil
-
-                        default:
-                            break
+                    // Update spinner state from tool events
+                    switch event {
+                    case .toolCallRequested(_, let name, _):
+                        if name != "SendUserMessage" {
+                            currentTool.name = name
                         }
-                    }
-
-                    // If stream was interrupted by ESC, break out of agent loop
-                    if wasCancelled { break }
-
-                    let toolInputError = toolInputAccumulator.finish(stopReason: stopReason)
-                    let toolBlocks = toolInputAccumulator.parsedCalls
-                    let wasTruncated = toolInputError != nil || stopReason == "max_tokens"
-
-                    // ── Truncation recovery ──
-                    if wasTruncated {
-                        if !toolBlocks.isEmpty {
-                            var ab: [ContentBlock] = []
-                            if !thinkingText.isEmpty { ab.append(.thinking(thinkingText)) }
-                            if !turnText.isEmpty { ab.append(.text(turnText)) }
-                            for tb in toolBlocks { ab.append(.toolUse(id: tb.id, name: tb.name, input: JSONValue.object(tb.input))) }
-                            conversationHistory.append(Message(type: .assistant, content: ab))
-
-                            let results = await ChatToolExecutionScheduler.execute(
-                                calls: toolBlocks,
-                                isConcurrencySafe: { call in registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false },
-                                execute: { call in
-                                    if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
-                                    let summary = await executeTool(name: call.name, input: call.input, toolUseID: call.id, registry: registry, sessionState: sessionState, currentTool: currentTool, sharedModel: sharedModel, userInputPromptHandler: userInputHandler)
-                                    if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
-                                    return summary
-                                }
-                            )
-                            var sentUserMessage = false
-                            for result in results {
-                                if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
-                                    responseText = msg
-                                    sentUserMessage = true
-                                }
-                            }
-                            if sentUserMessage { break }
-                            // Collapse and emit tool results (excluding SendUserMessage)
-                            let nonMessageResults = results.filter { $0.call.name != "SendUserMessage" }
-                            await emitCollapsedResults(
-                                results: nonMessageResults,
-                                detector: collapseDetector,
-                                formatter: summaryFormatter,
-                                cache: toolResultCache
-                            )
-                            expandState.expandedGroupIndex = nil; expandState.expandedLineCount = 0  // New results → reset expand state
-                            let resultBlocks = results.map { result in
-                                ContentBlock.toolResult(toolUseID: result.call.id, content: .string(result.output), isError: result.output.hasPrefix("Error:"))
-                            }
-                            conversationHistory.append(Message(
-                                type: .user,
-                                content: appendToolResultCacheBreakpointReminder(to: resultBlocks)
-                            ))
-                        } else if !thinkingText.isEmpty || !turnText.isEmpty {
-                            var blocks: [ContentBlock] = []
-                            if !thinkingText.isEmpty { blocks.append(.thinking(thinkingText)) }
-                            if !turnText.isEmpty { blocks.append(.text(turnText)) }
-                            conversationHistory.append(Message(type: .assistant, content: blocks))
+                    case .toolCallCompleted:
+                        currentTool.name = nil
+                    case .textDelta:
+                        if currentTool.isThinking {
+                            if showThinking { print("\u{001B}[0m\n") }
+                            else { print("\r\u{001B}[K", terminator: "") }
+                            currentTool.isThinking = false
                         }
-                        let hint = toolInputError?.message ?? "Output truncated by token limit. Please continue."
-                        conversationHistory.append(Message(type: .user, content: [.text("[system] \(hint) Continue from where you left off.")]))
-                        continue
-                    }
-
-                    // No tool calls → model signaled completion
-                    if toolBlocks.isEmpty {
-                        var blocks: [ContentBlock] = []
-                        if !thinkingText.isEmpty { blocks.append(.thinking(thinkingText)) }
-                        if !turnText.isEmpty { blocks.append(.text(turnText)) }
-                        if !blocks.isEmpty {
-                            conversationHistory.append(Message(type: .assistant, content: blocks))
-                        } else {
-                            conversationHistory.append(Message(type: .assistant, content: [.text("[OK]")]))
+                    case .thinkingDelta:
+                        currentTool.isThinking = true
+                    case .turnCompleted(let usage, _):
+                        if let u = usage {
+                            sessionState.addTokens(in: u.inputTokens, out: u.outputTokens)
                         }
-                        responseText = turnText
+                    case .error:
                         break
                     }
 
-                    // Build assistant message with thinking + tool_use blocks.
-                    // Must include thinking block per API requirements (echoed back).
-                    var assistantBlocks: [ContentBlock] = []
-                    if !thinkingText.isEmpty { assistantBlocks.append(.thinking(thinkingText)) }
-                    if !turnText.isEmpty { assistantBlocks.append(.text(turnText)) }
-                    for tb in toolBlocks {
-                        assistantBlocks.append(.toolUse(id: tb.id, name: tb.name, input: JSONValue.object(tb.input)))
-                    }
-                    conversationHistory.append(Message(type: .assistant, content: assistantBlocks))
-
-                    // Execute tools and collect results. Consecutive concurrency-safe
-                    // tools run in parallel, but non-safe tools preserve serial order.
-                    let results = await ChatToolExecutionScheduler.execute(
-                        calls: toolBlocks,
-                        isConcurrencySafe: { call in
-                            registry.tool(named: call.name)?.isConcurrencySafe(call.input) ?? false
-                        },
-                        execute: { call in
-                            if call.name != "SendUserMessage" { currentTool.start(id: call.id, name: call.name, displayCmd: formatToolCommand(name: call.name, input: call.input, capability: capability)) }
-                            let summary = await executeTool(
-                                name: call.name,
-                                input: call.input,
-                                toolUseID: call.id,
-                                registry: registry,
-                                sessionState: sessionState,
-                                currentTool: currentTool,
-                                sharedModel: sharedModel,
-                                userInputPromptHandler: userInputHandler
-                            )
-                            if call.name != "SendUserMessage" { currentTool.finish(id: call.id) }
-                            return summary
-                        }
-                    )
-
-                    // Render tool results visible to the user.
-                    // SendUserMessage: the model's user-facing response — display
-                    // with left-border treatment and break the agent loop (matching
-                    // CC's behavior where SendUserMessage terminates the turn).
-                    var sentUserMessage = false
-                    for result in results {
-                        if result.call.name == "SendUserMessage", case .string(let msg) = result.call.input["message"] {
-                            responseText = msg
-                            sentUserMessage = true
-                        }
-                    }
-                    // Collapse and emit tool results (excluding SendUserMessage)
-                    let nonMessageResults = results.filter { $0.call.name != "SendUserMessage" }
-                    await emitCollapsedResults(
-                        results: nonMessageResults,
-                        detector: collapseDetector,
-                        formatter: summaryFormatter,
-                        cache: toolResultCache
-                    )
-                    expandState.expandedGroupIndex = nil; expandState.expandedLineCount = 0  // New results → reset expand state
-
-                    let resultBlocks = results.map { result in
-                        ContentBlock.toolResult(
-                            toolUseID: result.call.id,
-                            content: .string(result.output),
-                            isError: result.output.hasPrefix("Error:")
-                        )
-                    }
-
-                    // Send tool results as a user message with tool_result blocks
-                    conversationHistory.append(Message(
-                        type: .user,
-                        content: appendToolResultCacheBreakpointReminder(to: resultBlocks)
-                    ))
-                    if sentUserMessage { break }
+                    eventRenderer.render(event)
                 }
-
             } catch {
                 debugLog?.logError(error)
-                responseText = "Error: \(error.localizedDescription)"
+                eventRenderer = SessionEventRenderer(terminal: renderer, theme: theme, showThinking: showThinking)
             }
 
             spinnerTask.cancel()
             currentEscapeTask.task?.cancel()
             await editor.stopBackgroundReader()
 
-            if wasCancelled {
-                conversationHistory.removeSubrange(historyCount...)
-                responseText = "(cancelled — press ↑ to recall previous input)"
-            }
+            let responseText = wasCancelled
+                ? "(cancelled — press ↑ to recall previous input)"
+                : eventRenderer.accumulatedText
 
             // Display response with left border
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -836,36 +497,16 @@ struct ChatCommand: AsyncParsableCommand {
                     ? renderer.renderLeftBorder(content: trimmed)
                     : markdown.render(trimmed)
                 emitBlock(rendered)
-            } else {
+            } else if !wasCancelled {
                 emitBlock(renderer.renderLeftBorder(content: "(done)"))
             }
 
-            // Display cache hit rate after the response (footnote)
-            if cumulativeInputTokens > 0 && !wasCancelled {
-                let comparableInputTokens = cumulativeInputTokens + cumulativeCacheRead + cumulativeCacheCreation
-                let cacheHitRate = comparableInputTokens > 0
-                    ? Double(cumulativeCacheRead) / Double(comparableInputTokens) * 100.0
-                    : 0
-                let cacheInfo = String(
-                    format: "  ↳ cache: %.0f%% hit (%d read, %d created, %d raw in, %d comparable in)",
-                    cacheHitRate,
-                    cumulativeCacheRead,
-                    cumulativeCacheCreation,
-                    cumulativeInputTokens,
-                    comparableInputTokens
-                )
-                let elapsed = Date().timeIntervalSince(turnStart)
-                let elapsedStr = elapsed < 1.0
-                    ? String(format: "%.0fms", elapsed * 1000)
-                    : String(format: "%.0fs", elapsed)
-                emitBlock(capability.color("\(cacheInfo)  ✻ \(elapsedStr)", color: .brightBlack))
-                debugLog?.logUsage(
-                    inputTokens: cumulativeInputTokens,
-                    outputTokens: sessionState.totalTokensOut,
-                    cacheRead: cumulativeCacheRead,
-                    cacheCreation: cumulativeCacheCreation
-                )
-            }
+            // Display timing
+            let elapsed = Date().timeIntervalSince(turnStart)
+            let elapsedStr = elapsed < 1.0
+                ? String(format: "%.0fms", elapsed * 1000)
+                : String(format: "%.0fs", elapsed)
+            emitBlock(capability.color("  ✻ \(elapsedStr)", color: .brightBlack))
 
             // In non-interactive mode (--prompt), exit after the first turn.
             // This enables automated cache testing: feed a prompt, let the
@@ -873,8 +514,7 @@ struct ChatCommand: AsyncParsableCommand {
             if self.prompt != nil { break }
         }
 
-        // Save session before exiting so /resume can find it
-        saveSession(history: conversationHistory, id: sessionId, store: sessionStore)
+        // Session persistence handled by SQLiteMemoryStore internally
 
         editor.save()
         // Move cursor up to overwrite the "You: " prompt line, then print goodbye
@@ -892,71 +532,6 @@ struct ChatCommand: AsyncParsableCommand {
     }
 
 
-
-    // MARK: - Tool execution
-
-    /// Execute a tool by name and return a string result.
-    /// Uses ToolExecutor for full permission checking and validation,
-    /// falling back to direct Process execution for Bash commands.
-    private func executeTool(
-        name: String,
-        input: [String: JSONValue],
-        toolUseID: String,
-        registry: ToolRegistry,
-        sessionState: SessionState,
-        currentTool: CurrentToolTracker? = nil,
-        sharedModel: SharedModel,
-        userInputPromptHandler: UserInputPromptHandler? = nil
-    ) async -> String {
-        let bylassAvailable = permission == "bypass"
-
-        var context = ToolUseContext(
-            workingDirectory: FileManager.default.currentDirectoryPath,
-            sessionID: "repl",
-            toolUseID: toolUseID,
-            mode: sessionState.isPlanModeActive ? .plan : parsePermissionMode(permission),
-            isBypassPermissionsModeAvailable: bylassAvailable,
-            isAutoModeAvailable: bylassAvailable,
-            prePlanMode: sessionState.isPlanModeActive ? .plan : nil,
-            tools: registry.allTools,
-            mcpClients: mcpClientsList.clients.isEmpty ? nil : mcpClientsList.clients,
-            mainLoopModel: sharedModel.current,
-            querySource: .repl,
-            permissionPromptHandler: { _, _, _ in
-                bylassAvailable ? .allow : .deny(reason: "Permission prompts not available in REPL mode")
-            },
-            userInputPromptHandler: userInputPromptHandler
-        )
-
-        // Plan mode state callback — allows EnterPlanMode/ExitPlanMode tools to toggle state
-        context.setPlanModeActive = { active in
-            sessionState.setPlanModeActive(active)
-        }
-
-        // Register agent definitions for AgentTool
-        context.agentDefinitions = BuiltInAgents.all.values.map { $0 }
-
-        // Register bundled skills as commands for SkillTool
-        context.commands = buildAllSkillCommands(workingDirectory: context.workingDirectory)
-
-        let executor = ToolExecutor(registry: registry)
-        let onProgress: ToolCallProgress = { progress in
-            if let agentProgress = progress.data as? AgentToolProgressData {
-                currentTool?.update(id: progress.toolUseID, status: agentProgress.message)
-            } else if let taskProgress = progress.data as? TaskOutputProgressData {
-                currentTool?.update(id: progress.toolUseID, status: Self.formatTaskOutputProgress(taskProgress))
-            } else {
-                currentTool?.update(id: progress.toolUseID, status: "\(name): \(progress.data.type)")
-            }
-        }
-
-        do {
-            let result = try await executor.execute(name: name, input: input, context: context, onProgress: onProgress)
-            return result.content
-        } catch {
-            return "Error: \(error.localizedDescription)"
-        }
-    }
 
     /// Build FullCommand wrappers for all skills: project-level, user-level, and bundled.
     /// These are passed to SkillTool via context.commands so the LLM can invoke skills.
@@ -1034,38 +609,6 @@ struct ChatCommand: AsyncParsableCommand {
         return commands
     }
 
-    static func formatTaskOutputProgress(_ progress: TaskOutputProgressData) -> String {
-        let summary = progress.summary
-        let label: String
-        switch summary.phase {
-        case .pending:
-            label = "pending"
-        case .running:
-            label = shortTaskMessage(summary.lastMessage, taskName: summary.taskName)
-        case .thinking:
-            label = "thinking"
-        case .usingTool:
-            label = shortTaskMessage(summary.lastMessage, taskName: summary.taskName)
-        case .writingResults:
-            label = "writing results"
-        case .turnComplete:
-            label = "turn \(summary.turnCount) complete"
-        case .completed:
-            label = "done"
-        case .failed:
-            label = "failed"
-        case .killed:
-            label = "stopped"
-        }
-        return "\(summary.taskName): \(label)"
-    }
-
-    private static func shortTaskMessage(_ message: String, taskName: String) -> String {
-        let prefix = taskName + " "
-        let trimmed = message.hasPrefix(prefix) ? String(message.dropFirst(prefix.count)) : message
-        return trimmed
-    }
-
     // MARK: - Helpers
 
     /// Persist the current conversation history to `~/.swift-agent/sessions/<id>.json`.
@@ -1138,55 +681,4 @@ struct ChatCommand: AsyncParsableCommand {
         }
     }
 
-    private func registerBuiltinTools(
-        into registry: ToolRegistry,
-        taskManager: TaskManager,
-        subAgentManager: SubAgentManager
-    ) {
-        registry.register(FileReadTool())
-        registry.register(FileWriteTool())
-        registry.register(FileEditTool())
-        registry.register(BashTool())
-        registry.register(GlobTool())
-        registry.register(GrepTool())
-        registry.register(WebFetchTool())
-        registry.register(WebSearchTool())
-        registry.register(TodoWriteTool())
-        registry.register(NotebookEditTool())
-        registry.register(ConfigTool())
-        registry.register(EnterWorktreeTool())
-        registry.register(ExitWorktreeTool())
-        // NOTE: MCPTool (generic meta-tool) is intentionally NOT registered.
-        // DynamicMCPTool instances are created per-tool during MCP bootstrap above.
-        // Registering MCPTool would give the model a shortcut to bypass individual
-        // tool schemas, defeating deferred loading and proper tool selection.
-        registry.register(McpAuthTool())
-        registry.register(ListMcpResourcesTool())
-        registry.register(ReadMcpResourceTool())
-        registry.register(BriefTool())
-        registry.register(TaskCreateTool(taskManager: taskManager))
-        registry.register(TaskGetTool(taskManager: taskManager))
-        registry.register(TaskListTool(taskManager: taskManager))
-        registry.register(TaskOutputTool(taskManager: taskManager))
-        registry.register(TaskUpdateTool(taskManager: taskManager))
-        registry.register(TaskStopTool(taskManager: taskManager))
-        registry.register(AgentTool(subAgentManager: subAgentManager))
-        registry.register(SkillTool(knownSkills: SkillFileLoader.allSkillNames(workingDirectory: FileManager.default.currentDirectoryPath)))
-        registry.register(ListSkillsTool())
-        registry.register(SendMessageTool())
-        registry.register(AskUserQuestionTool())
-        registry.register(LSPTool())
-        registry.register(EnterPlanModeTool())
-        registry.register(ExitPlanModeV2Tool())
-        registry.register(CronCreateTool())
-        registry.register(CronDeleteTool())
-        registry.register(CronListTool())
-        registry.register(PowerShellTool())
-        registry.register(ToolSearchTool(toolRegistry: registry))
-        registry.register(SleepTool())
-        registry.register(SyntheticOutputTool())
-        registry.register(RemoteTriggerTool())
-        registry.register(TeamCreateTool())
-        registry.register(TeamDeleteTool())
-    }
 }

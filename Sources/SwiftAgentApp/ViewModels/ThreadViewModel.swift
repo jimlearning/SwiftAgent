@@ -34,7 +34,7 @@ public enum ThreadState: Equatable, Sendable {
 // MARK: - ThreadViewModel
 
 /// View model for a single conversation thread.
-/// Manages the agent loop via `AgentSessionManager`, message list,
+/// Manages the agent loop via `LanguageModelSessionImpl`, message list,
 /// streaming state, and persistence.
 @MainActor
 public final class ThreadViewModel: ObservableObject, Identifiable {
@@ -80,8 +80,8 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
 
     // MARK: - Dependencies
 
-    /// The agent session manager (shared across threads).
-    private weak var agentSession: AgentSessionManager?
+    /// The agent runtime session (shared across threads).
+    private var session: LanguageModelSessionImpl?
 
     /// Storage manager for persistence (file-based, CC-compatible).
     private weak var store: SwiftAgentStore?
@@ -114,6 +114,12 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     /// ID of the user message that triggered the current agent run.
     /// Used in handleRunResult to correctly identify the range to replace.
     private var currentRunUserMessageID: String?
+    /// UUID of the last persisted log entry (for parentUuid chaining).
+    private var lastPersistedEntryUUID: String?
+    /// Git branch name for the current project (lazy, set on first persist).
+    private var gitBranch: String?
+    /// Current prompt ID (regenerated for each user message).
+    private var currentPromptId: String?
 
     /// Optional callbacks
     public var onStreamComplete: (() -> Void)?
@@ -123,16 +129,16 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
 
     public init(
         id: String = UUID().uuidString,
-        agentSession: AgentSessionManager? = nil,
+        session: LanguageModelSessionImpl? = nil,
         store: SwiftAgentStore? = nil
     ) {
         self.id = id
-        self.agentSession = agentSession
+        self.session = session
         self.store = store
     }
 
-    public func setAgentSession(_ session: AgentSessionManager?) {
-        self.agentSession = session
+    public func setSession(_ session: LanguageModelSessionImpl?) {
+        self.session = session
     }
 
     /// Update from a persisted thread record.
@@ -251,7 +257,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     public func send(userText: String) {
         let debugger = AgentDebugger.shared
 
-        guard let session = agentSession, session.isBootstrapped else {
+        guard session != nil else {
             state = .failed("Agent session not ready")
             debugger.logError("Send failed: agent session not ready", category: .lifecycle)
             return
@@ -285,11 +291,11 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     /// creating/persisting a new user message — the queued message
     /// was already added to the UI in send()'s early return.
     private func startAgentRun(userText trimmed: String, reuseUserMessageID: String? = nil) {
-        guard let session = agentSession else { return }
+        guard let session = session else { return }
 
         // Add user message (skip for queued messages — already in the list)
         let userMsgID: String
-        let userMessage: AgentMessage? // captured for persistence after onFirstUserMessage
+        let userMessage: AgentMessage?
         if let reuseID = reuseUserMessageID {
             userMsgID = reuseID
             userMessage = nil
@@ -303,15 +309,28 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         currentRunUserMessageID = userMsgID
 
         // CRITICAL: Promote pending thread BEFORE persisting the user message.
-        // onFirstUserMessage → commitPendingThreadIfNeeded → persistThreadToDB →
-        // createSession which registers the session in sessions-index.json.
-        // If persistMessageWithBlocks runs first, appendMessage creates the JSONL
-        // file, then commitPendingThreadIfNeeded skips createSession (because the
-        // file already exists), and the session never appears in the index.
         onFirstUserMessage?()
 
-        // Now persist the user message — the session is already in the index
-        // so appendMessage can update messageCount correctly.
+        // Write permission-mode entry (CC writes at session start)
+        if let s = store, let mode = appViewModel?.permissionMode {
+            let cwd = projectId ?? workingDirectory
+            let sid = id
+            let permEntry = LogEntry.permissionMode(PermissionModeEntry(sessionID: sid, permissionMode: mode))
+            Task.detached { [store = s] in
+                try? store.appendMetadata(permEntry, sessionId: sid, projectPath: cwd)
+            }
+        }
+
+        // Resolve git branch asynchronously (off MainActor) to avoid UI freeze
+        // if the git process hangs.
+        if gitBranch == nil {
+            let c = projectId ?? workingDirectory
+            Task { [weak self] in
+                self?.gitBranch = await Self.resolveGitBranch(cwd: c)
+            }
+        }
+
+        // Persist the user message.
         if let msg = userMessage {
             persistMessageWithBlocks(msg)
         }
@@ -321,7 +340,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         let assistantMessage = AgentMessage.assistantStreaming(id: assistantID)
         messages.append(assistantMessage)
 
-        // Update state — defer to avoid publishing during view updates
+        // Update state
         DispatchQueue.main.async { [self] in
             state = .executing
             executionStartTime = Date()
@@ -334,7 +353,6 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         if title == "Untitled" || title == "New Chat" {
             let snippet = String(trimmed.prefix(60))
             title = snippet
-            // Title update via store.appendMetadata
             if let s = store {
                 let cwd = projectId ?? workingDirectory
                 let entry = LogEntry.customTitle(CustomTitleEntry(sessionID: id, customTitle: snippet))
@@ -342,38 +360,27 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             }
         }
 
-        // Build conversation from current messages
-        let conversation = buildConversation()
-
-        // Find project working directory
-        let workingDir = workingDirectory
         print("[ThreadVM] send() threadId=\(id.prefix(8)) projectId=\(projectId ?? "nil") workingDir=\(workingDirectory)")
         print("[ThreadVM] send() text=\"\(trimmed.truncated(to: 50))\"")
 
-        // Start agent loop
+        // Start agent loop via streamResponse
         let runStartTime = CFAbsoluteTimeGetCurrent()
-        print("[AgentLoop] RUN_START session.run() — input=\"\(trimmed.truncated(to: 30))\"")
+        print("[AgentLoop] RUN_START streamResponse() — input=\"\(trimmed.truncated(to: 30))\"")
         streamingTask = Task { [weak self] in
             guard let self else { return }
 
+            let stream = await session.streamResponse(to: trimmed)
             do {
-                let result = try await session.run(
-                    userInput: trimmed,
-                    conversation: conversation,
-                    workingDirectory: workingDir,
-                    onEvent: { [weak self] event in
-                        Task { @MainActor [weak self] in
-                            self?.handleStreamEvent(event, assistantID: assistantID)
-                        }
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    await MainActor.run {
+                        self.handleSessionEvent(event, assistantID: assistantID)
                     }
-                )
-
-                // Agent loop completed — finalize
+                }
                 let runElapsed = (CFAbsoluteTimeGetCurrent() - runStartTime) * 1000
-                print("[AgentLoop] RUN_DONE elapsed=\(String(format: "%.0f", runElapsed))ms turnCount=\(result.turns.count) toolCalls=\(result.totalToolCalls)")
-                print("[AgentLoop] HANDLE_RESULT starting — messages.count=\(self.messages.count)")
+                print("[AgentLoop] RUN_DONE elapsed=\(String(format: "%.0f", runElapsed))ms")
                 await MainActor.run {
-                    self.handleRunResult(result, assistantID: assistantID)
+                    self.handleStreamComplete(assistantID: assistantID)
                 }
             } catch {
                 let runElapsed = (CFAbsoluteTimeGetCurrent() - runStartTime) * 1000
@@ -396,7 +403,6 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     public func cancel() {
         streamingTask?.cancel()
         streamingTask = nil
-        agentSession?.cancelRun()
         stopThoughtTimer()
         reasoningExpanded = false
         state = .idle
@@ -437,107 +443,100 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         startAgentRun(userText: next, reuseUserMessageID: existingUserID)
     }
 
-    // MARK: - Stream Event Handling
+    // MARK: - Session Event Handling
 
-    private func handleStreamEvent(_ event: StreamingQueryEvent, assistantID: String) {
-        let debugger = AgentDebugger.shared
+    private func handleSessionEvent(_ event: SessionEvent, assistantID: String) {
         guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
 
         switch event {
         case .textDelta(let text):
             messages[index].appendText(text)
-            streamPersistCounter += 1
-            if streamPersistCounter % 5 == 0 {
-                persistMessageWithBlocks(messages[index])
-            }
 
         case .thinkingDelta(let text):
             messages[index].appendThinking(text)
-            streamPersistCounter += 1
-            if streamPersistCounter % 5 == 0 {
-                persistMessageWithBlocks(messages[index])
-            }
 
-        case .toolStarted(let toolUseID, let toolName, let inputSummary):
-            print("[AgentLoop] TOOL_START \(toolName) id=\(toolUseID.prefix(8))")
-            debugger.logTool("Tool started: \(toolName)", metadata: ["id": toolUseID, "summary": inputSummary ?? ""])
+        case .toolCallRequested(let toolUseID, let toolName, let input):
+            let inputStr = String(data: input, encoding: .utf8) ?? ""
+            let summary = summarizeToolInput(toolName: toolName, input: input)
             messages[index].addToolUse(ToolUseBlock(
                 toolUseID: toolUseID,
                 toolName: toolName,
-                inputSummary: inputSummary ?? toolName,
-                inputDetail: "",
+                inputSummary: summary,
+                inputDetail: inputStr,
+                rawInput: parseJSONValue(input),
                 status: .executing
             ))
-            persistMessageWithBlocks(messages[index])
+            // Persistence deferred to handleStreamComplete (CC only writes final entries)
 
-        case .toolCompleted(let toolUseID, _, let content, let isError):
-            let contentPreview = (content).truncated(to: 60)
-            print("[AgentLoop] TOOL_DONE \(isError ? "ERROR" : "OK") id=\(toolUseID.prefix(8)) output=\"\(contentPreview)\"")
+        case .toolCallCompleted(let toolUseID, let output, let isError):
+            let outputStr = output.stringValue
             messages[index].updateToolUse(
                 toolUseID: toolUseID,
-                status: isError ? .error(content) : .completed
+                status: isError ? .error(outputStr) : .completed
             )
             messages[index].addToolResult(ToolResultBlock(
                 toolUseID: toolUseID,
-                content: content,
+                content: outputStr,
                 isError: isError
             ))
-            persistMessageWithBlocks(messages[index])
+            // Persistence deferred to handleStreamComplete (CC only writes final entries)
 
-        case .turnComplete:
-            // Persist intermediate assistant state so multi-turn runs survive crash
-            persistMessageWithBlocks(messages[index])
-
-        case .assistantTextStreaming, .modelStreaming, .toolProgress:
-            if case .modelStreaming = event {
-                streamPersistCounter = 0
+            // Write file-history-snapshot for file-editing tools
+            let toolName = messages[index].blocks.compactMap { b -> String? in
+                if case .toolUse(let tu) = b, tu.toolUseID == toolUseID { return tu.toolName }
+                return nil
+            }.first
+            let fileEditTools: Set<String> = ["Bash", "Write", "Edit"]
+            if let tn = toolName, fileEditTools.contains(tn), let s = store {
+                let cwd = projectId ?? workingDirectory
+                let snapshotEntry = LogEntry.fileHistorySnapshot(FileHistorySnapshotEntry(
+                    messageID: messages[index].id,
+                    isSnapshotUpdate: false
+                ))
+                let sid = id
+                Task.detached { [store = s] in
+                    try? store.appendMetadata(snapshotEntry, sessionId: sid, projectPath: cwd)
+                }
             }
-            break
+
+        case .turnCompleted(let usage, _):
+            if let u = usage {
+                messages[index].tokenUsage = u
+            }
+            // Persistence deferred to handleStreamComplete which calls finalize() first.
+
+        case .error(let err):
+            print("[AgentLoop] SESSION_ERROR: \(err.localizedDescription)")
+            // Defense: update state immediately so the UI doesn't appear stuck.
+            // handleStreamError handles full cleanup (persist, processNextQueued).
+            state = .failed(userFriendlyMessage(for: err))
+            stopThoughtTimer()
+            streamingTask?.cancel()
+            streamingTask = nil
         }
     }
 
-
-    private func handleRunResult(_ result: RunResult, assistantID: String) {
-        let debugger = AgentDebugger.shared
-        debugger.logLLM("Turn complete", metadata: [
-            "turns": "\(result.turns.count)",
-            "toolCalls": "\(result.totalToolCalls)",
-            "tokensIn": "\(result.tokenUsage.inputTokens)",
-            "tokensOut": "\(result.tokenUsage.outputTokens)"
-        ])
+    private func handleStreamComplete(assistantID: String) {
         guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
+        messages[index].finalize()
+        persistMessageWithBlocks(messages[index])
 
-        // Rebuild the message list from the agent's turns to preserve
-        // tool_use blocks, tool results, and thinking in correct order.
-        let turnMessages = AgentMessage.fromTurns(result.turns, lastAssistantID: assistantID)
-        if !turnMessages.isEmpty {
-            // Find the user message that triggered this run, then remove
-            // everything from there to the end (assistant placeholder +
-            // any stale streaming state). Queued user messages (appended
-            // after the placeholder) are NOT removed.
-            if let userIdx = messages.firstIndex(where: { $0.id == currentRunUserMessageID }) {
-                var cutoff = messages.count
-                for i in (userIdx + 1)..<messages.count {
-                    if messages[i].role == .user && messages[i].id != currentRunUserMessageID {
-                        cutoff = i
-                        break
-                    }
-                }
-                messages.removeSubrange(userIdx..<cutoff)
-            } else {
-                messages.remove(at: index)
+        // Write stop_hook_summary system entry (CC writes after each assistant turn)
+        if let s = store {
+            let cwd = projectId ?? workingDirectory
+            let systemEntry = LogEntry.systemEntry(SystemEntry(
+                subtype: "stop_hook_summary",
+                sessionID: id,
+                parentUuid: lastPersistedEntryUUID,
+                cwd: cwd,
+                entrypoint: "app",
+                version: "0.3.0",
+                gitBranch: gitBranch
+            ))
+            let sid = id
+            Task.detached { [store = s] in
+                try? store.appendMetadata(systemEntry, sessionId: sid, projectPath: cwd)
             }
-            messages.append(contentsOf: turnMessages)
-
-            // Persist turn messages, but skip user messages — they were
-            // already persisted in startAgentRun with a different UUID.
-            for msg in turnMessages where msg.role != .user {
-                persistMessageWithBlocks(msg)
-            }
-        } else {
-            // No turns — just finalize the placeholder
-            messages[index].finalize(tokenUsage: result.tokenUsage)
-            persistMessageWithBlocks(messages[index])
         }
 
         state = .done
@@ -546,11 +545,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         streamingTask = nil
         persistState()
 
-        let t0 = CFAbsoluteTimeGetCurrent()
-        print("[AgentLoop] HANDLE_RESULT done — calling onStreamComplete (diff refresh)")
         onStreamComplete?()
-        let t1 = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        print("[AgentLoop] HANDLE_RESULT onStreamComplete returned in \(String(format: "%.0f", t1))ms")
         processNextQueued()
     }
 
@@ -571,6 +566,11 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
 
     /// Persist an AgentMessage with full block metadata to the JSONL transcript file.
     ///
+    /// CC-compatible: thinking and non-thinking blocks are persisted as separate log entries,
+    /// each with a unique UUID, sharing the message.id. The parentUuid chains correctly
+    /// across entries (thinking → text/tool). Model name and stop_reason are included on
+    /// assistant messages.
+    ///
     /// Conversion (pure computation) runs on MainActor; file I/O is dispatched to a
     /// detached task so it never blocks the main thread during streaming.
     private func persistMessageWithBlocks(_ msg: AgentMessage) {
@@ -581,45 +581,96 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         let threadId = id
         let cwd = projectId ?? workingDirectory
         let resolvedPath = SwiftAgentPaths.transcriptPath(sessionId: threadId, projectPath: cwd)
+        let modelName = selectedModel
+        let stopReason = msg.isStreaming ? nil : "end_turn"
+        let branch = gitBranch  // resolved asynchronously in startAgentRun
 
-        guard let coreMessage = convertToCoreMessage(msg) else {
-            print("[ThreadVM] persistMessageWithBlocks: SKIP — convertToCoreMessage returned nil. threadId=\(threadId.prefix(8))")
-            return
+        // Regenerate promptId for each user message
+        let isUserMsg = msg.role == .user
+        if isUserMsg {
+            currentPromptId = UUID().uuidString
         }
+        let promptId: String? = isUserMsg ? currentPromptId : nil
+        let permMode = isUserMsg ? (appViewModel?.permissionMode) : nil
 
         print("[ThreadVM] persistMessageWithBlocks: threadId=\(threadId.prefix(8)) projectId=\(projectId ?? "nil") cwd=\(cwd) → file=\(resolvedPath)")
 
-        let serialized = SerializedMessage(
-            uuid: msg.id,
-            message: coreMessage,
-            cwd: cwd,
-            userType: "external",
-            sessionID: threadId,
-            timestamp: msg.timestamp,
-            version: "0.2.0",
-            isSidechain: false
-        )
+        // Split blocks: thinking vs everything else (CC split)
+        let thinkingBlocks: [AgentMessageBlock] = msg.blocks.filter {
+            if case .thinking = $0 { return true }; return false
+        }
+        let otherBlocks: [AgentMessageBlock] = msg.blocks.filter {
+            if case .thinking = $0 { return false }; return true
+        }
 
-        // Offload file I/O — TranscriptStore/SessionIndexStore both use
-        // writeQueue.sync internally, which blocks the calling thread.
-        // Running this in a detached task keeps the main thread free.
-        Task.detached { [store = s] in
-            do {
-                try store.appendMessage(serialized, sessionId: threadId, projectPath: cwd)
-            } catch {
-                print("[ThreadViewModel] persistMessageWithBlocks failed: \(error)")
+        // Persist thinking as a separate entry (if any)
+        if !thinkingBlocks.isEmpty {
+            if let coreMsg = buildCoreMessage(msg, blocks: thinkingBlocks, model: modelName, stopReason: stopReason) {
+                let entryUUID = UUID().uuidString
+                let parentUuid = lastPersistedEntryUUID
+                lastPersistedEntryUUID = entryUUID
+
+                let serialized = SerializedMessage(
+                    uuid: entryUUID, message: coreMsg, cwd: cwd,
+                    userType: "external", entrypoint: "app",
+                    sessionID: threadId, timestamp: msg.timestamp,
+                    version: "0.3.0", gitBranch: branch,
+                    permissionMode: permMode, parentUuid: parentUuid,
+                    isSidechain: false, promptId: promptId
+                )
+                Task.detached { [store = s] in
+                    try? store.appendMessage(serialized, sessionId: threadId, projectPath: cwd)
+                }
+            }
+        }
+
+        // Persist text/tool blocks as a separate entry (if any)
+        if !otherBlocks.isEmpty {
+            if let coreMsg = buildCoreMessage(msg, blocks: otherBlocks, model: modelName, stopReason: stopReason) {
+                let entryUUID = UUID().uuidString
+                let parentUuid = lastPersistedEntryUUID
+                lastPersistedEntryUUID = entryUUID
+
+                let serialized = SerializedMessage(
+                    uuid: entryUUID, message: coreMsg, cwd: cwd,
+                    userType: "external", entrypoint: "app",
+                    sessionID: threadId, timestamp: msg.timestamp,
+                    version: "0.3.0", gitBranch: branch,
+                    permissionMode: permMode, parentUuid: parentUuid,
+                    isSidechain: false, promptId: promptId
+                )
+                Task.detached { [store = s] in
+                    try? store.appendMessage(serialized, sessionId: threadId, projectPath: cwd)
+                }
+            }
+        }
+
+        // Update lastPrompt with actual user message text (CC updates on every user message)
+        if isUserMsg {
+            let promptText = msg.blocks.compactMap { block -> String? in
+                if case .text(let t) = block { return t }; return nil
+            }.joined(separator: " ")
+            let truncated = String(promptText.prefix(200))
+            let lastPromptEntry = LogEntry.lastPrompt(LastPromptEntry(
+                sessionID: threadId,
+                lastPrompt: truncated,
+                leafUuid: lastPersistedEntryUUID
+            ))
+            Task.detached { [store = s] in
+                try? store.appendMetadata(lastPromptEntry, sessionId: threadId, projectPath: cwd)
             }
         }
     }
 
-    /// Convert an AgentMessage to a Core Message for persistence.
-    private func convertToCoreMessage(_ msg: AgentMessage) -> Message? {
-        let contentBlocks: [ContentBlock] = msg.blocks.compactMap { block in
+    /// Build a Core Message from an AgentMessage for persistence.
+    private func buildCoreMessage(_ msg: AgentMessage, blocks: [AgentMessageBlock],
+                                   model: String?, stopReason: String?) -> Message? {
+        let contentBlocks: [ContentBlock] = blocks.compactMap { block in
             switch block {
             case .text(let text):
-                return .text(text)
+                return text.isEmpty ? nil : .text(text)
             case .thinking(let text, _, _):
-                return .thinking(text)
+                return .thinking(text, signature: UUID().uuidString)
             case .toolUse(let toolUse):
                 if let input = toolUse.rawInput {
                     return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)
@@ -645,13 +696,41 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         case .system: role = .user
         }
 
+        let permMode = msg.role == .user ? appViewModel?.permissionMode : nil
+
         return Message(
             uuid: msg.id,
             type: role,
             content: contentBlocks,
             timestamp: msg.timestamp,
-            usage: msg.tokenUsage
+            usage: msg.tokenUsage,
+            model: model,
+            stopReason: stopReason,
+            permissionMode: permMode
         )
+    }
+
+    /// Resolve the current git branch for the working directory.
+    /// Runs the git process off the calling actor to avoid blocking UI.
+    private static func resolveGitBranch(cwd: String) async -> String? {
+        let cwdCopy = cwd
+        return await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", cwdCopy, "rev-parse", "--abbrev-ref", "HEAD"]
+            process.currentDirectoryURL = URL(fileURLWithPath: cwdCopy)
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let data = try pipe.fileHandleForReading.readToEnd()
+                return data.flatMap { String(data: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch {
+                return nil
+            }
+        }.value
     }
 
     private func userFriendlyMessage(for error: Error) -> String {
@@ -678,23 +757,24 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             }
         }
 
-        // Map LLMError to user-friendly messages
-        if let llmError = error as? LLMError {
-            switch llmError {
+        // Map AgentRuntimeError to user-friendly messages
+        if let runtimeError = error as? AgentRuntimeError {
+            switch runtimeError {
             case .unauthorized:
                 return "API key invalid. Update it in Settings → General."
             case .rateLimited(let retryAfter):
                 if let sec = retryAfter { return "Rate limited. Retrying in \(sec)s." }
                 return "Too many requests. Please wait before retrying."
-            case .overloaded:
-                return "Server is overloaded. Try again in a few seconds."
-            case .httpError(let status, _),
-                 .nonStreamingError(let status, _):
+            case .serverError(let status, _):
                 return "Server returned error \(status). Try again later."
-            case .parseError:
-                return "Failed to parse server response. Try again."
-            case .noData:
-                return "Server returned no data. Try again."
+            case .timeout:
+                return "Request timed out. The server may be busy — try again in a moment."
+            case .invalidResponse(let reason):
+                return "Invalid response: \(reason)"
+            case .contextSizeExceeded:
+                return "Context size exceeded. Try a shorter message."
+            default:
+                break
             }
         }
 
@@ -703,101 +783,35 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         return desc.isEmpty ? "An error occurred" : desc
     }
 
-    // MARK: - Conversation Building
+    // MARK: - Helpers
 
-    /// Build a `Conversation` from the current message list.
-    ///
-    /// Streaming placeholders (isStreaming) are excluded — they carry no content and
-    /// would become "(no content)" noise in the API request.  tool_result blocks are
-    /// extracted from assistant messages into separate user messages because the
-    /// Anthropic API requires tool_result blocks in user-role messages; leaving them
-    /// in assistant messages causes a 400 error on subsequent turns.
-    private func buildConversation() -> Conversation {
-        var coreMessages: [Message] = []
-
-        for agentMsg in messages {
-            guard !agentMsg.isStreaming else { continue }
-
-            switch agentMsg.role {
-            case .assistant:
-                var assistantBlocks: [ContentBlock] = []
-                var toolResultBlocks: [ContentBlock] = []
-
-                for block in agentMsg.blocks {
-                    switch block {
-                    case .text(let text):
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.isEmpty { assistantBlocks.append(.text(text)) }
-                    case .thinking(let text, _, _):
-                        assistantBlocks.append(.thinking(text))
-                    case .toolUse(let toolUse):
-                        if let input = toolUse.rawInput {
-                            assistantBlocks.append(.toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input))
-                        } else {
-                            assistantBlocks.append(.toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: .object([:])))
-                        }
-                    case .toolResult(let result):
-                        toolResultBlocks.append(.toolResult(
-                            toolUseID: result.toolUseID,
-                            content: .string(result.content),
-                            isError: result.isError
-                        ))
-                    case .systemReminder(let text):
-                        assistantBlocks.append(.text(text))
-                    }
-                }
-
-                if !assistantBlocks.isEmpty {
-                    coreMessages.append(Message(
-                        uuid: agentMsg.id, type: .assistant, content: assistantBlocks,
-                        timestamp: agentMsg.timestamp, usage: agentMsg.tokenUsage
-                    ))
-                }
-
-                if !toolResultBlocks.isEmpty {
-                    coreMessages.append(Message(
-                        uuid: UUID().uuidString, type: .user, content: appendToolResultCacheBreakpointReminder(to: toolResultBlocks),
-                        timestamp: agentMsg.timestamp
-                    ))
-                }
-
-            case .user, .system:
-                let contentBlocks: [ContentBlock] = agentMsg.blocks.compactMap { block in
-                    switch block {
-                    case .text(let text): return .text(text)
-                    case .thinking(let text, _, _): return .thinking(text)
-                    case .toolUse(let toolUse):
-                        if let input = toolUse.rawInput {
-                            return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)
-                        }
-                        return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: .object([:]))
-                    case .toolResult(let result):
-                        return .toolResult(
-                            toolUseID: result.toolUseID,
-                            content: .string(result.content),
-                            isError: result.isError
-                        )
-                    case .systemReminder(let text): return .text(text)
-                    }
-                }
-
-                let nonEmpty = contentBlocks.filter { block in
-                    if case .text(let text) = block {
-                        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    }
-                    return true
-                }
-
-                guard !nonEmpty.isEmpty else { continue }
-
-                coreMessages.append(Message(
-                    uuid: agentMsg.id, type: .user, content: nonEmpty,
-                    timestamp: agentMsg.timestamp, usage: agentMsg.tokenUsage
-                ))
-            }
+    private func summarizeToolInput(toolName: String, input: Data) -> String {
+        guard let obj = try? JSONSerialization.jsonObject(with: input) as? [String: Any] else {
+            return toolName
         }
+        switch toolName {
+        case "Bash", "PowerShell":
+            return (obj["command"] as? String) ?? toolName
+        case "Read", "FileRead", "Write", "FileWrite", "Edit", "FileEdit":
+            return (obj["file_path"] as? String) ?? toolName
+        case "Grep":
+            return (obj["pattern"] as? String) ?? toolName
+        case "Glob":
+            return (obj["pattern"] as? String) ?? toolName
+        case "WebFetch":
+            return (obj["url"] as? String) ?? toolName
+        case "WebSearch":
+            return (obj["query"] as? String) ?? toolName
+        case "Task":
+            return (obj["description"] as? String) ?? toolName
+        default:
+            return obj.first.map { "\($0.key): \($0.value)" } ?? toolName
+        }
+    }
 
-        return Conversation(id: id, flatMessages: coreMessages)
+    private func parseJSONValue(_ data: Data) -> JSONValue? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        return JSONValue.fromAny(obj)
     }
 
     // MARK: - Thought Timer

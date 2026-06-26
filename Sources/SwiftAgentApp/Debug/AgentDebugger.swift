@@ -5,7 +5,7 @@ import SwiftAgentCore
 
 /// Singleton debugger that instruments the entire agent pipeline.
 ///
-/// Wires into `AgentSessionManager` (bootstrap, tool reg, MCP, skills, hooks),
+/// Wires into `LanguageModelSessionImpl` (bootstrap, tool reg, MCP, skills, hooks),
 /// `ThreadViewModel` (send lifecycle, streaming events, turn completion),
 /// and `AppViewModel` (API key configuration).
 ///
@@ -93,14 +93,14 @@ public final class AgentDebugger: ObservableObject {
     // MARK: - Diagnostics
 
     /// Run a full self-check of all subsystems and log results.
-    public func runDiagnostics(agentSession: AgentSessionManager?, appViewModel: AppViewModel?) {
+    public func runDiagnostics(appViewModel: AppViewModel?) {
         guard isEnabled else { return }
 
         logLifecycle("=== Diagnostics Start ===")
 
         // API key
-        if let provider = appViewModel?.agentProvider {
-            logLifecycle("API Key: configured (model: \(provider.currentModel), baseURL: \(provider.baseURL))")
+        if let provider = appViewModel?.provider {
+            logLifecycle("API Key: configured (model: \(provider.displayName))")
         } else if appViewModel != nil {
             logError("API Key: NOT CONFIGURED", category: .lifecycle)
         } else {
@@ -108,16 +108,10 @@ public final class AgentDebugger: ObservableObject {
         }
 
         // Agent session
-        if let session = agentSession {
-            logLifecycle("AgentSession: bootstrapped=\(session.isBootstrapped), tools=\(session.totalToolCount), MCP=\(session.mcpServerNames.count), skills=\(session.skillNames.count)")
-            if !session.mcpServerNames.isEmpty {
-                logMCP("MCP servers: \(session.mcpServerNames.joined(separator: ", "))")
-            }
-            if !session.skillNames.isEmpty {
-                logSkill("Skills: \(session.skillNames.joined(separator: ", "))")
-            }
+        if appViewModel?.session != nil {
+            logLifecycle("AgentSession: configured")
         } else {
-            logError("AgentSession: nil (not bootstrapped)", category: .lifecycle)
+            logLifecycle("AgentSession: nil (not bootstrapped)")
         }
 
         // Thread count

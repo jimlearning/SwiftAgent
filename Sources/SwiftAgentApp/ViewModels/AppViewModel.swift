@@ -13,11 +13,24 @@ public final class AppViewModel: ObservableObject {
 
     // MARK: - LLM Provider
 
-    /// The unified LLM provider (nil if no API key configured).
-    @Published public private(set) var agentProvider: AppAgentProvider?
+    /// The current model provider (nil if no API key configured).
+    @Published public private(set) var provider: DeepSeekProvider?
 
-    /// The agent session manager — bootstraps all Core subsystems.
-    @Published public private(set) var agentSession: AgentSessionManager?
+    /// The agent runtime session — owns the agent loop.
+    @Published public private(set) var session: LanguageModelSessionImpl?
+
+    /// The system prompt built at session creation time.
+    /// Persisted to the JSONL as a user-type entry (like CC does).
+    public private(set) var systemPrompt: String?
+
+    /// Current permission mode (affects how tools are executed).
+    @Published public var permissionMode: SwiftAgentCore.PermissionMode = .default {
+        didSet { permissionBridge?.mode = permissionMode }
+    }
+
+    /// Shared permission bridge — same instance passed to the session.
+    /// Updating its mode switches permission behavior at runtime.
+    public var permissionBridge: AgentPermissionBridge?
 
     /// Whether the API key setup banner should be shown.
     @Published public var showAPIKeyBanner: Bool = false
@@ -280,29 +293,29 @@ public final class AppViewModel: ObservableObject {
                     pvm.path = correctPath
                     pvm.name = (correctPath as NSString).lastPathComponent
                 }
-                for session in sessions {
+                for entry in sessions {
                     // Validate: skip sessions whose JSONL doesn't exist in
                     // this project directory (stale/corrupt index entry).
-                    let transcriptPath = SwiftAgentPaths.transcriptPath(sessionId: session.sessionId, projectPath: project.originalPath)
+                    let transcriptPath = SwiftAgentPaths.transcriptPath(sessionId: entry.sessionId, projectPath: project.originalPath)
                     if !FileManager.default.fileExists(atPath: transcriptPath) {
-                        print("[AppVM] loadAllData: SKIPPING \(session.sessionId.prefix(8)) — transcript missing at \(transcriptPath)")
+                        print("[AppVM] loadAllData: SKIPPING \(entry.sessionId.prefix(8)) — transcript missing at \(transcriptPath)")
                         continue
                     }
 
                     let vm = ThreadViewModel(
-                        id: session.sessionId,
-                        agentSession: agentSession,
+                        id: entry.sessionId,
+                        session: self.session,
                         store: store
                     )
                     vm.appViewModel = self
-                    vm.projectId = session.projectPath ?? project.originalPath
-                    print("[AppVM] loadAllData: session=\(session.sessionId.prefix(8)) projectId=\(vm.projectId ?? "nil") (index.projectPath=\(session.projectPath ?? "nil") discover.originalPath=\(project.originalPath))")
-                    vm.title = session.customTitle ?? session.firstPrompt ?? "New Chat"
-                    vm.selectedModel = agentProvider?.currentModel ?? "deepseek-v4-pro"
-                    vm.updatedAt = ISO8601DateFormatter().date(from: session.modified) ?? Date()
+                    vm.projectId = entry.projectPath ?? project.originalPath
+                    print("[AppVM] loadAllData: session=\(entry.sessionId.prefix(8)) projectId=\(vm.projectId ?? "nil") (index.projectPath=\(entry.projectPath ?? "nil") discover.originalPath=\(project.originalPath))")
+                    vm.title = entry.customTitle ?? entry.firstPrompt ?? "New Chat"
+                    vm.selectedModel = provider?.modelID ?? "deepseek-v4-pro"
+                    vm.updatedAt = ISO8601DateFormatter().date(from: entry.modified) ?? Date()
 
                     // Load messages lazily (on thread selection)
-                    vmMap[session.sessionId] = vm
+                    vmMap[entry.sessionId] = vm
                     pvm.threads.append(vm)
                 }
                 pvm.threads.sort { $0.updatedAt > $1.updatedAt }
@@ -321,16 +334,16 @@ public final class AppViewModel: ObservableObject {
                             if let correctPath = recovered.first?.projectPath {
                                 pvm.path = correctPath
                             }
-                            for session in recovered {
-                                let tp = SwiftAgentPaths.transcriptPath(sessionId: session.sessionId, projectPath: project.originalPath)
+                            for entry in recovered {
+                                let tp = SwiftAgentPaths.transcriptPath(sessionId: entry.sessionId, projectPath: project.originalPath)
                                 if !FileManager.default.fileExists(atPath: tp) { continue }
-                                let vm = ThreadViewModel(id: session.sessionId, agentSession: agentSession, store: store)
+                                let vm = ThreadViewModel(id: entry.sessionId, session: self.session, store: store)
                                 vm.appViewModel = self
-                                vm.projectId = session.projectPath ?? project.originalPath
-                                vm.title = session.customTitle ?? session.firstPrompt ?? "New Chat"
-                                vm.selectedModel = agentProvider?.currentModel ?? "deepseek-v4-pro"
-                                vm.updatedAt = ISO8601DateFormatter().date(from: session.modified) ?? Date()
-                                vmMap[session.sessionId] = vm
+                                vm.projectId = entry.projectPath ?? project.originalPath
+                                vm.title = entry.customTitle ?? entry.firstPrompt ?? "New Chat"
+                                vm.selectedModel = provider?.modelID ?? "deepseek-v4-pro"
+                                vm.updatedAt = ISO8601DateFormatter().date(from: entry.modified) ?? Date()
+                                vmMap[entry.sessionId] = vm
                                 pvm.threads.append(vm)
                             }
                             pvm.threads.sort { $0.updatedAt > $1.updatedAt }
@@ -370,7 +383,7 @@ public final class AppViewModel: ObservableObject {
     /// the sidebar until real activity occurs.
     @discardableResult
     public func createThread(title: String = "New Chat", projectId: String? = nil, persist: Bool = false) -> ThreadViewModel {
-        let thread = ThreadViewModel(agentSession: agentSession, store: store)
+        let thread = ThreadViewModel(session: session, store: store)
         thread.projectId = projectId
         thread.appViewModel = self
         thread.title = title
@@ -601,31 +614,22 @@ public final class AppViewModel: ObservableObject {
 
     /// Check whether an API key is available and bootstrap the agent session.
     public func checkAPIKey() {
-        let provider = AppAgentProvider()
-        if provider.isConfigured {
-            self.agentProvider = provider
+        if let (key, isDeepSeek) = resolveKey() {
+            let baseURL = isDeepSeek ? "https://api.deepseek.com" : "https://api.anthropic.com"
+            let dp = DeepSeekProvider(apiKey: key, baseURL: URL(string: baseURL), modelID: "deepseek-v4-pro")
+            self.provider = dp
             self.apiKeyStatus = .configured
             self.showAPIKeyBanner = false
-            // Bootstrap agent session async
             Task {
-                let session = AgentSessionManager(provider: provider)
-                let result = await session.bootstrap()
-                if result.isBootstrapped {
-                    self.agentSession = session
-                    // Update all existing thread VMs
-                    for vm in threadViewModels.values {
-                        vm.setAgentSession(session)
-                    }
-                } else {
-                    // Surface bootstrap errors
-                    for error in result.errors {
-                        ErrorPresenter.shared.present(.skillLoadFailed(error.message))
-                    }
+                let s = await makeSession(provider: dp)
+                self.session = s
+                for vm in threadViewModels.values {
+                    vm.setSession(s)
                 }
             }
         } else {
-            self.agentProvider = nil
-            self.agentSession = nil
+            self.provider = nil
+            self.session = nil
             self.apiKeyStatus = .missing
             self.showAPIKeyBanner = true
         }
@@ -633,33 +637,103 @@ public final class AppViewModel: ObservableObject {
 
     /// Save the API key to Keychain and bootstrap the agent session.
     public func saveAPIKey(_ key: String) {
-        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         do {
-            try KeychainStore.save(apiKey: key.trimmingCharacters(in: .whitespacesAndNewlines))
-            let provider = AppAgentProvider(apiKey: key.trimmingCharacters(in: .whitespacesAndNewlines))
-            self.agentProvider = provider
+            try KeychainStore.save(apiKey: trimmed)
+            let dp = DeepSeekProvider(apiKey: trimmed, baseURL: URL(string: "https://api.deepseek.com"), modelID: "deepseek-v4-pro")
+            self.provider = dp
             self.apiKeyStatus = .configured
             self.showAPIKeyBanner = false
-            // Bootstrap agent session async
             Task {
-                let session = AgentSessionManager(provider: provider)
-                let result = await session.bootstrap()
-                if result.isBootstrapped {
-                    self.agentSession = session
-                    // Update all existing thread VMs
-                    for vm in threadViewModels.values {
-                        vm.setAgentSession(session)
-                    }
-                } else {
-                    for error in result.errors {
-                        ErrorPresenter.shared.present(.skillLoadFailed(error.message))
-                    }
+                let s = await makeSession(provider: dp)
+                self.session = s
+                for vm in threadViewModels.values {
+                    vm.setSession(s)
                 }
             }
         } catch {
             checkAPIKey()
         }
+    }
+
+    // MARK: - Key resolution
+
+    private func resolveKey() -> (key: String, isDeepSeek: Bool)? {
+        if let envKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"], !envKey.isEmpty {
+            return (envKey, true)
+        }
+        if let keychainKey = KeychainStore.load(), !keychainKey.isEmpty {
+            return (keychainKey, true)
+        }
+        return nil
+    }
+
+    /// Resolve the project root directory using git, falling back to the process
+    /// current directory when git is unavailable.
+    private func resolveWorkingDirectory() -> String {
+        // Use the first project's path if available (brownfield projects).
+        if let first = projects.first {
+            return first.path
+        }
+        // Walk up from current directory looking for a git repo.
+        var url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        while url.path != "/" {
+            let gitDir = url.appendingPathComponent(".git")
+            if FileManager.default.fileExists(atPath: gitDir.path) {
+                let task = Process()
+                task.launchPath = "/usr/bin/git"
+                task.arguments = ["-C", url.path, "rev-parse", "--show-toplevel"]
+                task.standardOutput = Pipe()
+                task.standardError = Pipe()
+                do {
+                    try task.run()
+                    task.waitUntilExit()
+                    if task.terminationStatus == 0,
+                       let data = try (task.standardOutput as? Pipe)?.fileHandleForReading.readToEnd(),
+                       let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !path.isEmpty
+                    {
+                        return path
+                    }
+                } catch {}
+                return url.path
+            }
+            url = url.deletingLastPathComponent()
+        }
+        return NSHomeDirectory()
+    }
+
+    private func makeSession(provider: DeepSeekProvider) async -> LanguageModelSessionImpl {
+        let memoryStore = try! SQLiteMemoryStore()
+        let toolEngine = DefaultToolEngine()
+        let bridge = permissionBridge ?? AgentPermissionBridge(engine: PermissionEngine())
+        bridge.mode = permissionMode
+        self.permissionBridge = bridge
+        let cwd = resolveWorkingDirectory()
+        let batch1 = Batch1ToolRegistry.tools(
+            workingDirectory: cwd,
+            taskManager: TaskManager(),
+            availableTools: []
+        )
+        let batch23 = Batch23ToolRegistry.tools(workingDirectory: cwd)
+        var toolNames = Set<String>()
+        for (tool, metadata) in batch1 + batch23 {
+            toolNames.insert(tool.name)
+            await toolEngine.register(tool: tool, metadata: metadata)
+        }
+        let systemPrompt = SystemPromptBuilder.defaultPrompt(
+            workingDirectory: cwd,
+            toolNames: toolNames,
+            model: provider.modelID
+        )
+        self.systemPrompt = systemPrompt
+        return LanguageModelSessionImpl(
+            modelProvider: provider,
+            memoryStore: memoryStore,
+            permissionEngine: bridge,
+            toolEngine: toolEngine,
+            systemPrompt: systemPrompt
+        )
     }
 }

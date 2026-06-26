@@ -7,7 +7,7 @@ struct EntryPoint: AsyncParsableCommand {
         commandName: "swift-agent",
         abstract: "A Swift-native AI coding agent CLI",
         version: "swift-agent \(CoreTypes.version)",
-        subcommands: [ChatCommand.self, EvalCommand.self],
+        subcommands: [ChatCommand.self],
         defaultSubcommand: nil
     )
 

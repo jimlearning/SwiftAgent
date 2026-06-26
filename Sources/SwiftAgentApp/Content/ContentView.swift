@@ -34,7 +34,7 @@ public struct ContentView: View {
         .onChange(of: appViewModel.apiKeyStatus) { _, newStatus in
             if newStatus == .configured {
                 for vm in appViewModel.threadViewModels.values {
-                    vm.setAgentSession(appViewModel.agentSession)
+                    vm.setSession(appViewModel.session)
                 }
             }
         }

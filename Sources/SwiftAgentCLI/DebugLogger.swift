@@ -4,16 +4,8 @@ import SwiftAgentCore
 /// Debug logger for CLI sessions.
 ///
 /// Writes plain-text debug logs to `~/.swift-agent/debug/<session-id>.txt`
-/// in CC-compatible format. Also implements `LLMDebugLogger` for backward
-/// compatibility with `LLMClient`.
-///
-/// ## Usage
-/// ```swift
-/// let logger = DebugLogger(sessionId: mySessionUUID)
-/// logger.debug("Starting agent loop", category: "Agent")
-/// logger.logUsage(inputTokens: 1500, outputTokens: 300, cacheRead: 200, cacheCreation: 50)
-/// ```
-public final class DebugLogger: LLMDebugLogger, DebugLogSink, @unchecked Sendable {
+/// in CC-compatible format.
+public final class DebugLogger: @unchecked Sendable {
     private let sessionLog: SessionDebugLog
     private let sessionID: String
 

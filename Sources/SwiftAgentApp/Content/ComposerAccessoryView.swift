@@ -11,9 +11,10 @@ struct ComposerAccessoryView: View {
     @State private var permissionMode: ClarcCore.PermissionMode = .default
     @State private var selectedModel: String = "deepseek-v4-pro"
 
-    private var availableModels: [ResolvedModel] {
-        appViewModel.agentProvider?.availableModels ?? []
-    }
+    private let availableModels: [(id: String, displayName: String)] = [
+        ("deepseek-v4-pro", "DeepSeek V4 Pro"),
+        ("deepseek-v4-flash", "DeepSeek V4 Flash"),
+    ]
 
     var body: some View {
         HStack(spacing: 8) {
@@ -45,13 +46,13 @@ struct ComposerAccessoryView: View {
             // Model Picker
             Menu {
                 Section("Model") {
-                    ForEach(availableModels) { model in
+                    ForEach(availableModels, id: \.id) { model in
                         Button {
                             selectedModel = model.id
                             appViewModel.selectedThread?.selectedModel = model.id
                             appViewModel.selectedThread?.persistState()
                         } label: {
-                            Text(model.displayLabel)
+                            Text(model.displayName)
                             if selectedModel == model.id { Image(systemName: "checkmark") }
                         }
                     }
@@ -68,9 +69,7 @@ struct ComposerAccessoryView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
-            if let mode = appViewModel.agentSession?.permissionMode {
-                permissionMode = mapPermissionMode(mode)
-            }
+            permissionMode = mapPermissionMode(appViewModel.permissionMode)
             if let model = appViewModel.selectedThread?.selectedModel {
                 selectedModel = model
             }
@@ -79,19 +78,16 @@ struct ComposerAccessoryView: View {
             if let model = appViewModel.selectedThread?.selectedModel {
                 selectedModel = model
             }
-            if let mode = appViewModel.agentSession?.permissionMode {
-                permissionMode = mapPermissionMode(mode)
-            }
+            permissionMode = mapPermissionMode(appViewModel.permissionMode)
         }
     }
 
     private func setPermissionMode(_ mode: ClarcCore.PermissionMode) {
-        let saMode = mapToSwiftAgentPermission(mode)
-        appViewModel.agentSession?.permissionMode = saMode
+        appViewModel.permissionMode = mapToSwiftAgentPermission(mode)
     }
 
     private func modelDisplayName(_ id: String) -> String {
-        availableModels.first(where: { $0.id == id })?.modelInfo.displayName ?? id
+        availableModels.first(where: { $0.id == id })?.displayName ?? id
     }
 
     @ViewBuilder

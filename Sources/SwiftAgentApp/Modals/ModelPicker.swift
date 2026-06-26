@@ -9,8 +9,13 @@ public enum ReasoningStrength: String, CaseIterable, Sendable {
 }
 
 public struct ModelPickerView: View {
-    @Binding var selectedModel: DeepSeekModel
+    @Binding var selectedModel: String
     @Binding var reasoningStrength: ReasoningStrength
+
+    private let models: [(id: String, name: String)] = [
+        ("deepseek-v4-pro", "DeepSeek V4 Pro"),
+        ("deepseek-v4-flash", "DeepSeek V4 Flash"),
+    ]
 
     public var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -24,16 +29,16 @@ public struct ModelPickerView: View {
 
                 Divider()
 
-                ForEach(DeepSeekModel.allCases, id: \.rawValue) { model in
+                ForEach(models, id: \.id) { model in
                     Button {
-                        selectedModel = model
+                        selectedModel = model.id
                     } label: {
                         HStack {
-                            Text(model.displayName)
+                            Text(model.name)
                                 .font(.uiBody)
                                 .foregroundColor(.textPrimary)
                             Spacer()
-                            if model == selectedModel {
+                            if model.id == selectedModel {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 12, weight: .bold))
                                     .foregroundColor(.accentPrimary)

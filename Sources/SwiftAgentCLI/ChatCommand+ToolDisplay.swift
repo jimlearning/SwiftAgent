@@ -103,65 +103,6 @@ extension ChatCommand {
         return parts.isEmpty ? "" : parts.joined(separator: ", ")
     }
 
-    // MARK: - Collapsed tool result display
-
-    /// Groups consecutive collapsible tool results, stores their full output in
-    /// the cache, and emits single-line summaries. Non-collapsible results
-    /// remain individual summary lines.
-    func emitCollapsedResults(
-        results: [ChatToolExecutionResult],
-        detector: CollapseDetector,
-        formatter: CollapsedSummaryFormatter,
-        cache: ToolResultCache
-    ) async {
-        guard !results.isEmpty else { return }
-
-        let singleResults: [SingleToolResult] = results.map { result in
-            SingleToolResult(
-                name: result.call.name,
-                input: result.call.input,
-                output: result.output,
-                isCollapsible: CollapseDetector.isCollapsible(
-                    name: result.call.name, input: result.call.input
-                )
-            )
-        }
-
-        var groups: [[SingleToolResult]] = []
-        var buffer: [SingleToolResult] = []
-
-        for r in singleResults {
-            if r.isCollapsible {
-                buffer.append(r)
-            } else {
-                if !buffer.isEmpty {
-                    groups.append(buffer)
-                    buffer = []
-                }
-                groups.append([r])
-            }
-        }
-        if !buffer.isEmpty {
-            groups.append(buffer)
-        }
-
-        writeToStdout("\r\u{001B}[K")
-
-        for groupResults in groups {
-            let storedIndex = await cache.store(results: groupResults)
-            let group = CollapsedGroup(
-                results: groupResults,
-                summaryLine: "",
-                refIndex: storedIndex
-            )
-            if groupResults.count == 1 {
-                emitBlock(formatter.formatDetailed(for: group))
-            } else {
-                emitBlock(formatter.format(for: group))
-            }
-        }
-    }
-
     /// Handles Ctrl+O: pure toggle — collapse if something is expanded,
     /// expand the last stored group if nothing is.
     /// - Returns: true if something was expanded or collapsed; false if no-op.
