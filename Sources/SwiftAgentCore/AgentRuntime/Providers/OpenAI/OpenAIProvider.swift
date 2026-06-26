@@ -89,7 +89,7 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
     public func respond(
         to transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         streamingInto channel: GenerationChannel
     ) async throws {

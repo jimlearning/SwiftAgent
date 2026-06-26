@@ -167,7 +167,7 @@ actor OpenAISSEParser {
 
     // MARK: - Stop Reason Mapping
 
-    /// Map OpenAI finish_reason strings to AgentRuntime stop reasons.
+    /// Map OpenAI finish_reason strings to LanguageModelSession stop reasons.
     private func mapStopReason(_ reason: String) -> String {
         switch reason {
         case "stop": return "end_turn"

@@ -18,6 +18,9 @@ public struct SerializedMessage: Sendable, Codable {
     public var version: String
     public var gitBranch: String?
     public var slug: String?
+    /// Permission mode when this message was sent. CC puts this at entry level,
+    /// not inside the message object. Matches CC's permissionMode on transcript entries.
+    public var permissionMode: PermissionMode?
 
     // TranscriptMessage fields (CC's Message & extras for parent/sidechain tracking)
     public var parentUuid: String?
@@ -40,6 +43,7 @@ public struct SerializedMessage: Sendable, Codable {
         case version
         case gitBranch
         case slug
+        case permissionMode
         case parentUuid
         case logicalParentUuid
         case isSidechain
@@ -61,6 +65,7 @@ public struct SerializedMessage: Sendable, Codable {
         version: String,
         gitBranch: String? = nil,
         slug: String? = nil,
+        permissionMode: PermissionMode? = nil,
         parentUuid: String? = nil,
         logicalParentUuid: String? = nil,
         isSidechain: Bool = false,
@@ -80,6 +85,7 @@ public struct SerializedMessage: Sendable, Codable {
         self.version = version
         self.gitBranch = gitBranch
         self.slug = slug
+        self.permissionMode = permissionMode
         self.parentUuid = parentUuid
         self.logicalParentUuid = logicalParentUuid
         self.isSidechain = isSidechain
@@ -238,9 +244,21 @@ public struct PRLinkEntry: Sendable, Codable {
 
 /// File history snapshot entry. Matches CC's FileHistorySnapshotMessage.
 public struct FileHistorySnapshotEntry: Sendable, Codable {
-    public let type: String  // "file-history-snapshot"
+    public let type: String
     public let messageID: String
     public let isSnapshotUpdate: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case messageID = "messageId"
+        case isSnapshotUpdate
+    }
+
+    public init(type: String = "file-history-snapshot", messageID: String, isSnapshotUpdate: Bool) {
+        self.type = type
+        self.messageID = messageID
+        self.isSnapshotUpdate = isSnapshotUpdate
+    }
 }
 
 /// Mode entry. Matches CC's ModeEntry.
@@ -382,6 +400,189 @@ public struct FileHistorySnapshotItem: Sendable, Codable {
     public let mtime: Int
 }
 
+// MARK: - Additional CC Entry Types for Log Alignment
+
+/// Standalone permission mode entry. Matches CC's inline permission-mode entries.
+/// Written at session start and when permission mode changes.
+public struct PermissionModeEntry: Sendable, Codable {
+    public let type: String
+    public let sessionID: String
+    public let permissionMode: PermissionMode
+
+    enum CodingKeys: String, CodingKey {
+        case type, permissionMode
+        case sessionID = "sessionId"
+    }
+
+    public init(sessionID: String, permissionMode: PermissionMode) {
+        self.type = "permission-mode"
+        self.sessionID = sessionID
+        self.permissionMode = permissionMode
+    }
+}
+
+/// Attachment entry matching CC's attachment messages in the transcript.
+/// Wraps an Attachment discriminated union with transcript metadata.
+public struct AttachmentEntry: Sendable {
+    public let type: String
+    public let uuid: String
+    public let attachment: Attachment
+    public let timestamp: Date
+    public let sessionID: String
+    public let parentUuid: String?
+    public let isSidechain: Bool
+    public let cwd: String?
+    public let userType: String?
+    public let entrypoint: String?
+    public let version: String?
+    public let gitBranch: String?
+
+    public init(uuid: String = UUID().uuidString, attachment: Attachment,
+                timestamp: Date = Date(), sessionID: String,
+                parentUuid: String? = nil, isSidechain: Bool = false,
+                cwd: String? = nil, userType: String? = "external",
+                entrypoint: String? = nil, version: String? = nil,
+                gitBranch: String? = nil) {
+        self.type = "attachment"
+        self.uuid = uuid
+        self.attachment = attachment
+        self.timestamp = timestamp
+        self.sessionID = sessionID
+        self.parentUuid = parentUuid
+        self.isSidechain = isSidechain
+        self.cwd = cwd
+        self.userType = userType
+        self.entrypoint = entrypoint
+        self.version = version
+        self.gitBranch = gitBranch
+    }
+}
+
+/// System entry matching CC's system messages (stop_hook_summary, etc.).
+public struct SystemEntry: Sendable {
+    public let type: String
+    public let subtype: String
+    public let uuid: String
+    public let timestamp: Date
+    public let sessionID: String
+    public let parentUuid: String?
+    public let isSidechain: Bool
+    public let cwd: String?
+    public let userType: String?
+    public let entrypoint: String?
+    public let version: String?
+    public let gitBranch: String?
+
+    // stop_hook_summary fields (CC-specific)
+    public var hookCount: Int
+    public var hookInfos: [HookInfoEntry]
+    public var hookErrors: [String]
+    public var preventedContinuation: Bool
+    public var stopReason: String
+    public var hasOutput: Bool
+    public var level: String
+    public var toolUseID: String?
+
+    public struct HookInfoEntry: Sendable, Codable {
+        public let command: String
+        public let durationMs: Int
+
+        public init(command: String, durationMs: Int) {
+            self.command = command
+            self.durationMs = durationMs
+        }
+    }
+
+    public init(subtype: String, uuid: String = UUID().uuidString,
+                timestamp: Date = Date(), sessionID: String,
+                parentUuid: String? = nil, isSidechain: Bool = false,
+                cwd: String? = nil, userType: String? = "external",
+                entrypoint: String? = nil, version: String? = nil,
+                gitBranch: String? = nil) {
+        self.type = "system"
+        self.subtype = subtype
+        self.uuid = uuid
+        self.timestamp = timestamp
+        self.sessionID = sessionID
+        self.parentUuid = parentUuid
+        self.isSidechain = isSidechain
+        self.cwd = cwd
+        self.userType = userType
+        self.entrypoint = entrypoint
+        self.version = version
+        self.gitBranch = gitBranch
+        self.hookCount = 0
+        self.hookInfos = []
+        self.hookErrors = []
+        self.preventedContinuation = false
+        self.stopReason = ""
+        self.hasOutput = false
+        self.level = "suggestion"
+        self.toolUseID = nil
+    }
+}
+
+extension SystemEntry: Codable {
+    enum CodingKeys: String, CodingKey {
+        case type, subtype, uuid, timestamp
+        case sessionID = "sessionId"
+        case parentUuid, isSidechain, cwd, userType, entrypoint, version, gitBranch
+        case hookCount, hookInfos, hookErrors, preventedContinuation, stopReason
+        case hasOutput, level
+        case toolUseID = "toolUseID"
+    }
+}
+
+// MARK: - Attachment Codable (type-discriminator subset for persistence)
+
+extension Attachment: Codable {
+    enum CodingKeys: String, CodingKey {
+        case type
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let typeStr = try container.decode(String.self, forKey: .type)
+        switch typeStr {
+        case "skill_listing":
+            let c = try decoder.singleValueContainer()
+            let dict = try c.decode([String: JSONValue].self)
+            let content: String
+            if case .string(let s) = dict["content"] { content = s } else { content = "" }
+            let count: Int
+            if case .number(let n) = dict["skillCount"] { count = Int(n) } else { count = 0 }
+            let isInit: Bool
+            if case .bool(let b) = dict["isInitial"] { isInit = b } else { isInit = false }
+            self = .skillListing(content: content, skillCount: count, isInitial: isInit)
+        default:
+            self = .skillListing(content: "unsupported: \(typeStr)", skillCount: 0, isInitial: false)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .skillListing(let content, let skillCount, let isInitial):
+            try container.encode([
+                "type": JSONValue.string("skill_listing"),
+                "content": .string(content),
+                "skillCount": .number(Double(skillCount)),
+                "isInitial": .bool(isInitial),
+            ])
+        default:
+            try container.encode(["type": JSONValue.string("unknown")])
+        }
+    }
+}
+
+extension AttachmentEntry: Codable {
+    enum CodingKeys: String, CodingKey {
+        case type, uuid, attachment, timestamp
+        case sessionID = "sessionId"
+        case parentUuid, isSidechain, cwd, userType, entrypoint, version, gitBranch
+    }
+}
+
 /// The full Entry discriminated union matching CC's types/logs.ts:Entry.
 /// 20 variants matching all CC Entry union members.
 ///
@@ -414,6 +615,9 @@ public enum LogEntry: Sendable, Codable {
     case contentReplacement(ContentReplacementEntry)
     case contextCollapseCommit(ContextCollapseCommitEntry)
     case contextCollapseSnapshot(ContextCollapseSnapshotEntry)
+    case permissionMode(PermissionModeEntry)
+    case attachmentEntry(AttachmentEntry)
+    case systemEntry(SystemEntry)
     /// Unknown/unsupported entry type — preserved as raw JSON data for round-tripping.
     case unknown(type: String, rawJSON: Data)
 
@@ -441,6 +645,9 @@ public enum LogEntry: Sendable, Codable {
         case .contentReplacement: return "content-replacement"
         case .contextCollapseCommit: return "marble-origami-commit"
         case .contextCollapseSnapshot: return "marble-origami-snapshot"
+        case .permissionMode: return "permission-mode"
+        case .attachmentEntry: return "attachment"
+        case .systemEntry: return "system"
         case .unknown(let type, _): return type
         }
     }
@@ -452,10 +659,14 @@ extension LogEntry {
     /// Encode to a CC-compatible flat JSON dict (injecting "type" field).
     public func toFlatDict() throws -> [String: Any] {
         let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, enc in
+            var container = enc.singleValueContainer()
+            try container.encode(Self.iso8601WithFractionalSeconds.string(from: date))
+        }
         switch self {
         case .transcript(let msg):
             var dict = try Self.encodeStruct(msg, with: encoder)
-            dict["type"] = "transcript"
+            dict["type"] = msg.message.type.rawValue
             return dict
         case .summary(let e):
             var dict = try Self.encodeStruct(e, with: encoder)
@@ -533,6 +744,18 @@ extension LogEntry {
             var dict = try Self.encodeStruct(e, with: encoder)
             dict["type"] = "marble-origami-snapshot"
             return dict
+        case .permissionMode(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "permission-mode"
+            return dict
+        case .attachmentEntry(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "attachment"
+            return dict
+        case .systemEntry(let e):
+            var dict = try Self.encodeStruct(e, with: encoder)
+            dict["type"] = "system"
+            return dict
         case .unknown(_, let rawJSON):
             return (try? JSONSerialization.jsonObject(with: rawJSON) as? [String: Any]) ?? [:]
         }
@@ -546,8 +769,16 @@ extension LogEntry {
         }
         let data = (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
         let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { dec in
+            let container = try dec.singleValueContainer()
+            let str = try container.decode(String.self)
+            guard let date = iso8601WithFractionalSeconds.date(from: str) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO 8601 date: \(str)")
+            }
+            return date
+        }
         switch typeStr {
-        case "transcript":
+        case "transcript", "user", "assistant", "system":
             if let msg = try? decoder.decode(SerializedMessage.self, from: data) {
                 return .transcript(msg)
             }
@@ -627,6 +858,18 @@ extension LogEntry {
             if let e = try? decoder.decode(ContextCollapseSnapshotEntry.self, from: data) {
                 return .contextCollapseSnapshot(e)
             }
+        case "permission-mode":
+            if let e = try? decoder.decode(PermissionModeEntry.self, from: data) {
+                return .permissionMode(e)
+            }
+        case "attachment":
+            if let e = try? decoder.decode(AttachmentEntry.self, from: data) {
+                return .attachmentEntry(e)
+            }
+        case "system":
+            if let e = try? decoder.decode(SystemEntry.self, from: data) {
+                return .systemEntry(e)
+            }
         default:
             break
         }
@@ -636,5 +879,11 @@ extension LogEntry {
     private static func encodeStruct<T: Encodable>(_ value: T, with encoder: JSONEncoder) throws -> [String: Any] {
         let data = try encoder.encode(value)
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    private static var iso8601WithFractionalSeconds: ISO8601DateFormatter {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
     }
 }

@@ -3,7 +3,7 @@ import Foundation
 // MARK: - AgentPermission
 
 /// Runtime-level permission taxonomy. Not tool-level — these are
-/// the capability categories that AgentRuntime gates.
+/// the capability categories that LanguageModelSession gates.
 ///
 /// Forward-compatible with predicted WWDC27 AgentSandbox and macOS
 /// permission model (TCC framework extension for AI agents).
@@ -87,11 +87,11 @@ public enum AgentPermission: Sendable, CaseIterable {
     }
 }
 
-// MARK: - RuntimePermissionEngine Protocol
+// MARK: - SessionPermissionEngine Protocol
 
 /// Runtime-level capability gate for agent permissions.
 ///
-/// Named RuntimePermissionEngine to avoid collision with the existing
+/// Named SessionPermissionEngine to avoid collision with the existing
 /// `PermissionEngine` struct in `Safety/PermissionEngine.swift`. This is
 /// a Phase 1 protocol definition that defines the contract for
 /// runtime-level permission checks. The existing `PermissionEngine`
@@ -100,7 +100,7 @@ public enum AgentPermission: Sendable, CaseIterable {
 ///
 /// All tool calls, memory reads/writes, and network requests pass
 /// through a unified permission check via this protocol.
-public protocol RuntimePermissionEngine: Sendable {
+public protocol SessionPermissionEngine: Sendable {
     /// Check whether the given permission is granted at the runtime level.
     ///
     /// - Parameter permission: The capability being requested.

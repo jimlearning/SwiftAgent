@@ -12,8 +12,7 @@ struct DeepSeekTranscriptTranslator: Sendable {
     ///
     /// Same pattern as AnthropicTranscriptTranslator EXCEPT:
     /// - Strips ALL cache_control keys from content blocks (DeepSeek doesn't support prompt caching)
-    /// - Maps .thinking to a text block with "[Thinking]" prefix (DeepSeek Anthropic-compat
-    ///   doesn't have a thinking content block type)
+    /// - Preserves .thinking as proper thinking content blocks (required by thinking mode)
     ///
     /// - Returns: (messages, optional system prompt)
     static func translateAnthropicCompat(
@@ -48,7 +47,7 @@ struct DeepSeekTranscriptTranslator: Sendable {
                 currentBlocks.append(["type": "text", "text": text])
 
             case .toolCall(let id, let name, let input):
-                flush()
+                if currentRole != "assistant" { flush() }
                 currentRole = "assistant"
                 let parsedInput = (try? JSONSerialization.jsonObject(with: input) as? [String: Any]) ?? [:]
                 currentBlocks.append([
@@ -69,11 +68,11 @@ struct DeepSeekTranscriptTranslator: Sendable {
                 ])
 
             case .thinking(let text):
-                // DeepSeek Anthropic-compat doesn't support thinking content blocks.
-                // Map to text with a prefix so the model sees its own reasoning.
+                // DeepSeek Anthropic-compat endpoint requires thinking to be passed
+                // back as proper thinking content blocks (NOT as text blocks).
                 if currentRole != "assistant" { flush() }
                 currentRole = "assistant"
-                currentBlocks.append(["type": "text", "text": "[Thinking] \(text)"])
+                currentBlocks.append(["type": "thinking", "thinking": text])
 
             case .system(let text):
                 flush()
@@ -173,10 +172,12 @@ struct DeepSeekTranscriptTranslator: Sendable {
                 ])
 
             case .thinking(let text):
-                // DeepSeek doesn't natively store thinking in messages.
+                // DeepSeek's native API stores thinking as reasoning_content on
+                // the assistant message. Separate message for simplicity — the
+                // model accepts consecutive same-role messages.
                 messages.append([
                     "role": "assistant",
-                    "content": "[Thinking] \(text)",
+                    "reasoning_content": text,
                 ])
 
             case .system(let text):

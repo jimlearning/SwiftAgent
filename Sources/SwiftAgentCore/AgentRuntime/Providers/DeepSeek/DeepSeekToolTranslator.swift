@@ -1,13 +1,13 @@
 import Foundation
 
-/// Translates RuntimeToolDefinition values into DeepSeek wire format
+/// Translates SessionToolDefinition values into DeepSeek wire format
 /// for both Anthropic-compatible and OpenAI-compatible endpoints.
 /// Pure-functional: no mutable state, no side effects.
 struct DeepSeekToolTranslator: Sendable {
 
-    /// Convert RuntimeToolDefinition array to Anthropic-format tool dicts
+    /// Convert SessionToolDefinition array to Anthropic-format tool dicts
     /// (identical to AnthropicToolTranslator pattern).
-    static func translateAnthropicCompat(_ tools: [RuntimeToolDefinition]) -> [[String: Any]] {
+    static func translateAnthropicCompat(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
         tools.map { tool in
             var dict: [String: Any] = [
                 "name": tool.name,
@@ -23,11 +23,11 @@ struct DeepSeekToolTranslator: Sendable {
         }
     }
 
-    /// Convert RuntimeToolDefinition array to OpenAI function-calling format.
+    /// Convert SessionToolDefinition array to OpenAI function-calling format.
     ///
     /// Output format: [{type: "function", function: {name, description, parameters: <JSONSchema>}}]
     /// parameters maps JSONSchema fields directly — no $schema, no items at top level.
-    static func translateOpenAICompat(_ tools: [RuntimeToolDefinition]) -> [[String: Any]] {
+    static func translateOpenAICompat(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
         tools.map { tool in
             var parameters: [String: Any] = ["type": "object"]
             if let data = try? JSONEncoder().encode(tool.inputSchema),

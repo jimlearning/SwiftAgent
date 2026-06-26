@@ -1,5 +1,16 @@
 import Foundation
 
+/// MCP tool routing information (moved from old Tool protocol).
+public struct MCPToolInfo: Sendable {
+    public let serverName: String
+    public let toolName: String
+
+    public init(serverName: String, toolName: String) {
+        self.serverName = serverName
+        self.toolName = toolName
+    }
+}
+
 /// MCP connection lifecycle manager matching Claude Code's useManageMCPConnections.ts.
 ///
 /// Manages the full lifecycle of MCP server connections:
@@ -48,7 +59,11 @@ public actor MCPConnectionManager {
     public private(set) var mcpCommands: [FullCommand] = []
     public private(set) var mcpResources: [String: [SerializedMCPResource]] = [:]
 
-    /// Pending state updates that will be batched together.
+    /// Maps MCP tool name → server info (replaces old Tool.mcpInfo protocol member).
+    private var mcpToolInfoMap: [String: MCPToolInfo] = [:]
+
+    /// MCP tool name → qualified permission-check name mapping.
+    private var mcpPermissionNames: [String: String] = [:]
     private var pendingUpdates: [String: MCPServerConnection] = [:]
     private var flushTask: Task<Void, Never>?
 
@@ -253,9 +268,19 @@ public actor MCPConnectionManager {
         fetchCacheKeys.remove(prefix)
         Task {
             let tools = await fetchTools(serverName)
+            // Remove old tools from this server using internal tracking map
             mcpTools = mcpTools.filter { tool in
-                guard let mcpInfo = tool.mcpInfo else { return true }
-                return mcpInfo.serverName != serverName
+                if let info = mcpToolInfoMap[tool.name] {
+                    return info.serverName != serverName
+                }
+                return true
+            }
+            // Register MCP info for the new tools
+            for tool in tools {
+                let info = MCPToolInfo(serverName: serverName, toolName: tool.name)
+                mcpToolInfoMap[tool.name] = info
+                let prefix = getMcpPrefix(serverName)
+                mcpPermissionNames[tool.name] = "\(prefix)\(tool.name)"
             }
             mcpTools.append(contentsOf: tools)
             notifyStateChanged()
@@ -393,9 +418,10 @@ public func normalizeNameForMCP(_ name: String) -> String {
 }
 
 /// CC: getToolNameForPermissionCheck — uses the fully qualified name for MCP tools.
-public func getToolNameForPermissionCheck(tool: any Tool) -> String {
-    if tool.isMcp, let mcpInfo = tool.mcpInfo {
-        return buildMcpToolName(serverName: mcpInfo.serverName, toolName: mcpInfo.toolName)
+/// MCP tool identification is now tracked internally via mcpPermissionNames map.
+public func getToolNameForPermissionCheck(tool: any Tool, mcpPermissionNames: [String: String] = [:]) -> String {
+    if let qualified = mcpPermissionNames[tool.name] {
+        return qualified
     }
     return tool.name
 }

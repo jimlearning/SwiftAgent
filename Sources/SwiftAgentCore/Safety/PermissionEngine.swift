@@ -21,28 +21,17 @@ public struct PermissionEngine: Sendable {
         self.autoModeConfig = autoModeConfig
     }
 
-    /// Run the full permission decision pipeline (tool-name variant).
+    /// Run the full permission decision pipeline.
+    /// ToolMetadata provides isReadOnly, isDestructive, requiresApproval for decisions.
     public func check(
         toolName: String,
         input: [String: JSONValue],
         mode: PermissionMode,
-        context: ToolUseContext
+        context: ToolUseContext,
+        metadata: ToolMetadata? = nil
     ) async -> PermissionVerdict {
-        var result = await innerCheck(toolName: toolName, input: input, mode: mode, context: context)
+        var result = await innerCheck(toolName: toolName, input: input, mode: mode, context: context, metadata: metadata)
         result = applyModeTransformations(result, mode: mode, toolName: toolName, context: context)
-        return result
-    }
-
-    /// Run the full permission decision pipeline (tool delegate variant).
-    /// Calls tool.checkPermissions() for tool-specific permission logic (step 1c).
-    public func check(
-        tool: any Tool,
-        input: [String: JSONValue],
-        mode: PermissionMode,
-        context: ToolUseContext
-    ) async -> PermissionVerdict {
-        var result = await innerCheck(tool: tool, toolName: tool.name, input: input, mode: mode, context: context)
-        result = applyModeTransformations(result, mode: mode, toolName: tool.name, context: context)
         return result
     }
 
@@ -52,17 +41,8 @@ public struct PermissionEngine: Sendable {
         toolName: String,
         input: [String: JSONValue],
         mode: PermissionMode,
-        context: ToolUseContext
-    ) async -> PermissionVerdict {
-        await innerCheck(tool: nil, toolName: toolName, input: input, mode: mode, context: context)
-    }
-
-    private func innerCheck(
-        tool: (any Tool)?,
-        toolName: String,
-        input: [String: JSONValue],
-        mode: PermissionMode,
-        context: ToolUseContext
+        context: ToolUseContext,
+        metadata: ToolMetadata?
     ) async -> PermissionVerdict {
 
         // Step 1a: Check tool-wide deny rules — deny wins immediately
@@ -78,36 +58,13 @@ public struct PermissionEngine: Sendable {
             return PermissionVerdict(decision: .allow, reason: "safe tool in sandbox — ask rule bypassed")
         }
 
-        // Step 1c: Tool-specific checkPermissions() delegation.
-        // Each tool can override checkPermissions() for custom permission logic.
-        // Mirrors CC: tool.checkPermissions() is advisory — deny wins immediately,
-        // ask forces user interaction (overrides bypass), allow/passthrough continue.
-        var toolOverrideAsk = false
-        if let tool = tool {
-            let permissionResult = await tool.checkPermissions(input: input, context: context)
-            switch permissionResult {
-            case .deny(let decision):
-                // Step 1d: Tool said deny — reject immediately
-                return PermissionVerdict(decision: .deny,
-                    reason: "tool-specific deny: \(decision.message)")
-            case .ask:
-                // Step 1f (CC): Tool asked — this overrides bypass mode
-                toolOverrideAsk = true
-            case .allow, .passthrough:
-                break // Continue through remaining checks
-            }
-        }
-
-        // Step 1e: Tool requires user interaction — always ask (even in bypass mode)
-        if let tool = tool, tool.requiresUserInteraction() {
-            return PermissionVerdict(decision: .ask, reason: "tool requires user interaction")
+        // Step 1c-e: Tool permission checks now use ToolMetadata instead of Tool protocol methods.
+        // ToolMetadata.requiresApproval replaces old Tool.requiresUserInteraction().
+        if let metadata = metadata, metadata.requiresApproval {
+            return PermissionVerdict(decision: .ask, reason: "tool requires approval")
         }
 
         // Step 1f: Content-specific rules (e.g., Bash(git:*) patterns)
-        // Tools returning .ask from checkPermissions force an ask here (CC's content-ask override)
-        if toolOverrideAsk {
-            return PermissionVerdict(decision: .ask, reason: "tool-specific ask (content override)")
-        }
         if let contentRule = matchContentRule(toolName: toolName, input: input) {
             switch contentRule {
             case .deny:
@@ -131,8 +88,7 @@ public struct PermissionEngine: Sendable {
         }
 
         // Step 2a: Check if mode bypasses permissions.
-        // CC checks both bypassPermissions AND plan mode with bypassPermissionsAvailable.
-        if mode == .bypassPermissions || (mode == .plan && context.isBypassPermissionsModeAvailable) {
+        if mode == .bypassPermissions {
             return PermissionVerdict(decision: .allow, reason: "bypassPermissions mode")
         }
 
@@ -142,7 +98,7 @@ public struct PermissionEngine: Sendable {
         }
 
         // Step 3: Convert passthrough to ask (CC defaults: unhandled → ask)
-        return await applyModeDefault(tool: tool, toolName: toolName, input: input, mode: mode, hasAskRule: hasAskRule, context: context)
+        return await applyModeDefault(toolName: toolName, input: input, mode: mode, hasAskRule: hasAskRule, context: context)
     }
 
     // MARK: - Content-Specific Rules
@@ -176,7 +132,6 @@ public struct PermissionEngine: Sendable {
     // MARK: - Mode Defaults
 
     private func applyModeDefault(
-        tool: (any Tool)?,
         toolName: String,
         input: [String: JSONValue],
         mode: PermissionMode,
@@ -206,15 +161,9 @@ public struct PermissionEngine: Sendable {
             return PermissionVerdict(decision: .deny, reason: "Operation requires confirmation — blocked in dontAsk mode")
 
         case .auto:
-            // Build classifier input from the tool (CC: returns unknown — string or object)
+            // Build classifier input from toolName + input
             let classifierInput: String
-            if let tool = tool {
-                let raw = tool.toAutoClassifierInput(input)
-                if let s = raw as? String { classifierInput = s }
-                else if let obj = raw as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: obj),
-                        let json = String(data: data, encoding: .utf8) { classifierInput = json }
-                else { classifierInput = "" }
-            } else if toolName == "Bash", case .string(let cmd) = input["command"] {
+            if toolName == "Bash", case .string(let cmd) = input["command"] {
                 classifierInput = cmd
             } else if toolName == "Write" || toolName == "Edit" {
                 classifierInput = (input["file_path"].flatMap { if case .string(let p) = $0 { return p } else { return nil } }) ?? ""
@@ -236,7 +185,6 @@ public struct PermissionEngine: Sendable {
             case .ask(let reason):
                 return PermissionVerdict(decision: .ask, reason: "auto mode classifier: \(reason)")
             case .classify(let reason):
-                // No config rule matched — fall back to base heuristics
                 if safetyChecker.isReadOnlyTool(toolName) {
                     return PermissionVerdict(decision: .allow, reason: "auto mode heuristic: \(reason)")
                 }
@@ -277,7 +225,7 @@ public struct PermissionEngine: Sendable {
         context: ToolUseContext
     ) -> PermissionVerdict {
         // Headless/async agent: deny ask prompts
-        if result.decision == .ask && context.shouldAvoidPermissionPrompts {
+        if result.decision == .ask && context.mode == .dontAsk {
             let headlessResult = runPermissionHooks(toolName: toolName, input: [:], context: context)
             if let hookResult = headlessResult {
                 return hookResult

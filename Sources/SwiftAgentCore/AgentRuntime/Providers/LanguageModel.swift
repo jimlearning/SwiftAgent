@@ -59,7 +59,7 @@ public protocol LanguageModel: Sendable {
     /// Human-readable display name for UI.
     var displayName: String { get }
 
-    /// Create an executor for this model. Called by AgentRuntime
+    /// Create an executor for this model. Called by LanguageModelSession
     /// when a session needs to perform inference.
     func makeExecutor() -> any LanguageModelExecutor
 }

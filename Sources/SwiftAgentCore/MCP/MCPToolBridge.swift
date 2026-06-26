@@ -27,9 +27,9 @@ public struct MCPToolBridge: Sendable {
         }
     }
 
-    /// Convert MCP tool result into the agent's ToolResult.
-    public static func buildToolResult(_ result: MCPToolResult) -> ToolResult {
-        ToolResult(content: result.content, isError: result.isError)
+    /// Convert MCP tool result into the agent's ToolOutputValue.
+    public static func buildToolResult(_ result: MCPToolResult) -> ToolOutputValue {
+        .string(result.content)
     }
 
     /// Load all tools from an MCP server configuration entry.

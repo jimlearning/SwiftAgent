@@ -76,7 +76,7 @@ public struct SummarizeMetadata: Codable, Sendable {
 
 // MARK: - Message
 
-public struct Message: Codable, Sendable, Identifiable {
+public struct Message: Sendable, Identifiable {
     public let uuid: String
     public let type: MessageRole
     public let content: [ContentBlock]
@@ -195,6 +195,114 @@ extension Message {
     public var role: MessageRole { type }
 }
 
+// MARK: Message Codable (CC-compatible)
+
+extension Message: Codable {
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case role
+        case content
+        case model
+        case stopReason = "stop_reason"
+        case stopSequence = "stop_sequence"
+        case usage
+        case timestamp
+        case uuid
+        case isMeta
+        case isVirtual
+        case isCompactSummary
+        case isVisibleInTranscriptOnly
+        case isApiErrorMessage
+        case toolUseID
+        case parentToolUseID
+        case toolUseResult
+        case mcpMeta
+        case imagePasteIds
+        case sourceToolAssistantUUID
+        case permissionMode
+        case requestId
+        case apiError
+        case error
+        case errorDetails
+        case container
+        case origin
+        case summarizeMetadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        let role = try container.decode(MessageRole.self, forKey: .role)
+
+        let content: [ContentBlock]
+        if let str = try? container.decode(String.self, forKey: .content) {
+            content = [.text(str)]
+        } else {
+            content = try container.decode([ContentBlock].self, forKey: .content)
+        }
+
+        self.init(
+            uuid: (try? container.decode(String.self, forKey: .id)) ?? (try? container.decode(String.self, forKey: .uuid)) ?? UUID().uuidString,
+            type: role,
+            content: content,
+            toolUseID: try container.decodeIfPresent(String.self, forKey: .toolUseID),
+            parentToolUseID: try container.decodeIfPresent(String.self, forKey: .parentToolUseID),
+            timestamp: (try? container.decode(Date.self, forKey: .timestamp)) ?? Date(),
+            isMeta: try container.decodeIfPresent(Bool.self, forKey: .isMeta) ?? false,
+            usage: try container.decodeIfPresent(Usage.self, forKey: .usage),
+            model: try container.decodeIfPresent(String.self, forKey: .model),
+            stopReason: try container.decodeIfPresent(String.self, forKey: .stopReason),
+            origin: try container.decodeIfPresent(MessageOrigin.self, forKey: .origin),
+            isVirtual: try container.decodeIfPresent(Bool.self, forKey: .isVirtual) ?? false,
+            isCompactSummary: try container.decodeIfPresent(Bool.self, forKey: .isCompactSummary) ?? false,
+            isVisibleInTranscriptOnly: try container.decodeIfPresent(Bool.self, forKey: .isVisibleInTranscriptOnly) ?? false,
+            summarizeMetadata: try container.decodeIfPresent(SummarizeMetadata.self, forKey: .summarizeMetadata),
+            toolUseResult: try container.decodeIfPresent(JSONValue.self, forKey: .toolUseResult),
+            mcpMeta: try container.decodeIfPresent(MCPMeta.self, forKey: .mcpMeta),
+            imagePasteIds: try container.decodeIfPresent([Int].self, forKey: .imagePasteIds),
+            sourceToolAssistantUUID: try container.decodeIfPresent(String.self, forKey: .sourceToolAssistantUUID),
+            permissionMode: try container.decodeIfPresent(PermissionMode.self, forKey: .permissionMode),
+            requestId: try container.decodeIfPresent(String.self, forKey: .requestId),
+            apiError: try container.decodeIfPresent(String.self, forKey: .apiError),
+            error: try container.decodeIfPresent(String.self, forKey: .error),
+            errorDetails: try container.decodeIfPresent(String.self, forKey: .errorDetails),
+            isApiErrorMessage: try container.decodeIfPresent(Bool.self, forKey: .isApiErrorMessage) ?? false,
+            container: try container.decodeIfPresent(String.self, forKey: .container),
+            stopSequence: try container.decodeIfPresent(String.self, forKey: .stopSequence)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        try container.encode(type, forKey: .role)
+
+        switch type {
+        case .user:
+            // CC format: user messages have "content" as a plain string
+            for block in content {
+                if case .text(let text) = block {
+                    try container.encode(text, forKey: .content)
+                    break
+                }
+            }
+        case .assistant:
+            try container.encode(uuid, forKey: .id)
+            try container.encode("message", forKey: .type)
+            try container.encodeIfPresent(model, forKey: .model)
+            try container.encode(content, forKey: .content)
+            try container.encodeIfPresent(stopReason, forKey: .stopReason)
+            // CC always includes stop_sequence (typically null)
+            try container.encode(stopSequence, forKey: .stopSequence)
+            try container.encodeIfPresent(usage, forKey: .usage)
+        default:
+            try container.encode(content, forKey: .content)
+        }
+    }
+}
+
 // MARK: - Tool Result Content
 
 /// Tool result content matching CC's string | ContentBlockParam[] union.
@@ -243,7 +351,7 @@ extension ToolResultContent: Codable {
 
 // MARK: - Content Block
 
-public enum ContentBlock: Codable, Sendable {
+public enum ContentBlock: Sendable {
     case text(String)
     /// Thinking block with optional cryptographic signature for verification.
     /// Matches CC's thinking block { thinking, signature }.
@@ -269,8 +377,143 @@ public enum ContentBlock: Codable, Sendable {
     case toolReference(name: String, description: String)
 }
 
+// MARK: ContentBlock Codable (CC-compatible)
+
+extension ContentBlock: Codable {
+
+    // MARK: CC Format Coding Keys
+
+    private enum CCKeys: String, CodingKey {
+        case type
+        case text
+        case thinking
+        case signature
+        case id
+        case name
+        case input
+        case toolUseID = "tool_use_id"
+        case content
+        case isError = "is_error"
+        case source
+        case data
+        case mediaType = "media_type"
+        case description
+        case url
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CCKeys.self)
+
+        let type = try container.decode(String.self, forKey: .type)
+        switch type {
+        case "text":
+            let text = try container.decode(String.self, forKey: .text)
+            self = .text(text)
+        case "thinking":
+            let text = try container.decode(String.self, forKey: .thinking)
+            let sig = try container.decodeIfPresent(String.self, forKey: .signature)
+            self = .thinking(text, signature: sig)
+        case "redacted_thinking":
+            let data = try container.decode(String.self, forKey: .data)
+            self = .redactedThinking(data)
+        case "tool_use":
+            let id = try container.decode(String.self, forKey: .id)
+            let name = try container.decode(String.self, forKey: .name)
+            let input = try container.decode(JSONValue.self, forKey: .input)
+            self = .toolUse(id: id, name: name, input: input)
+        case "server_tool_use":
+            let id = try container.decode(String.self, forKey: .id)
+            let name = try container.decode(String.self, forKey: .name)
+            let input = try container.decode(JSONValue.self, forKey: .input)
+            self = .serverToolUse(id: id, name: name, input: input)
+        case "tool_result":
+            let toolUseID = try container.decode(String.self, forKey: .toolUseID)
+            let isError = try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+            let content: ToolResultContent
+            if let str = try? container.decode(String.self, forKey: .content) {
+                content = .string(str)
+            } else {
+                let blocks = try container.decode([ContentBlock].self, forKey: .content)
+                content = .blocks(blocks)
+            }
+            self = .toolResult(toolUseID: toolUseID, content: content, isError: isError)
+        case "image":
+            let nested = try container.nestedContainer(keyedBy: CCKeys.self, forKey: .source)
+            let imgType = try nested.decode(String.self, forKey: .type)
+            let mediaType = try nested.decode(String.self, forKey: .mediaType)
+            let data = try nested.decodeIfPresent(String.self, forKey: .data)
+            let url = try nested.decodeIfPresent(String.self, forKey: .url)
+            self = .image(type: imgType, mediaType: mediaType, data: data, url: url)
+        case "document":
+            let nested = try container.nestedContainer(keyedBy: CCKeys.self, forKey: .source)
+            let docType = try nested.decode(String.self, forKey: .type)
+            let mediaType = try nested.decode(String.self, forKey: .mediaType)
+            let data = try nested.decode(String.self, forKey: .data)
+            self = .document(type: docType, mediaType: mediaType, data: data)
+        case "tool_reference":
+            let name = try container.decode(String.self, forKey: .name)
+            let desc = try container.decode(String.self, forKey: .description)
+            self = .toolReference(name: name, description: desc)
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type, in: container,
+                debugDescription: "Unknown ContentBlock type: \(type)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CCKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode("text", forKey: .type)
+            try container.encode(text, forKey: .text)
+        case .thinking(let text, let signature):
+            try container.encode("thinking", forKey: .type)
+            try container.encode(text, forKey: .thinking)
+            try container.encodeIfPresent(signature, forKey: .signature)
+        case .redactedThinking(let data):
+            try container.encode("redacted_thinking", forKey: .type)
+            try container.encode(data, forKey: .data)
+        case .toolUse(let id, let name, let input):
+            try container.encode("tool_use", forKey: .type)
+            try container.encode(id, forKey: .id)
+            try container.encode(name, forKey: .name)
+            try container.encode(input, forKey: .input)
+        case .serverToolUse(let id, let name, let input):
+            try container.encode("server_tool_use", forKey: .type)
+            try container.encode(id, forKey: .id)
+            try container.encode(name, forKey: .name)
+            try container.encode(input, forKey: .input)
+        case .toolResult(let toolUseID, let content, let isError):
+            try container.encode("tool_result", forKey: .type)
+            try container.encode(toolUseID, forKey: .toolUseID)
+            try container.encode(content, forKey: .content)
+            try container.encode(isError, forKey: .isError)
+        case .image(let type, let mediaType, let data, let url):
+            try container.encode("image", forKey: .type)
+            var source = container.nestedContainer(keyedBy: CCKeys.self, forKey: .source)
+            try source.encode(type, forKey: .type)
+            try source.encode(mediaType, forKey: .mediaType)
+            try source.encodeIfPresent(data, forKey: .data)
+            try source.encodeIfPresent(url, forKey: .url)
+        case .document(let type, let mediaType, let data):
+            try container.encode("document", forKey: .type)
+            var source = container.nestedContainer(keyedBy: CCKeys.self, forKey: .source)
+            try source.encode(type, forKey: .type)
+            try source.encode(mediaType, forKey: .mediaType)
+            try source.encode(data, forKey: .data)
+        case .toolReference(let name, let description):
+            try container.encode("tool_reference", forKey: .type)
+            try container.encode(name, forKey: .name)
+            try container.encode(description, forKey: .description)
+        }
+    }
+}
+
 /// A JSON-compatible value for tool inputs/outputs.
-public indirect enum JSONValue: Codable, Sendable, Equatable {
+/// Encodes as plain JSON (no wrapper) for CC compatibility.
+public indirect enum JSONValue: Sendable, Equatable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -304,6 +547,60 @@ public indirect enum JSONValue: Codable, Sendable, Equatable {
         case let arr as [Any]: return .array(arr.compactMap { fromAny($0) })
         case let dict as [String: Any]: return .object(dict.compactMapValues { fromAny($0) })
         default: return nil
+        }
+    }
+}
+
+// MARK: JSONValue Codable
+
+extension JSONValue: Codable {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let str = try? container.decode(String.self) {
+            self = .string(str)
+        } else if let num = try? container.decode(Double.self) {
+            self = .number(num)
+        } else if let bol = try? container.decode(Bool.self) {
+            self = .bool(bol)
+        } else if container.decodeNil() {
+            self = .null
+        } else if let arr = try? container.decode([JSONValue].self) {
+            self = .array(arr)
+        } else if let obj = try? container.decode([String: JSONValue].self) {
+            self = .object(obj)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let s): try container.encode(s)
+        case .number(let n): try container.encode(n)
+        case .bool(let b): try container.encode(b)
+        case .null: try container.encodeNil()
+        case .array(let arr): try container.encode(arr)
+        case .object(let dict): try container.encode(dict)
+        }
+    }
+}
+
+extension JSONValue {
+    /// Returns a JSON string representation of this value.
+    /// Useful for tool input summaries and display.
+    public var jsonString: String {
+        switch self {
+        case .string(let s): return "\"" + s + "\""
+        case .number(let n):
+            if n == Double(Int(n)) { return String(Int(n)) }
+            return String(n)
+        case .bool(let b): return b ? "true" : "false"
+        case .null: return "null"
+        case .array(let arr): return "[" + arr.map(\.jsonString).joined(separator: ",") + "]"
+        case .object(let dict):
+            let pairs = dict.map { "\"\($0.key)\":\($0.value.jsonString)" }.joined(separator: ",")
+            return "{" + pairs + "}"
         }
     }
 }

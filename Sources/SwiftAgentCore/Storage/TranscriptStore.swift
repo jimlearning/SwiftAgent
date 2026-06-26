@@ -115,21 +115,27 @@ public final class TranscriptStore: @unchecked Sendable {
     /// Read only transcript (message) entries from the file, excluding metadata entries
     /// like last-prompt, custom-title, summary, etc.
     ///
-    /// Streaming deltas write the same message UUID multiple times as content accumulates
-    /// (every ~5 text deltas, every tool event). On read, we deduplicate by keeping only
-    /// the LAST occurrence of each UUID — that snapshot has the most complete content.
+    /// Streaming deltas write the same message UUID multiple times as content accumulates.
+    /// For CC-compatible split format (thinking + text as separate entries), dedup keeps
+    /// the last thinking-only entry and the last non-thinking entry per message UUID.
     public func readMessages(sessionId: String, projectPath: String) throws -> [SerializedMessage] {
         let entries = try readAll(sessionId: sessionId, projectPath: projectPath)
         let messages = entries.compactMap { entry -> SerializedMessage? in
             if case .transcript(let msg) = entry { return msg }
             return nil
         }
-        // Deduplicate: keep last occurrence of each UUID (latest streaming snapshot)
-        var seen = [String: Int]()  // uuid → index
+        // Dedup: group by (messageUUID, isThinking), keep last occurrence
+        var seen = [String: Int]()  // key → index
         for (i, msg) in messages.enumerated() {
-            seen[msg.uuid] = i
+            let msgID = msg.message.uuid
+            let isThinking = msg.message.content.allSatisfy { block in
+                if case .thinking = block { return true }; return false
+            }
+            let key = isThinking ? "\(msgID):thinking" : "\(msgID):text"
+            seen[key] = i
         }
         let deduplicated = seen.values.sorted().map { messages[$0] }
+        // Restore chronological order (sort by index, which is already sorted above)
         return deduplicated
     }
 

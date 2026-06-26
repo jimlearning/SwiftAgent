@@ -3,7 +3,7 @@ import Foundation
 /// Provider-agnostic streaming event model for the Agent Runtime.
 ///
 /// Replaces Anthropic-specific StreamEvent. Every event flowing between
-/// the LanguageModelExecutor and the AgentRuntime loop passes through
+/// the LanguageModelExecutor and the LanguageModelSession loop passes through
 /// this enum. The "Delta" names are intentional: the values carry
 /// ACCUMULATED snapshot totals, not incremental additions — preventing
 /// the double-render bug (PITFALLS.md Pitfall 2).

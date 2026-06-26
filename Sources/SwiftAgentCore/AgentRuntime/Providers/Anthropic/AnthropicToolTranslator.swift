@@ -1,17 +1,17 @@
 import Foundation
 
-/// Translates RuntimeToolDefinition values into Anthropic-format tool JSON.
+/// Translates SessionToolDefinition values into Anthropic-format tool JSON.
 /// Pure-functional: no mutable state, no side effects.
 ///
 /// Uses Codable round-trip through JSONEncoder for nested schema support,
 /// matching the existing ToolDefinition.apiFormatted pattern.
 struct AnthropicToolTranslator: Sendable {
 
-    /// Convert an array of RuntimeToolDefinition to Anthropic-format tool dicts.
+    /// Convert an array of SessionToolDefinition to Anthropic-format tool dicts.
     ///
     /// Each output dict has keys: `name`, `description`, `input_schema`.
     /// The `input_schema` maps JSONSchema fields recursively via Codable round-trip.
-    static func translate(_ tools: [RuntimeToolDefinition]) -> [[String: Any]] {
+    static func translate(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
         tools.map { tool in
             var dict: [String: Any] = [
                 "name": tool.name,

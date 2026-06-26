@@ -291,9 +291,9 @@ public actor MCPBootstrapper {
     // MARK: - Tool Invocation
 
     /// Invoke a tool on one of the connected MCP servers.
-    public func callTool(serverName: String, toolName: String, arguments: [String: JSONValue]) async throws -> ToolResult {
+    public func callTool(serverName: String, toolName: String, arguments: [String: JSONValue]) async throws -> ToolOutputValue {
         guard let rawClient = clients[serverName] else {
-            return ToolResult(content: "MCP server '\(serverName)' is not connected.", isError: true)
+            return .string("MCP server '\(serverName)' is not connected.")
         }
 
         let result = try await rawClient.callTool(name: toolName, arguments: arguments)

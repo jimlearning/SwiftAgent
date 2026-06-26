@@ -1,15 +1,18 @@
 import Foundation
 
 /// Thin adapter that wraps the existing PermissionEngine and conforms to
-/// RuntimePermissionEngine. Maps AgentPermission enum cases to tool-name-based
+/// SessionPermissionEngine. Maps AgentPermission enum cases to tool-name-based
 /// permission checks that the existing pipeline understands.
 ///
 /// This is the post-migration permission bridge. The legacy permission paths
 /// are deprecated and will be removed in a future phase.
-public struct AgentPermissionBridge: RuntimePermissionEngine, Sendable {
+///
+/// The `mode` property is settable so the UI can toggle permission mode
+/// at runtime without recreating the session.
+public final class AgentPermissionBridge: SessionPermissionEngine, @unchecked Sendable {
 
     private let engine: PermissionEngine
-    private let mode: PermissionMode
+    public var mode: PermissionMode
 
     /// Create a bridge wrapping an existing PermissionEngine.
     ///
@@ -35,7 +38,7 @@ public struct AgentPermissionBridge: RuntimePermissionEngine, Sendable {
                 mode: mode,
                 context: .default
             )
-            return verdict.decision == .allow
+            return verdict.decision != .deny
 
         case .readFiles(let paths):
             let verdict = await engine.check(
@@ -44,7 +47,7 @@ public struct AgentPermissionBridge: RuntimePermissionEngine, Sendable {
                 mode: mode,
                 context: .default
             )
-            return verdict.decision == .allow
+            return verdict.decision != .deny
 
         case .writeFiles(let paths):
             let verdict = await engine.check(
@@ -53,7 +56,7 @@ public struct AgentPermissionBridge: RuntimePermissionEngine, Sendable {
                 mode: mode,
                 context: .default
             )
-            return verdict.decision == .allow
+            return verdict.decision != .deny
 
         case .network(let domains):
             let verdict = await engine.check(
@@ -62,7 +65,7 @@ public struct AgentPermissionBridge: RuntimePermissionEngine, Sendable {
                 mode: mode,
                 context: .default
             )
-            return verdict.decision == .allow
+            return verdict.decision != .deny
 
         case .all:
             return true
@@ -83,7 +86,7 @@ public struct AgentPermissionBridge: RuntimePermissionEngine, Sendable {
                 mode: mode,
                 context: .default
             )
-            return verdict.decision == .allow
+            return verdict.decision != .deny
         }
     }
 }

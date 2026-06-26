@@ -1,7 +1,7 @@
 import Foundation
 
 /// Public tool output type for the Agent Runtime. Replaces ToolResult
-/// in the public AgentRuntime API. ContentBlock is NOT exposed — consumers
+/// in the public LanguageModelSession API. ContentBlock is NOT exposed — consumers
 /// see only String output or structured blocks.
 ///
 /// Named ToolOutputValue to avoid collision with the existing

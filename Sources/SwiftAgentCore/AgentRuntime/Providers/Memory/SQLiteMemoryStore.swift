@@ -1,16 +1,16 @@
 import Foundation
 import SQLite3
 
-/// Persistent RuntimeMemoryStore backend using system SQLite3.
+/// Persistent SessionMemoryStore backend using system SQLite3.
 ///
 /// Actor-based to serialize all database access through a single thread
-/// (SQLite3 in serialized mode). Implements all 6 RuntimeMemoryStore
+/// (SQLite3 in serialized mode). Implements all 6 SessionMemoryStore
 /// protocol methods with schema-versioned migrations and parameterized
 /// queries (zero string interpolation into SQL).
 ///
 /// This is the post-migration provider. The legacy MemoryStore (Storage/MemoryStore.swift)
 /// path is deprecated and will be removed in a future phase.
-public actor SQLiteMemoryStore: RuntimeMemoryStore {
+public actor SQLiteMemoryStore: SessionMemoryStore {
 
     // MARK: - Database Handle (Sendable wrapper for non-Sendable C type)
 
@@ -152,7 +152,7 @@ public actor SQLiteMemoryStore: RuntimeMemoryStore {
         return 0
     }
 
-    // MARK: - RuntimeMemoryStore Conformance
+    // MARK: - SessionMemoryStore Conformance
 
     /// Store a Codable value at a key within a namespace.
     ///
@@ -198,7 +198,7 @@ public actor SQLiteMemoryStore: RuntimeMemoryStore {
     /// Search for entries matching a query within a namespace.
     ///
     /// Uses LIKE-based case-insensitive search on both key and value columns.
-    public func search(query: String, namespace: String) async throws -> [RuntimeMemoryEntry] {
+    public func search(query: String, namespace: String) async throws -> [SessionMemoryEntry] {
         let sql = """
             SELECT key, namespace, value, created_at, updated_at, metadata \
             FROM memory_entries \
@@ -210,7 +210,7 @@ public actor SQLiteMemoryStore: RuntimeMemoryStore {
             .text(pattern),
             .text(pattern),
         ])
-        return rows.compactMap { row -> RuntimeMemoryEntry? in
+        return rows.compactMap { row -> SessionMemoryEntry? in
             guard let key = row["key"] as? String,
                   let ns = row["namespace"] as? String else { return nil }
             let value = row["value"] as? Data ?? Data()
@@ -224,7 +224,7 @@ public actor SQLiteMemoryStore: RuntimeMemoryStore {
             } else {
                 metadata = [:]
             }
-            return RuntimeMemoryEntry(
+            return SessionMemoryEntry(
                 key: key,
                 namespace: ns,
                 value: value,

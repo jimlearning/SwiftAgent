@@ -1,18 +1,29 @@
 import Foundation
 
-// MARK: - RuntimeToolDefinition
+// MARK: - SessionToolDefinition
 
-/// Normalized tool definition sent from AgentRuntime to executor.
+/// Normalized tool definition sent from LanguageModelSession to executor.
 /// Provider-agnostic; each executor maps to its own wire format.
 ///
-/// Named RuntimeToolDefinition to avoid collision with the existing
+/// Named SessionToolDefinition to avoid collision with the existing
 /// `ToolDefinition` in LLM/LLMClient.swift. The existing type will be
-/// deprecated when AgentRuntime replaces QueryEngine in Phase 3.
-public struct RuntimeToolDefinition: Sendable {
+/// deprecated when LanguageModelSession replaces QueryEngine in Phase 3.
+public struct SessionToolDefinition: Sendable {
     public let name: String
     public let description: String
     public let inputSchema: JSONSchema
+    public let deferLoading: Bool
+
+    public init(name: String, description: String, inputSchema: JSONSchema, deferLoading: Bool = false) {
+        self.name = name
+        self.description = description
+        self.inputSchema = inputSchema
+        self.deferLoading = deferLoading
+    }
 }
+
+/// Backward-compatible alias. Prefer SessionToolDefinition in new code.
+public typealias ToolDefinition = SessionToolDefinition
 
 // MARK: - GenerationOptions
 
@@ -39,7 +50,7 @@ public struct GenerationOptions: Sendable {
 // MARK: - LanguageModelExecutor
 
 /// Internal protocol for per-provider inference backends.
-/// NOT exposed to CLI/App — used only by AgentRuntime.
+/// NOT exposed to CLI/App — used only by LanguageModelSession.
 ///
 /// Each executor owns its wire format translation, SSE parsing,
 /// and model-specific behavior entirely.
@@ -57,7 +68,7 @@ public protocol LanguageModelExecutor: Sendable {
     ///   - channel: Streaming channel for results.
     func respond(
         to transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         streamingInto channel: GenerationChannel
     ) async throws

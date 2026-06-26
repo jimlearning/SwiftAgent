@@ -2,7 +2,7 @@ import Foundation
 
 /// Agent graph — ordered DAG of agent nodes.
 /// TYPE-SLOT ONLY — not implemented. Protocol surface designed
-/// so AgentRuntime can accept a Graph in a future phase
+/// so LanguageModelSession can accept a Graph in a future phase
 /// without breaking changes.
 ///
 /// Predicted WWDC27 shape: AgentKit WorkflowGraph with

@@ -9,7 +9,7 @@ import Foundation
 /// snapshot, the previous snapshot (for diff computation), and the set
 /// of property keys that changed since the last emission.
 ///
-/// ## Usage in AgentRuntimeImpl (Plan 02-03)
+/// ## Usage in LanguageModelSessionImpl (Plan 02-03)
 /// ```
 /// var state = PartiallyGenerated<BashParams>()
 /// for try await event in channel.stream {

@@ -88,7 +88,6 @@ struct AnthropicContentAccumulator: Sendable {
             inputTokens: dict["input_tokens"] as? Int ?? 0,
             cacheCreationInputTokens: dict["cache_creation_input_tokens"] as? Int ?? 0,
             cacheReadInputTokens: dict["cache_read_input_tokens"] as? Int ?? 0,
-            cacheDeletedInputTokens: dict["cache_deleted_input_tokens"] as? Int ?? 0,
             outputTokens: dict["output_tokens"] as? Int ?? 0,
             serverToolUse: (dict["server_tool_use"] as? [String: Any]).map { s in
                 Usage.ServerToolUse(

@@ -10,9 +10,9 @@ public struct AgentProfile: Sendable {
     public var instructions: String
 
     /// Tools available to this agent.
-    public var tools: [any RuntimeAgentTool]
+    public var tools: [any Tool]
 
-    /// Model used for inference (nil = use AgentRuntime default).
+    /// Model used for inference (nil = use LanguageModelSession default).
     public var model: (any LanguageModel)?
 
     /// Permission mode for this agent.
@@ -24,7 +24,7 @@ public struct AgentProfile: Sendable {
     public init(
         name: String,
         instructions: String,
-        tools: [any RuntimeAgentTool] = [],
+        tools: [any Tool] = [],
         model: (any LanguageModel)? = nil,
         permissionMode: AgentPermission = .default,
         memoryScope: MemoryScope = .session

@@ -551,6 +551,35 @@ public struct SystemPromptBuilder: Sendable {
         }
         return nil
     }
+    // MARK: - Convenience Factory
+
+    /// Build a default system prompt for a coding agent session.
+    /// Wraps the full `build(for:)` method with sensible defaults.
+    /// - Parameters:
+    ///   - workingDirectory: Primary working directory.
+    ///   - toolNames: Set of enabled tool names for dynamic tool guidance.
+    ///   - model: Model identifier for environment section.
+    ///   - language: Optional language preference.
+    public static func defaultPrompt(
+        workingDirectory: String,
+        toolNames: Set<String> = [],
+        model: String? = nil,
+        language: String? = nil
+    ) -> String {
+        let loader = ClaudeMdLoader()
+        let builder = SystemPromptBuilder(
+            workingDirectory: workingDirectory,
+            claudeMdLoader: loader
+        )
+        let conversation = Conversation()
+        return builder.build(
+            for: conversation,
+            toolNames: toolNames,
+            model: model,
+            language: language,
+            workingDirectory: workingDirectory
+        )
+    }
 }
 
 // MARK: - Boundary Marker

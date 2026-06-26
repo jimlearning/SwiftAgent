@@ -20,7 +20,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
     public let displayName: String
     private let apiKey: String
     private let baseURL: URL
-    private let modelID: String
+    public let modelID: String
     private let compatibility: APICompatibility
     private let session: URLSession
 
@@ -53,6 +53,24 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
             contextWindow: 64_000,
             maxOutputTokens: 8_192,
             providerDisplayName: "DeepSeek R1"
+        ),
+        "deepseek-v4-pro": LanguageModelCapabilities(
+            supportsStreaming: true,
+            supportsToolUse: true,
+            supportsThinking: true,
+            supportsVision: false,
+            contextWindow: 128_000,
+            maxOutputTokens: 32_768,
+            providerDisplayName: "DeepSeek V4 Pro"
+        ),
+        "deepseek-v4-flash": LanguageModelCapabilities(
+            supportsStreaming: true,
+            supportsToolUse: true,
+            supportsThinking: true,
+            supportsVision: false,
+            contextWindow: 128_000,
+            maxOutputTokens: 8_192,
+            providerDisplayName: "DeepSeek V4 Flash"
         ),
     ]
 
@@ -99,7 +117,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
     public func respond(
         to transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         streamingInto channel: GenerationChannel
     ) async throws {
@@ -125,7 +143,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
     private func streamAnthropicCompat(
         transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         channel: GenerationChannel
     ) async throws {
@@ -175,7 +193,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
     private func streamOpenAICompat(
         transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         channel: GenerationChannel
     ) async throws {
@@ -233,7 +251,17 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                await channel.fail(with: .serverError(statusCode: status, body: nil))
+                // Read error body for diagnostics
+                var errorBody: String? = nil
+                var errorData = Data()
+                do {
+                    for try await byte in bytes.prefix(4096) {
+                        errorData.append(byte)
+                    }
+                    errorBody = String(data: errorData, encoding: .utf8)
+                } catch {}
+                print("[DeepSeekProvider] HTTP \(status): \(errorBody ?? "no body")")
+                await channel.fail(with: .serverError(statusCode: status, body: errorBody))
                 return
             }
 

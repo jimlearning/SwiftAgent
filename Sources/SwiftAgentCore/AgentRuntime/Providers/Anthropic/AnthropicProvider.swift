@@ -89,7 +89,7 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
 
     public func respond(
         to transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         streamingInto channel: GenerationChannel
     ) async throws {
@@ -115,7 +115,15 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                await channel.fail(with: .serverError(statusCode: status, body: nil))
+                var errorBody: String? = nil
+                var errorData = Data()
+                do {
+                    for try await byte in bytes.prefix(4096) {
+                        errorData.append(byte)
+                    }
+                    errorBody = String(data: errorData, encoding: .utf8)
+                } catch {}
+                await channel.fail(with: .serverError(statusCode: status, body: errorBody))
                 return
             }
 

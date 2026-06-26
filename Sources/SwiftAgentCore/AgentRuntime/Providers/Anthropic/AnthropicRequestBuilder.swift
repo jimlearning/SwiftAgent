@@ -22,7 +22,7 @@ struct AnthropicRequestBuilder: Sendable {
     /// - Throws: `AgentRuntimeError.invalidResponse` if the body cannot be JSON-encoded.
     static func build(
         transcript: Transcript,
-        tools: [RuntimeToolDefinition],
+        tools: [SessionToolDefinition],
         options: GenerationOptions,
         systemPrompt: String?,
         apiKey: String,

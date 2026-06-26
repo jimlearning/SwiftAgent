@@ -1,6 +1,6 @@
 import Foundation
 
-/// Translates RuntimeToolDefinition values into OpenAI function-calling format.
+/// Translates SessionToolDefinition values into OpenAI function-calling format.
 /// Pure-functional: no mutable state, no side effects.
 ///
 /// OpenAI function-calling format: each tool is a dict with keys
@@ -8,7 +8,7 @@ import Foundation
 /// Uses Codable round-trip through JSONEncoder for nested schema support.
 struct OpenAIToolTranslator: Sendable {
 
-    /// Convert an array of RuntimeToolDefinition to OpenAI function-calling format.
+    /// Convert an array of SessionToolDefinition to OpenAI function-calling format.
     ///
     /// Each output dict has: `type`, `function.name`, `function.description`,
     /// `function.parameters`, and optionally `function.strict`.
@@ -20,7 +20,7 @@ struct OpenAIToolTranslator: Sendable {
     ///     (all properties listed in `required`, `additionalProperties: false`,
     ///     no `default` values). Defaults to `false`.
     /// - Returns: An array of dicts in OpenAI function-calling format.
-    static func translate(_ tools: [RuntimeToolDefinition], enableStrictMode: Bool = false) -> [[String: Any]] {
+    static func translate(_ tools: [SessionToolDefinition], enableStrictMode: Bool = false) -> [[String: Any]] {
         tools.map { tool in
             var function: [String: Any] = [
                 "name": tool.name,
