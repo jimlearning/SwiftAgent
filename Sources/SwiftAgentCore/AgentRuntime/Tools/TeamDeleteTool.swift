@@ -16,6 +16,8 @@ public struct TeamDeleteTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "teammateID": JSONSchemaProperty(type: "string", description: "The ID of the teammate to remove."),

@@ -20,6 +20,8 @@ public struct TaskOutputTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["taskId"] = JSONSchemaProperty(type: "string", description: "The task ID to get output from")

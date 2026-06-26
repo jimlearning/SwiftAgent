@@ -18,6 +18,8 @@ public struct ExitPlanModeV2Tool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["plan"] = JSONSchemaProperty(type: "string", description: "The plan to present for user approval")

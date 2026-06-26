@@ -14,6 +14,8 @@ public struct SnipTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "range": JSONSchemaProperty(type: "string", description: "Range of messages to snip"),

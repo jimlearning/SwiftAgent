@@ -41,6 +41,8 @@ public struct DynamicMCPTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema
 
     // MARK: - Init

@@ -18,6 +18,8 @@ public struct EnterPlanModeTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["description"] = JSONSchemaProperty(type: "string", description: "Brief description of the plan")

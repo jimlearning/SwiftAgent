@@ -18,6 +18,8 @@ public struct SendMessageTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["to"] = JSONSchemaProperty(type: "string", description: "Recipient: teammate name, or \"*\" for broadcast to all teammates")

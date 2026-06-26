@@ -17,6 +17,8 @@ public struct TaskStopTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["task_id"] = JSONSchemaProperty(type: "string", description: "The ID of the task to stop")

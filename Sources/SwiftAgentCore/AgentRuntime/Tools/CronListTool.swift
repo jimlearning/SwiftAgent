@@ -12,6 +12,8 @@ public struct CronListTool: Tool {
         // No arguments needed for listing.
     }
 
+    public typealias Output = ToolOutputValue
+
     public let inputSchema = JSONSchema(type: "object", properties: [:])
 
     public init(cronStore: CronStore = CronStore()) {

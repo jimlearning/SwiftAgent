@@ -9,6 +9,7 @@ import SwiftAgentCore
 public struct MockLanguageModel: LanguageModel, Sendable {
     public let capabilities: LanguageModelCapabilities
     public let displayName: String
+    public let executorConfiguration: any LanguageModelExecutorConfiguration
 
     /// Predefined text responses to stream in sequence.
     public var cannedResponses: [String]
@@ -24,8 +25,13 @@ public struct MockLanguageModel: LanguageModel, Sendable {
     ) {
         self.capabilities = capabilities
         self.displayName = displayName
+        self.executorConfiguration = MockConfiguration()
         self.cannedResponses = cannedResponses
         self.cannedToolCalls = cannedToolCalls
+    }
+
+    public struct MockConfiguration: LanguageModelExecutorConfiguration {
+        public init() {}
     }
 
     public func makeExecutor() -> any LanguageModelExecutor {
@@ -58,9 +64,7 @@ public struct MockLanguageModelExecutor: LanguageModelExecutor, Sendable {
     }
 
     public func respond(
-        to transcript: Transcript,
-        tools: [SessionToolDefinition],
-        options: GenerationOptions,
+        to request: LanguageModelExecutorGenerationRequest,
         streamingInto channel: GenerationChannel
     ) async throws {
         guard let mock = model as? MockLanguageModel else {

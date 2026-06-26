@@ -13,7 +13,7 @@ struct DeepSeekToolTranslator: Sendable {
                 "name": tool.name,
                 "description": tool.description,
             ]
-            if let data = try? JSONEncoder().encode(tool.inputSchema),
+            if let data = try? JSONEncoder().encode(tool.parameters),
                let schemaDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 dict["input_schema"] = schemaDict
             } else {
@@ -30,7 +30,7 @@ struct DeepSeekToolTranslator: Sendable {
     static func translateOpenAICompat(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
         tools.map { tool in
             var parameters: [String: Any] = ["type": "object"]
-            if let data = try? JSONEncoder().encode(tool.inputSchema),
+            if let data = try? JSONEncoder().encode(tool.parameters),
                let schemaDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 // Copy relevant schema fields to parameters
                 parameters["type"] = schemaDict["type"] as? String ?? "object"

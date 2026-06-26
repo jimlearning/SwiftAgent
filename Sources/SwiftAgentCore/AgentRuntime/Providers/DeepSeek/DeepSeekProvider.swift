@@ -14,10 +14,27 @@ import Foundation
 /// deprecated and will be removed in Phase 4.
 public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
+    // MARK: - Configuration
+
+    public struct Configuration: LanguageModelExecutorConfiguration {
+        public let apiKey: String
+        public let baseURL: URL
+        public let modelID: String
+        public let compatibility: APICompatibility
+
+        public init(apiKey: String, baseURL: URL, modelID: String, compatibility: APICompatibility = .anthropicCompatible) {
+            self.apiKey = apiKey
+            self.baseURL = baseURL
+            self.modelID = modelID
+            self.compatibility = compatibility
+        }
+    }
+
     // MARK: - Stored Properties
 
     public let capabilities: LanguageModelCapabilities
     public let displayName: String
+    public let executorConfiguration: any LanguageModelExecutorConfiguration
     private let apiKey: String
     private let baseURL: URL
     public let modelID: String
@@ -28,48 +45,53 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
     private static let modelCapabilities: [String: LanguageModelCapabilities] = [
         "deepseek-chat": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: false,
+            supportsGuidedGeneration: false,
+            supportsReasoning: false,
+            supportsStreaming: true,
             supportsVision: false,
             contextWindow: 64_000,
-            maxOutputTokens: 8_192,
+            maximumResponseTokens: 8_192,
             providerDisplayName: "DeepSeek Chat"
         ),
         "deepseek-reasoner": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: true,
+            supportsGuidedGeneration: false,
+            supportsReasoning: true,
+            supportsStreaming: true,
             supportsVision: false,
             contextWindow: 64_000,
-            maxOutputTokens: 8_192,
+            maximumResponseTokens: 8_192,
             providerDisplayName: "DeepSeek R1"
         ),
         "deepseek-r1": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: true,
+            supportsGuidedGeneration: false,
+            supportsReasoning: true,
+            supportsStreaming: true,
             supportsVision: false,
             contextWindow: 64_000,
-            maxOutputTokens: 8_192,
+            maximumResponseTokens: 8_192,
             providerDisplayName: "DeepSeek R1"
         ),
         "deepseek-v4-pro": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: true,
+            supportsGuidedGeneration: false,
+            supportsReasoning: true,
+            supportsStreaming: true,
             supportsVision: false,
             contextWindow: 128_000,
-            maxOutputTokens: 32_768,
+            maximumResponseTokens: 32_768,
             providerDisplayName: "DeepSeek V4 Pro"
         ),
         "deepseek-v4-flash": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: true,
+            supportsGuidedGeneration: false,
+            supportsReasoning: true,
+            supportsStreaming: true,
             supportsVision: false,
             contextWindow: 128_000,
-            maxOutputTokens: 8_192,
+            maximumResponseTokens: 8_192,
             providerDisplayName: "DeepSeek V4 Flash"
         ),
     ]
@@ -87,18 +109,11 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         self.baseURL = baseURL ?? compatibility.defaultBaseURL
         self.modelID = modelID
         self.compatibility = compatibility
+        self.executorConfiguration = Configuration(apiKey: apiKey, baseURL: self.baseURL, modelID: modelID, compatibility: compatibility)
 
         let caps = Self.modelCapabilities[modelID]
             ?? LanguageModelCapabilities(providerDisplayName: modelID)
-        self.capabilities = LanguageModelCapabilities(
-            supportsStreaming: caps.supportsStreaming,
-            supportsToolUse: caps.supportsToolUse,
-            supportsThinking: caps.supportsThinking,
-            supportsVision: caps.supportsVision,
-            contextWindow: caps.contextWindow,
-            maxOutputTokens: caps.maxOutputTokens,
-            providerDisplayName: caps.providerDisplayName
-        )
+        self.capabilities = caps
         self.displayName = displayName ?? modelID
 
         let config = URLSessionConfiguration.default
@@ -116,24 +131,22 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
     public var model: any LanguageModel { self }
 
     public func respond(
-        to transcript: Transcript,
-        tools: [SessionToolDefinition],
-        options: GenerationOptions,
+        to request: LanguageModelExecutorGenerationRequest,
         streamingInto channel: GenerationChannel
     ) async throws {
         switch compatibility {
         case .anthropicCompatible:
             try await streamAnthropicCompat(
-                transcript: transcript,
-                tools: tools,
-                options: options,
+                transcript: request.transcript,
+                tools: request.enabledTools,
+                options: request.generationOptions,
                 channel: channel
             )
         case .openAICompatible:
             try await streamOpenAICompat(
-                transcript: transcript,
-                tools: tools,
-                options: options,
+                transcript: request.transcript,
+                tools: request.enabledTools,
+                options: request.generationOptions,
                 channel: channel
             )
         }
@@ -157,7 +170,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         // Anthropic thinking configuration (budget_tokens).
         var body: [String: Any] = [
             "model": modelID,
-            "max_tokens": options.maxTokens ?? 8_192,
+            "max_tokens": options.maximumResponseTokens ?? 8_192,
             "stream": true,
             "messages": messages,
         ]
@@ -209,7 +222,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
             "messages": messages,
             "stream": true,
         ]
-        if let maxTokens = options.maxTokens {
+        if let maxTokens = options.maximumResponseTokens {
             body["max_tokens"] = maxTokens
         }
         if let temperature = options.temperature {
@@ -286,7 +299,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         } catch {
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorTimedOut {
-                await channel.fail(with: .timeout)
+                await channel.fail(with: .timeout(.init(duration: nil)))
             } else {
                 await channel.fail(with: .serverError(statusCode: 0, body: error.localizedDescription))
             }

@@ -5,6 +5,7 @@ import XCTest
 
 /// Minimal Tool for testing tool execution routing.
 private struct TestTool: Tool {
+    public typealias Output = ToolOutputValue
     typealias Arguments = Data
     let name: String
     let description: String

@@ -9,7 +9,7 @@ public struct MCPToolBridge: Sendable {
             ToolDefinition(
                 name: tool.name,
                 description: tool.description ?? "MCP tool: \(tool.name)",
-                inputSchema: tool.inputSchema ?? JSONSchema(type: "object", properties: [:])
+                parameters: tool.inputSchema ?? JSONSchema(type: "object", properties: [:])
             )
         }
     }
@@ -22,7 +22,7 @@ public struct MCPToolBridge: Sendable {
             ToolDefinition(
                 name: "\(prefix)\(tool.name)",
                 description: tool.description ?? "[\(serverName)] \(tool.name)",
-                inputSchema: tool.inputSchema ?? JSONSchema(type: "object", properties: [:])
+                parameters: tool.inputSchema ?? JSONSchema(type: "object", properties: [:])
             )
         }
     }

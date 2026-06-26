@@ -31,6 +31,8 @@ public struct TaskUpdateTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["taskId"] = JSONSchemaProperty(type: "string", description: "The ID of the task to update")

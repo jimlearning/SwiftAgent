@@ -14,6 +14,8 @@ public struct MonitorTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "action": JSONSchemaProperty(type: "string", description: "Monitor action"),

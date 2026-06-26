@@ -159,23 +159,23 @@ extension OpenAIProviderTests {
         let provider = OpenAIProvider(apiKey: "sk-test", modelID: "gpt-5.2")
         XCTAssertTrue(provider.capabilities.supportsToolUse, "gpt-5.2 should support tool use")
         XCTAssertEqual(provider.capabilities.contextWindow, 128_000)
-        XCTAssertEqual(provider.capabilities.maxOutputTokens, 16_384)
-        XCTAssertFalse(provider.capabilities.supportsThinking, "gpt-5.2 does not support thinking")
+        XCTAssertEqual(provider.capabilities.maximumResponseTokens, 16_384)
+        XCTAssertFalse(provider.capabilities.supportsReasoning, "gpt-5.2 does not support thinking")
         XCTAssertEqual(provider.displayName, "gpt-5.2")
     }
 
     func test_providerInit_gpt52mini_capabilities() {
         let provider = OpenAIProvider(apiKey: "sk-test", modelID: "gpt-5.2-mini")
         XCTAssertEqual(provider.capabilities.contextWindow, 128_000)
-        XCTAssertEqual(provider.capabilities.maxOutputTokens, 4_096)
-        XCTAssertFalse(provider.capabilities.supportsThinking)
+        XCTAssertEqual(provider.capabilities.maximumResponseTokens, 4_096)
+        XCTAssertFalse(provider.capabilities.supportsReasoning)
     }
 
     func test_providerInit_o4_capabilities() {
         let provider = OpenAIProvider(apiKey: "sk-test", modelID: "o4")
-        XCTAssertTrue(provider.capabilities.supportsThinking, "o4 should support thinking/reasoning")
+        XCTAssertTrue(provider.capabilities.supportsReasoning, "o4 should support thinking/reasoning")
         XCTAssertEqual(provider.capabilities.contextWindow, 200_000)
-        XCTAssertEqual(provider.capabilities.maxOutputTokens, 32_768)
+        XCTAssertEqual(provider.capabilities.maximumResponseTokens, 32_768)
         XCTAssertTrue(provider.capabilities.supportsToolUse)
     }
 
@@ -186,7 +186,7 @@ extension OpenAIProviderTests {
         // Default capabilities: supportsStreaming=true, supportsToolUse=true, supportsThinking=false
         XCTAssertTrue(provider.capabilities.supportsStreaming)
         XCTAssertTrue(provider.capabilities.supportsToolUse)
-        XCTAssertFalse(provider.capabilities.supportsThinking)
+        XCTAssertFalse(provider.capabilities.supportsReasoning)
     }
 
     func test_providerInit_makeExecutorReturnsSelf() {
@@ -523,7 +523,7 @@ extension OpenAIProviderTests {
             required: ["command"]
         )
         let tools = [
-            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", parameters: schema),
         ]
 
         let result = OpenAIToolTranslator.translate(tools)
@@ -556,13 +556,13 @@ extension OpenAIProviderTests {
         // by intercepting the body building logic.
         // For now, verify that the o4 model doesn't use temperature in capability check.
         let provider = OpenAIProvider(apiKey: "sk-test", modelID: "o4")
-        XCTAssertTrue(provider.capabilities.supportsThinking, "o4 supports thinking")
+        XCTAssertTrue(provider.capabilities.supportsReasoning, "o4 supports thinking")
 
         // Verify that the provider can be constructed with the o4 model ID.
         // The temperature exclusion happens inside respond() at request-build time,
         // which is verified by the fact that the provider compiles and o4 modelID
         // is in the lookup table with supportsThinking=true.
-        XCTAssertEqual(provider.capabilities.maxOutputTokens, 32_768)
+        XCTAssertEqual(provider.capabilities.maximumResponseTokens, 32_768)
     }
 
     // MARK: Test 14: LanguageModelSessionImpl integration compiles with OpenAIProvider

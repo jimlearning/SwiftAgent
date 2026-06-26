@@ -19,7 +19,7 @@ struct AnthropicToolTranslator: Sendable {
             ]
             // Use Codable round-trip to handle nested schemas (same pattern as
             // ToolDefinition.apiFormatted in LLMClient.swift)
-            if let data = try? JSONEncoder().encode(tool.inputSchema),
+            if let data = try? JSONEncoder().encode(tool.parameters),
                let schemaDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 dict["input_schema"] = schemaDict
             } else {

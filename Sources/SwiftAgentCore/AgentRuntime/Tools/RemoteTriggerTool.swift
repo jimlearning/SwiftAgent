@@ -18,6 +18,8 @@ public struct RemoteTriggerTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "action": JSONSchemaProperty(type: "string", description: "Action: list, get, create, update, or run", enum: ["list", "get", "create", "update", "run"]),

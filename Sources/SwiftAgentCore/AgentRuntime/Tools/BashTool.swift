@@ -46,6 +46,8 @@ public struct BashTool: Tool {
 
     // MARK: - Input Schema
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "command": JSONSchemaProperty(

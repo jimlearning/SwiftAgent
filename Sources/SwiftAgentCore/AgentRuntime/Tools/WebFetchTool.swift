@@ -16,6 +16,8 @@ public struct WebFetchTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["url"] = JSONSchemaProperty(type: "string", description: "The URL to fetch content from")

@@ -762,8 +762,8 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             switch runtimeError {
             case .unauthorized:
                 return "API key invalid. Update it in Settings → General."
-            case .rateLimited(let retryAfter):
-                if let sec = retryAfter { return "Rate limited. Retrying in \(sec)s." }
+            case .rateLimited(let info):
+                if let sec = info.retryAfter { return "Rate limited. Retrying in \(sec)s." }
                 return "Too many requests. Please wait before retrying."
             case .serverError(let status, _):
                 return "Server returned error \(status). Try again later."

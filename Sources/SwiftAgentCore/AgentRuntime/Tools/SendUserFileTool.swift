@@ -16,6 +16,8 @@ public struct SendUserFileTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "file_path": JSONSchemaProperty(type: "string", description: "Path to the file to send"),

@@ -8,6 +8,8 @@ public struct ListPeersTool: Tool {
 
     public struct Arguments: Codable, Sendable {}
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [:])
     }

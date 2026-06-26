@@ -13,10 +13,15 @@ import Foundation
 ///   loses the `Arguments` type information, making `call(arguments:)` impossible.
 ///   Always use `any Tool<SomeArguments>` existentials when the
 ///   arguments type must be preserved.
-public protocol Tool<Arguments>: Sendable {
+public protocol Tool<Arguments, Output>: Sendable {
     /// The type of arguments this tool accepts. Must be Codable for
     /// serialization and Sendable for concurrency safety.
     associatedtype Arguments: Codable & Sendable
+
+    /// The type of output this tool produces.
+    /// Must conform to PromptRepresentable for transcript inclusion.
+    /// Aligned with Apple's `Tool.Output: PromptRepresentable`.
+    associatedtype Output: PromptRepresentable
 
     /// PascalCase tool name as seen by the LLM (e.g., "Bash", "Read").
     var name: String { get }
@@ -28,15 +33,18 @@ public protocol Tool<Arguments>: Sendable {
     var inputSchema: JSONSchema { get }
 
     /// Execute the tool with validated arguments.
-    func call(arguments: Arguments) async throws -> ToolOutputValue
+    /// Aligned with Apple's `@concurrent func call(arguments:)`.
+    func call(arguments: Arguments) async throws -> Output
 
     /// Type-erased call path — decodes `Data` input into `Arguments` and
-    /// delegates to `call(arguments:)`. Works through `any Tool` existentials
-    /// because the signature does not expose the associated `Arguments` type.
+    /// delegates to `call(arguments:)`. Always returns `ToolOutputValue`
+    /// for compatibility with `ToolEngine.execute(name:input:)`.
+    /// Works through `any Tool` existentials because the signature does
+    /// not expose the associated `Arguments` type.
     func _callFromData(_ input: Data) async throws -> ToolOutputValue
 }
 
-extension Tool {
+extension Tool where Output == ToolOutputValue {
     public func _callFromData(_ input: Data) async throws -> ToolOutputValue {
         let args = try JSONDecoder().decode(Arguments.self, from: input)
         return try await self.call(arguments: args)

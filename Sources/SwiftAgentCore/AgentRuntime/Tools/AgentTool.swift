@@ -54,6 +54,8 @@ public struct AgentTool: Tool {
 
     // MARK: - Input Schema
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["description"] = JSONSchemaProperty(type: "string", description: "A short (3-5 word) description of the task")

@@ -16,6 +16,8 @@ public struct WorkflowTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "workflow_name": JSONSchemaProperty(type: "string", description: "Name of the workflow to execute"),

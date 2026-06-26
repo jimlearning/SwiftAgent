@@ -18,6 +18,8 @@ public struct SyntheticOutputTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "callID": JSONSchemaProperty(type: "string", description: "Unique identifier for this synthetic call."),

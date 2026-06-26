@@ -43,6 +43,8 @@ public struct LSPTool: Tool {
 
     // MARK: - Input Schema
 
+    public typealias Output = ToolOutputValue
+
     public let inputSchema: JSONSchema = {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["operation"] = JSONSchemaProperty(

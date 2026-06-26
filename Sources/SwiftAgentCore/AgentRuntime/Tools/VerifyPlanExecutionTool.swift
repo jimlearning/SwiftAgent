@@ -14,6 +14,8 @@ public struct VerifyPlanExecutionTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "plan_id": JSONSchemaProperty(type: "string", description: "ID of the plan to verify"),

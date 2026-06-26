@@ -17,6 +17,8 @@ public struct TestingPermissionTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "scenario": JSONSchemaProperty(

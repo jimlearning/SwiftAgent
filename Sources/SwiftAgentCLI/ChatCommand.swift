@@ -151,7 +151,7 @@ struct ChatCommand: AsyncParsableCommand {
                     serverName: serverName,
                     toolName: toolName,
                     toolDescription: def.description,
-                    inputSchema: def.inputSchema,
+                    inputSchema: def.parameters,
                     bootstrapper: mcpBootstrapper
                 )
                 await toolEngine.register(tool: dynamicTool, metadata: ToolMetadata(

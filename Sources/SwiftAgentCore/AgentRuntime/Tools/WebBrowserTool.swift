@@ -16,6 +16,8 @@ public struct WebBrowserTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "url": JSONSchemaProperty(type: "string", description: "URL to navigate to"),

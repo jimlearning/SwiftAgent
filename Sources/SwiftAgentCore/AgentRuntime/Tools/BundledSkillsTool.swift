@@ -7,6 +7,8 @@ public struct BundledSkillsTool: Tool {
 
     public struct Arguments: Codable, Sendable {}
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [:])
     }

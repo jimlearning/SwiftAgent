@@ -27,6 +27,8 @@ public struct GlobTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "pattern": JSONSchemaProperty(type: "string", description: "The glob pattern to match files against"),

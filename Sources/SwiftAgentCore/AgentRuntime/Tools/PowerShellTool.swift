@@ -27,6 +27,8 @@ public struct PowerShellTool: Tool {
 
     // MARK: - Input Schema
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "command": JSONSchemaProperty(type: "string", description: "The PowerShell command to execute"),

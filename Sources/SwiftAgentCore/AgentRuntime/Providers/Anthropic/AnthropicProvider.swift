@@ -7,10 +7,25 @@ import Foundation
 /// deprecated and will be removed in Phase 4.
 public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
+    // MARK: - Configuration
+
+    public struct Configuration: LanguageModelExecutorConfiguration {
+        public let apiKey: String
+        public let baseURL: URL
+        public let modelID: String
+
+        public init(apiKey: String, baseURL: URL = URL(string: "https://api.anthropic.com")!, modelID: String) {
+            self.apiKey = apiKey
+            self.baseURL = baseURL
+            self.modelID = modelID
+        }
+    }
+
     // MARK: - Stored Properties
 
     public let capabilities: LanguageModelCapabilities
     public let displayName: String
+    public let executorConfiguration: any LanguageModelExecutorConfiguration
     private let apiKey: String
     private let baseURL: URL
     private let modelID: String
@@ -20,30 +35,33 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
 
     private static let modelCapabilities: [String: LanguageModelCapabilities] = [
         "claude-sonnet-4-6": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: true,
+            supportsGuidedGeneration: false,
+            supportsReasoning: true,
+            supportsStreaming: true,
             supportsVision: true,
             contextWindow: 200_000,
-            maxOutputTokens: 8_192,
+            maximumResponseTokens: 8_192,
             providerDisplayName: "Claude Sonnet 4"
         ),
         "claude-opus-4-6": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: true,
+            supportsGuidedGeneration: false,
+            supportsReasoning: true,
+            supportsStreaming: true,
             supportsVision: true,
             contextWindow: 200_000,
-            maxOutputTokens: 32_768,
+            maximumResponseTokens: 32_768,
             providerDisplayName: "Claude Opus 4"
         ),
         "claude-haiku-4-6": LanguageModelCapabilities(
-            supportsStreaming: true,
             supportsToolUse: true,
-            supportsThinking: false,
+            supportsGuidedGeneration: false,
+            supportsReasoning: false,
+            supportsStreaming: true,
             supportsVision: true,
             contextWindow: 200_000,
-            maxOutputTokens: 4_096,
+            maximumResponseTokens: 4_096,
             providerDisplayName: "Claude Haiku 4"
         ),
     ]
@@ -59,18 +77,11 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.modelID = modelID
+        self.executorConfiguration = Configuration(apiKey: apiKey, baseURL: baseURL, modelID: modelID)
 
         let caps = Self.modelCapabilities[modelID]
             ?? LanguageModelCapabilities(providerDisplayName: modelID)
-        self.capabilities = LanguageModelCapabilities(
-            supportsStreaming: caps.supportsStreaming,
-            supportsToolUse: caps.supportsToolUse,
-            supportsThinking: caps.supportsThinking,
-            supportsVision: caps.supportsVision,
-            contextWindow: caps.contextWindow,
-            maxOutputTokens: caps.maxOutputTokens,
-            providerDisplayName: caps.providerDisplayName
-        )
+        self.capabilities = caps
         self.displayName = displayName ?? modelID
 
         let config = URLSessionConfiguration.default
@@ -88,17 +99,15 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
     public var model: any LanguageModel { self }
 
     public func respond(
-        to transcript: Transcript,
-        tools: [SessionToolDefinition],
-        options: GenerationOptions,
+        to request: LanguageModelExecutorGenerationRequest,
         streamingInto channel: GenerationChannel
     ) async throws {
-        let request: URLRequest
+        let urlRequest: URLRequest
         do {
-            request = try AnthropicRequestBuilder.build(
-                transcript: transcript,
-                tools: tools,
-                options: options,
+            urlRequest = try AnthropicRequestBuilder.build(
+                transcript: request.transcript,
+                tools: request.enabledTools,
+                options: request.generationOptions,
                 systemPrompt: nil,
                 apiKey: apiKey,
                 baseURL: baseURL,
@@ -110,7 +119,7 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
         }
 
         do {
-            let (bytes, response) = try await session.bytes(for: request)
+            let (bytes, response) = try await session.bytes(for: urlRequest)
 
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
@@ -149,7 +158,7 @@ public struct AnthropicProvider: LanguageModel, LanguageModelExecutor, Sendable 
         } catch {
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorTimedOut {
-                await channel.fail(with: .timeout)
+                await channel.fail(with: .timeout(.init(duration: nil)))
             } else {
                 await channel.fail(with: .serverError(statusCode: 0, body: error.localizedDescription))
             }

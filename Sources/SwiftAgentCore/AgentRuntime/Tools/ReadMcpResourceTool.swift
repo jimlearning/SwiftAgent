@@ -18,6 +18,8 @@ public struct ReadMcpResourceTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["server"] = JSONSchemaProperty(type: "string", description: "The MCP server name")

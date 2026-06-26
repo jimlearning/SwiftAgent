@@ -21,7 +21,7 @@ public actor DefaultToolEngine: ToolEngine {
         return SessionToolDefinition(
             name: entry.tool.name,
             description: entry.tool.description,
-            inputSchema: entry.tool.inputSchema
+            parameters: entry.tool.inputSchema
         )
     }
 
@@ -31,7 +31,7 @@ public actor DefaultToolEngine: ToolEngine {
             SessionToolDefinition(
                 name: entry.tool.name,
                 description: entry.tool.description,
-                inputSchema: entry.tool.inputSchema
+                parameters: entry.tool.inputSchema
             )
         }
     }

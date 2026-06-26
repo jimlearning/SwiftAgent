@@ -16,6 +16,8 @@ public struct PushNotificationTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "message": JSONSchemaProperty(type: "string", description: "Notification message body"),

@@ -19,6 +19,8 @@ public struct TerminalCaptureTool: Tool {
 
     // MARK: - Input Schema
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "action": JSONSchemaProperty(type: "string", description: "Capture action: screenshot or text"),

@@ -99,9 +99,9 @@ extension DeepSeekProviderTests {
         XCTAssertEqual(provider.displayName, "deepseek-chat")
         XCTAssertTrue(provider.capabilities.supportsStreaming)
         XCTAssertTrue(provider.capabilities.supportsToolUse)
-        XCTAssertFalse(provider.capabilities.supportsThinking)
+        XCTAssertFalse(provider.capabilities.supportsReasoning)
         XCTAssertEqual(provider.capabilities.contextWindow, 64_000)
-        XCTAssertEqual(provider.capabilities.maxOutputTokens, 8_192)
+        XCTAssertEqual(provider.capabilities.maximumResponseTokens, 8_192)
         XCTAssertEqual(provider.capabilities.providerDisplayName, "DeepSeek Chat")
 
         let executor = provider.makeExecutor()
@@ -113,11 +113,11 @@ extension DeepSeekProviderTests {
 
     func test_providerInit_r1ModelHasThinkingEnabled() {
         let providerR1 = DeepSeekProvider(apiKey: "sk-test", modelID: "deepseek-r1")
-        XCTAssertTrue(providerR1.capabilities.supportsThinking)
+        XCTAssertTrue(providerR1.capabilities.supportsReasoning)
         XCTAssertEqual(providerR1.capabilities.providerDisplayName, "DeepSeek R1")
 
         let providerReasoner = DeepSeekProvider(apiKey: "sk-test", modelID: "deepseek-reasoner")
-        XCTAssertTrue(providerReasoner.capabilities.supportsThinking)
+        XCTAssertTrue(providerReasoner.capabilities.supportsReasoning)
         XCTAssertEqual(providerReasoner.capabilities.providerDisplayName, "DeepSeek R1")
     }
 
@@ -128,7 +128,7 @@ extension DeepSeekProviderTests {
         // Default capabilities from fallback
         XCTAssertTrue(provider.capabilities.supportsStreaming)
         XCTAssertTrue(provider.capabilities.supportsToolUse)
-        XCTAssertFalse(provider.capabilities.supportsThinking)
+        XCTAssertFalse(provider.capabilities.supportsReasoning)
     }
 
     func test_providerInit_customDisplayName() {
@@ -697,7 +697,7 @@ extension DeepSeekProviderTests {
             required: ["command"]
         )
         let tools = [
-            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", parameters: schema),
         ]
 
         let result = DeepSeekToolTranslator.translateAnthropicCompat(tools)
@@ -718,7 +718,7 @@ extension DeepSeekProviderTests {
             additionalProperties: false
         )
         let tools = [
-            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", parameters: schema),
         ]
 
         let result = DeepSeekToolTranslator.translateOpenAICompat(tools)
@@ -742,7 +742,7 @@ extension DeepSeekProviderTests {
     func test_toolTranslator_openAICompat_emptySchema() {
         let schema = JSONSchema(type: "object")
         let tools = [
-            SessionToolDefinition(name: "Simple", description: "Simple tool", inputSchema: schema),
+            SessionToolDefinition(name: "Simple", description: "Simple tool", parameters: schema),
         ]
 
         let result = DeepSeekToolTranslator.translateOpenAICompat(tools)

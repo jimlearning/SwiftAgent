@@ -61,6 +61,7 @@ struct ConversationTests {
 
 struct ToolTests {
     struct MockReadTool: Tool {
+    public typealias Output = ToolOutputValue
         typealias Arguments = [String: JSONValue]
         var name: String { "View" }
         var description: String { "Read files" }

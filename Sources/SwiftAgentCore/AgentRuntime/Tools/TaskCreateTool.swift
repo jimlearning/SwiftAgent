@@ -22,6 +22,8 @@ public struct TaskCreateTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["subject"] = JSONSchemaProperty(type: "string", description: "A brief title for the task")

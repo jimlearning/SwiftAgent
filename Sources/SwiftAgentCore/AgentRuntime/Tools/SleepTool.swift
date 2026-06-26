@@ -16,6 +16,8 @@ public struct SleepTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["duration"] = JSONSchemaProperty(type: "number", description: "Duration in seconds to sleep")

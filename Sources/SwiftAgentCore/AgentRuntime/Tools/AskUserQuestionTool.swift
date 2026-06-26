@@ -38,6 +38,8 @@ public struct AskUserQuestionTool: Tool {
         public var description: String?
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["questions"] = JSONSchemaProperty(

@@ -20,6 +20,8 @@ public struct TeamCreateTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "name": JSONSchemaProperty(type: "string", description: "Display name for the teammate."),

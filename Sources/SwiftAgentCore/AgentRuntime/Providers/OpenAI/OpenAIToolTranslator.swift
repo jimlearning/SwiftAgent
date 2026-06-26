@@ -29,7 +29,7 @@ struct OpenAIToolTranslator: Sendable {
 
             // Map JSONSchema to OpenAI parameters format via Codable round-trip.
             // This handles nested schemas, enum values, array items, etc.
-            if let data = try? JSONEncoder().encode(tool.inputSchema),
+            if let data = try? JSONEncoder().encode(tool.parameters),
                let schemaDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
 
                 var params: [String: Any] = [:]

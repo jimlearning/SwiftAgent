@@ -105,10 +105,10 @@ extension AnthropicProviderTests {
 
         XCTAssertEqual(provider.displayName, "Custom Opus")
         XCTAssertEqual(provider.capabilities.contextWindow, 200_000)
-        XCTAssertEqual(provider.capabilities.maxOutputTokens, 32_768)
+        XCTAssertEqual(provider.capabilities.maximumResponseTokens, 32_768)
         XCTAssertTrue(provider.capabilities.supportsStreaming)
         XCTAssertTrue(provider.capabilities.supportsToolUse)
-        XCTAssertTrue(provider.capabilities.supportsThinking)
+        XCTAssertTrue(provider.capabilities.supportsReasoning)
 
         let executor = provider.makeExecutor()
         XCTAssertNotNil(executor)
@@ -126,13 +126,13 @@ extension AnthropicProviderTests {
         XCTAssertEqual(provider.capabilities.providerDisplayName, "some-custom-model-v7")
         XCTAssertTrue(provider.capabilities.supportsStreaming)
         XCTAssertTrue(provider.capabilities.supportsToolUse)
-        XCTAssertFalse(provider.capabilities.supportsThinking)
+        XCTAssertFalse(provider.capabilities.supportsReasoning)
     }
 
     func test_providerInit_haikuHasThinkingDisabled() {
         let provider = AnthropicProvider(apiKey: "test-key", modelID: "claude-haiku-4-6")
-        XCTAssertFalse(provider.capabilities.supportsThinking)
-        XCTAssertEqual(provider.capabilities.maxOutputTokens, 4_096)
+        XCTAssertFalse(provider.capabilities.supportsReasoning)
+        XCTAssertEqual(provider.capabilities.maximumResponseTokens, 4_096)
     }
 
     // MARK: Test 2: Transcript translation — basic prompt/response
@@ -309,7 +309,7 @@ extension AnthropicProviderTests {
             required: ["command"]
         )
         let tools = [
-            SessionToolDefinition(name: "Bash", description: "Run a shell command", inputSchema: schema),
+            SessionToolDefinition(name: "Bash", description: "Run a shell command", parameters: schema),
         ]
 
         let result = AnthropicToolTranslator.translate(tools)
@@ -353,7 +353,7 @@ extension AnthropicProviderTests {
         )
 
         let tools = [
-            SessionToolDefinition(name: "Search", description: "Search files", inputSchema: schema),
+            SessionToolDefinition(name: "Search", description: "Search files", parameters: schema),
         ]
 
         let result = AnthropicToolTranslator.translate(tools)
@@ -594,7 +594,7 @@ extension AnthropicProviderTests {
             .prompt("Hello"),
         ])
         let tools: [SessionToolDefinition] = []
-        let options = GenerationOptions(maxTokens: 1000)
+        let options = GenerationOptions(maximumResponseTokens: 1000)
 
         let request = try AnthropicRequestBuilder.build(
             transcript: transcript,

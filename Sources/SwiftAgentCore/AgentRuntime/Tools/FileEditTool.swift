@@ -22,6 +22,8 @@ public struct FileEditTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "file_path": JSONSchemaProperty(type: "string", description: "The absolute path to the file to modify"),

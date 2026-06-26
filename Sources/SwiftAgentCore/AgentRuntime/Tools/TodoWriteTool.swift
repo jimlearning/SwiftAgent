@@ -65,6 +65,8 @@ public struct TodoWriteTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         var itemSchema = JSONSchema(type: "object", properties: [:])

@@ -6,7 +6,9 @@ import Foundation
 ///
 /// Named ToolOutputValue to avoid collision with the existing
 /// `ToolOutput` discriminated union in Types/Tool.swift.
-public enum ToolOutputValue: Sendable {
+///
+/// Conforms to PromptRepresentable for Apple FoundationModels Tool protocol alignment.
+public enum ToolOutputValue: Sendable, PromptRepresentable {
     /// Plain text output.
     case string(String)
 
@@ -20,6 +22,10 @@ public enum ToolOutputValue: Sendable {
         case .string(let s): return s
         case .blocks(let blocks): return blocks.map(\.content).joined(separator: "\n")
         }
+    }
+
+    public func resolvePrompt() -> Prompt {
+        Prompt(stringValue)
     }
 }
 

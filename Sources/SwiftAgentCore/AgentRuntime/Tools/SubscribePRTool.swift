@@ -16,6 +16,8 @@ public struct SubscribePRTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "repo": JSONSchemaProperty(type: "string", description: "GitHub repository (owner/repo)"),

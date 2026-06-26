@@ -35,7 +35,7 @@ struct AnthropicRequestBuilder: Sendable {
         // Build request body
         var body: [String: Any] = [
             "model": modelID,
-            "max_tokens": options.maxTokens ?? 8_192,
+            "max_tokens": options.maximumResponseTokens ?? 8_192,
             "stream": true,
             "messages": messages,
         ]

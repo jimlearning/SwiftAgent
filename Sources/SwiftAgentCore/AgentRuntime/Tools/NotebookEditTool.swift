@@ -22,6 +22,8 @@ public struct NotebookEditTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["notebookPath"] = JSONSchemaProperty(type: "string", description: "The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)")

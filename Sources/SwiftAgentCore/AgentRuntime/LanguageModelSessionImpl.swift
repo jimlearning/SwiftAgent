@@ -101,7 +101,7 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
     /// Assert that no other turn is in progress. Throws rateLimited if concurrent.
     private func assertNotResponding() throws {
         guard !isResponding else {
-            throw AgentRuntimeError.rateLimited(retryAfter: nil)
+            throw AgentRuntimeError.rateLimited(.init(retryAfter: nil))
         }
     }
 
@@ -180,12 +180,12 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
 
             let channel = CollectingChannel()
             let executor = modelProvider.makeExecutor()
-            try await executor.respond(
-                to: transcript,
-                tools: toolDefs,
-                options: GenerationOptions(),
-                streamingInto: channel
+            let generationRequest = LanguageModelExecutorGenerationRequest(
+                transcript: transcript,
+                enabledTools: toolDefs,
+                generationOptions: GenerationOptions()
             )
+            try await executor.respond(to: generationRequest, streamingInto: channel)
 
             let events = await channel.events
             var hasToolCalls = false
@@ -252,7 +252,7 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
         // immediately-failing stream if already responding.
         guard !isResponding else {
             return AsyncThrowingStream { continuation in
-                continuation.finish(throwing: AgentRuntimeError.rateLimited(retryAfter: nil))
+                continuation.finish(throwing: AgentRuntimeError.rateLimited(.init(retryAfter: nil)))
             }
         }
         isResponding = true
@@ -281,12 +281,12 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                         await channel.setContinuation(continuation)
 
                         let executor = await self.modelProvider.makeExecutor()
-                        try await executor.respond(
-                            to: await self.transcript,
-                            tools: toolDefs,
-                            options: GenerationOptions(),
-                            streamingInto: channel
+                        let generationRequest = LanguageModelExecutorGenerationRequest(
+                            transcript: await self.transcript,
+                            enabledTools: toolDefs,
+                            generationOptions: GenerationOptions()
                         )
+                        try await executor.respond(to: generationRequest, streamingInto: channel)
 
                         // After executor finishes, check for tool calls.
                         let calls = await channel.recordedToolCalls

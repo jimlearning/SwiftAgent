@@ -14,6 +14,8 @@ public struct REPLModeTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["action"] = JSONSchemaProperty(

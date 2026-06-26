@@ -37,6 +37,8 @@ public struct ToolSearchTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["query"] = JSONSchemaProperty(type: "string", description: "Query to find deferred tools. Use \"select:<tool_name>[,<tool_name>...]\" for direct selection, or keywords to search.")
@@ -59,7 +61,7 @@ public struct ToolSearchTool: Tool {
             var foundSchemas: [(name: String, schemaJSON: String)] = []
             for toolName in requestedNames {
                 if let tool = availableTools.first(where: { $0.name == toolName }) {
-                    let schemaJSON = schemaToFunctionJSON(name: tool.name, description: tool.description, inputSchema: tool.inputSchema)
+                    let schemaJSON = schemaToFunctionJSON(name: tool.name, description: tool.description, inputSchema: tool.parameters)
                     foundSchemas.append((tool.name, schemaJSON))
                 }
             }
@@ -173,7 +175,7 @@ public func filterDeferredTools(_ defs: [ToolDefinition], discovered: Set<String
         return discovered.contains(def.name)
     }.map { def in
         if discovered.contains(def.name) && def.deferLoading {
-            return ToolDefinition(name: def.name, description: def.description, inputSchema: def.inputSchema, deferLoading: false)
+            return ToolDefinition(name: def.name, description: def.description, parameters: def.parameters, deferLoading: false)
         }
         return def
     }

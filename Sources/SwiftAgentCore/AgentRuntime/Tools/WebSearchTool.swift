@@ -18,6 +18,8 @@ public struct WebSearchTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["query"] = JSONSchemaProperty(type: "string", description: "The search query to use")

@@ -2,14 +2,82 @@ import Foundation
 
 /// Unified error type across ALL subsystems. Replaces fragmented
 /// LLMError, DeepSeekError, and ad-hoc error propagation.
+///
+/// Mirrors Apple's `LanguageModelError` pattern with dedicated info structs
+/// for rich error context (FoundationModels, iOS 27+).
 public enum AgentRuntimeError: Error, Sendable {
+
+    // MARK: - Error Info Structs (Apple-aligned)
+
+    /// Context window exceeded. Mirrors Apple's `LanguageModelError.ContextSizeExceeded`.
+    public struct ContextSizeExceeded: Sendable {
+        public let maxTokens: Int
+        public let requestedTokens: Int
+
+        public init(maxTokens: Int, requestedTokens: Int) {
+            self.maxTokens = maxTokens
+            self.requestedTokens = requestedTokens
+        }
+    }
+
+    /// Rate limited with optional retry hint. Mirrors Apple's `LanguageModelError.RateLimited`.
+    public struct RateLimited: Sendable {
+        public let retryAfter: TimeInterval?
+
+        public init(retryAfter: TimeInterval?) {
+            self.retryAfter = retryAfter
+        }
+    }
+
+    /// Model refused the request. Mirrors Apple's `LanguageModelError.Refusal`.
+    public struct Refusal: Sendable {
+        public let reason: String
+
+        public init(reason: String) {
+            self.reason = reason
+        }
+    }
+
+    /// Request timed out. Mirrors Apple's `LanguageModelError.Timeout`.
+    public struct Timeout: Sendable {
+        public let duration: TimeInterval?
+
+        public init(duration: TimeInterval?) {
+            self.duration = duration
+        }
+    }
+
+    /// Safety guardrail triggered. Mirrors Apple's `LanguageModelError.GuardrailViolation`.
+    public struct GuardrailViolation: Sendable {
+        public let guardrail: String
+        public let reason: String
+
+        public init(guardrail: String, reason: String) {
+            self.guardrail = guardrail
+            self.reason = reason
+        }
+    }
+
+    /// Unsupported capability requested. Mirrors Apple's `LanguageModelError.UnsupportedCapability`.
+    public struct UnsupportedCapability: Sendable {
+        public let capability: String
+
+        public init(capability: String) {
+            self.capability = capability
+        }
+    }
+
     // MARK: - Model Errors (from LanguageModel / LanguageModelExecutor)
-    case rateLimited(retryAfter: TimeInterval?)
+
+    case rateLimited(RateLimited)
     case unauthorized(reason: String)
     case serverError(statusCode: Int, body: String?)
-    case timeout
-    case contextSizeExceeded(maxTokens: Int, requestedTokens: Int)
+    case timeout(Timeout)
+    case contextSizeExceeded(ContextSizeExceeded)
     case invalidResponse(reason: String)
+    case refusal(Refusal)
+    case guardrailViolation(GuardrailViolation)
+    case unsupportedCapability(UnsupportedCapability)
 
     // MARK: - Memory Errors (from MemoryStore)
     case storageFull(availableBytes: Int64)
@@ -34,17 +102,22 @@ public enum AgentRuntimeError: Error, Sendable {
 extension AgentRuntimeError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .rateLimited(let retryAfter):
-            if let sec = retryAfter { return "Rate limited — retry after \(sec)s" }
+        case .rateLimited(let info):
+            if let sec = info.retryAfter { return "Rate limited — retry after \(sec)s" }
             return "Rate limited — slow down"
         case .unauthorized(let reason): return "Unauthorized: \(reason)"
         case .serverError(let code, let body):
             let detail = body.map { ": \($0)" } ?? ""
             if code == 404 { return "HTTP 404 — endpoint or model not found\(detail)" }
             return "HTTP \(code)\(detail)"
-        case .timeout: return "Request timed out"
-        case .contextSizeExceeded(let max, let req): return "Context size exceeded (max \(max), requested \(req))"
+        case .timeout(let info):
+            if let dur = info.duration { return "Request timed out after \(dur)s" }
+            return "Request timed out"
+        case .contextSizeExceeded(let info): return "Context size exceeded (max \(info.maxTokens), requested \(info.requestedTokens))"
         case .invalidResponse(let reason): return "Invalid response: \(reason)"
+        case .refusal(let info): return "Model refused: \(info.reason)"
+        case .guardrailViolation(let info): return "Guardrail \"\(info.guardrail)\" violated: \(info.reason)"
+        case .unsupportedCapability(let info): return "Unsupported capability: \(info.capability)"
         case .storageFull(let bytes): return "Storage full (\(bytes) bytes available)"
         case .keyNotFound(let key, let ns): return "Key \"\(key)\" not found in namespace \"\(ns)\""
         case .migrationFailed(let from, let to, let reason): return "Migration v\(from) -> v\(to) failed: \(reason)"

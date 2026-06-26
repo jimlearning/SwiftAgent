@@ -14,6 +14,8 @@ public struct OverflowTestTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         JSONSchema(type: "object", properties: [
             "size_kb": JSONSchemaProperty(type: "number", description: "Size of output in KB"),

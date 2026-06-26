@@ -16,6 +16,8 @@ public struct BriefTool: Tool {
         }
     }
 
+    public typealias Output = ToolOutputValue
+
     public var inputSchema: JSONSchema {
         var schema = JSONSchema(type: "object", properties: [:])
         schema.properties?["message"] = JSONSchemaProperty(type: "string", description: "The message for the user. Supports markdown formatting.")
