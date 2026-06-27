@@ -1,15 +1,15 @@
 # AgentGraph Integration Test 调试复盘
 
-> 调试周期：2026-06-26 15:23–17:30 UTC+8（首轮）+ 2026-06-27（第二轮，根因定位完整）
+> 调试周期：2026-06-26 15:23–17:30 UTC+8（首轮）+ 2026-06-27（第二轮，根因定位 + 跨端点修复）
 > 涉及文件：DeepSeekProvider, DeepSeekSSEParser, AnthropicSSEParser, DeepSeekTranscriptTranslator, AnthropicTranscriptTranslator, LanguageModelSessionImpl, AgentGraphIntegrationTests
 
 ---
 
 ## 背景
 
-`AgentGraphIntegrationTests` 测试 GitDiffAnalyzer → CommitMessageCrafter 两节点 AgentGraph 工作流，使用 DeepSeek V4 Pro 通过 anthropic-compatible 端点 (`/anthropic/v1/messages`)。
+`AgentGraphIntegrationTests` 测试 GitDiffAnalyzer → CommitMessageCrafter 两节点 AgentGraph 工作流，使用 DeepSeek V4 Pro 支持 anthropic-compatible 和 openai-compatible 两种端点。
 
-测试全程表现：两个独立 bug 导致失败，修复后完整工作流通过。
+测试全程发现三个独立 bug，修复后完整工作流在两种端点均通过。
 
 ---
 
@@ -108,10 +108,11 @@ case "signature_delta":
 Bug 1 和 Bug 2 修复后，测试在第一次模型响应后的 re-prompt 时确定性返回 HTTP 400：
 
 ```
-"The `content[].thinking` in the thinking mode must be passed back to the API."
+anthropic-compat: "The `content[].thinking` in the thinking mode must be passed back to the API."
+openai-compat:    "The `reasoning_content` in the thinking mode must be passed back to the API."
 ```
 
-无论是否保留 thinking blocks、无论用 anthropic-compatible 还是 openai-compatible 端点，都返回相同类型错误。
+无论用 anthropic-compatible 还是 openai-compatible 端点，错误信息不同但都指向 thinking mode 验证失败。
 
 ### 首轮错误推断（已推翻）
 
@@ -191,6 +192,44 @@ if hasToolCalls {
 | `AnthropicTranscriptTranslator` | `.toolCall` | `flush()` | `if currentRole != "assistant" { flush() }` |
 | `AnthropicTranscriptTranslator` | `.toolOutput` | `flush()` | `if currentRole != "user" { flush() }` |
 
+### OpenAI 兼容端点的额外修复
+
+OpenAI Chat Completions 格式（`/v1/chat/completions`）与 Anthropic Messages API 格式不同，translator 需要额外的修复：
+
+**问题 1：thinking 条目被丢弃。** `DeepSeekTranscriptTranslator.translateOpenAICompat()` 原本用 `break` 忽略 `.thinking` 条目。但 DeepSeek V4 Pro 在 thinking mode 下要求 re-prompt 中包含 `reasoning_content` 字段。缺失时返回：
+
+```
+"The `reasoning_content` in the thinking mode must be passed back to the API."
+```
+
+**修复**：将 `.thinking` 转为 `reasoning_content` 字段合并到 assistant 消息中，且 `.response` 和 `.toolCall` 都尝试与包含 `reasoning_content` 的 assistant 消息合并，而非创建新消息。
+
+**问题 2：tool_call 拆分到独立 assistant 消息。** 原代码对每个 `.toolCall` 执行 `messages.append(...)`，即使 tool_call 来自同一模型响应也被拆到不同消息。OpenAI 格式允许一个 assistant 消息携带多个 `tool_calls`。
+
+**修复**：检测最后一个消息是否为 `assistant` 角色，若是则追加到其 `tool_calls` 数组而非创建新消息。同时处理 `reasoning_content` 和 `tool_calls` 在同一消息共存的情况：
+
+```swift
+// .thinking → assistant msg with reasoning_content
+messages.append(["role": "assistant", "reasoning_content": text])
+
+// .toolCall → merge into the same assistant msg
+if messages.last?["role"] as? String == "assistant" {
+    var lastMsg = messages.removeLast()
+    if var existingCalls = lastMsg["tool_calls"] {
+        existingCalls.append(toolCallDict)
+        lastMsg["tool_calls"] = existingCalls
+    } else {
+        lastMsg["tool_calls"] = [toolCallDict]
+    }
+    messages.append(lastMsg)
+}
+```
+
+最终 re-prompt 体中，thinking + text + 多个 tool_calls 在一条 assistant 消息内：
+```json
+{"role": "assistant", "reasoning_content": "...", "content": "...", "tool_calls": [{...}, {...}, {...}]}
+```
+
 ### 教训
 
 - **错误信息可能是误导性的**。"thinking mode" 错误的真实原因是 tool_use 结构错误，不是 thinking 内容问题。
@@ -226,10 +265,10 @@ if hasToolCalls {
 |------|----------|
 | `DeepSeekSSEParser.swift` | actor → struct；parse 方法泛型化 `AsyncSequence<String>` |
 | `DeepSeekProvider.swift` | 移除 AsyncStream + Task 桥接 |
-| `DeepSeekTranscriptTranslator.swift` | `.toolOutput` 不硬 flush：`if currentRole != "user"`；thinking block 空签名跳过 |
+| `DeepSeekTranscriptTranslator.swift` | anthropic path: `.toolOutput` 不硬 flush；openai path: `.thinking` 转为 `reasoning_content`，`.toolCall` 合并到同一 assistant 消息，`.response` 合并到含 `reasoning_content` 的 assistant 消息 |
 | `AnthropicTranscriptTranslator.swift` | `.toolCall` 不硬 flush；`.toolOutput` 不硬 flush |
 | `AnthropicSSEParser.swift` | 新增 `signature_delta` 事件处理器 |
 | `LanguageModelSessionImpl.swift` | `respond(to:)` 两轮 batching：先收集所有 tool calls 再执行 |
-| `AgentGraphIntegrationTests.swift` | 使用 `deepseek-v4-pro` + anthropic-compatible 端点（默认） |
+| `AgentGraphIntegrationTests.swift` | 使用 `deepseek-v4-pro`，支持两种端点（默认 anthropic-compatible） |
 
-最终测试通过：两节点工作流（GitDiffAnalyzer → CommitMessageCrafter）使用 deepseek-v4-pro 经 anthropic-compatible 端点完整运行，生成 diff analysis → 执行 git 命令 → 生成 Conventional Commits 消息 → 写入结果文件。
+最终验证：两节点工作流（GitDiffAnalyzer → CommitMessageCrafter）使用 deepseek-v4-pro 经 **anthropic-compatible 和 openai-compatible 两种端点**完整运行，生成 diff analysis → 执行 git 命令 → 生成 Conventional Commits 消息 → 写入结果文件。
