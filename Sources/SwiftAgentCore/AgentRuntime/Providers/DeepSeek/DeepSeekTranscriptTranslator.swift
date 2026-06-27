@@ -106,22 +106,30 @@ struct DeepSeekTranscriptTranslator: Sendable {
         return (messages, system)
     }
 
-    // MARK: - OpenAI-Compatible Translation
+    // MARK: - Responses API
 
-    /// Translate Transcript into OpenAI Chat Completions message array for
+    /// Translate Transcript into Responses API input items.
+    /// Delegates to OpenAITranscriptTranslator — the Responses format is
+    /// provider-agnostic.
+    static func translateResponses(
+        _ transcript: Transcript,
+        systemPrompt: String?
+    ) -> [[String: Any]] {
+        OpenAITranscriptTranslator.translateResponses(transcript, systemPrompt: systemPrompt)
+    }
+
+    // MARK: - Chat Completions (Legacy)
+
+    /// Translate Transcript into Chat Completions message array for
     /// DeepSeek's OpenAI-compatible endpoint (/v1/chat/completions).
     ///
-    /// Mapping:
-    /// - .instruction(String) -> {role: "system", content: String}
-    /// - .prompt(String) -> {role: "user", content: String}
-    /// - .response(String) -> {role: "assistant", content: String}
-    /// - .toolCall(id, name, input) -> {role: "assistant", tool_calls: [{id, type: "function", function: {name, arguments}}]}
-    /// - .toolOutput(id, output, isError) -> {role: "tool", tool_call_id: id, content: output}
-    /// - .thinking(String) -> {role: "assistant", content: "[Thinking] \(text)"}
-    /// - .system(String) -> {role: "user", content: "[System] \(text)"}
+    /// Like OpenAITranscriptTranslator.translateChatCompletions, but with
+    /// DeepSeek-specific enhancements:
+    /// - Batches consecutive tool_calls into one assistant message
+    /// - Preserves reasoning_content for thinking-mode models (deepseek-v4-pro)
     ///
     /// - Returns: Array of ChatMessage dictionaries
-    static func translateOpenAICompat(
+    static func translateChatCompletions(
         _ transcript: Transcript,
         systemPrompt: String?
     ) -> [[String: Any]] {

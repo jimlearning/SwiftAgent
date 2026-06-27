@@ -102,7 +102,7 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
         to request: LanguageModelExecutorGenerationRequest,
         streamingInto channel: GenerationChannel
     ) async throws {
-        let messages = OpenAITranscriptTranslator.translate(request.transcript, systemPrompt: nil)
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(request.transcript, systemPrompt: nil)
         let toolDefs = OpenAIToolTranslator.translate(request.enabledTools)
 
         // Build request body

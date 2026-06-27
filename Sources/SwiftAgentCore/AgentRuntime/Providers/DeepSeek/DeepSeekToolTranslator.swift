@@ -23,11 +23,11 @@ struct DeepSeekToolTranslator: Sendable {
         }
     }
 
-    /// Convert SessionToolDefinition array to OpenAI function-calling format.
+    /// Convert SessionToolDefinition array to Chat Completions function-calling format.
     ///
     /// Output format: [{type: "function", function: {name, description, parameters: <JSONSchema>}}]
     /// parameters maps JSONSchema fields directly — no $schema, no items at top level.
-    static func translateOpenAICompat(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
+    static func translateChatCompletions(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
         tools.map { tool in
             var parameters: [String: Any] = ["type": "object"]
             if let data = try? JSONEncoder().encode(tool.parameters),

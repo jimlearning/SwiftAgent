@@ -226,12 +226,12 @@ extension DeepSeekProviderTests {
         let messages = result.messages
         XCTAssertEqual(messages.count, 2)
 
-        // Thinking should be mapped to text block since DeepSeek doesn't support thinking blocks
+        // Thinking should be mapped to proper thinking block (not text with "[Thinking]" prefix)
         let thinkingMsg = messages[1]
         let blocks = thinkingMsg["content"] as? [[String: Any]]
         let block = blocks?[0]
-        XCTAssertEqual(block?["type"] as? String, "text")
-        XCTAssertEqual(block?["text"] as? String, "[Thinking] Let me reason carefully.")
+        XCTAssertEqual(block?["type"] as? String, "thinking")
+        XCTAssertEqual(block?["thinking"] as? String, "Let me reason carefully.")
     }
 
     func test_transcriptTranslator_anthropicCompat_system() {
@@ -368,7 +368,7 @@ extension DeepSeekProviderTests {
             .toolCall(id: "call_1", name: "Bash", input: inputData),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateOpenAICompat(transcript, systemPrompt: nil)
+        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 2, "Expected user message + assistant tool call message")
 
@@ -398,7 +398,7 @@ extension DeepSeekProviderTests {
             .toolOutput(id: "call_2", output: "result output", isError: false),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateOpenAICompat(transcript, systemPrompt: nil)
+        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 3)
 
@@ -414,7 +414,7 @@ extension DeepSeekProviderTests {
             .prompt("Hello"),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateOpenAICompat(transcript, systemPrompt: nil)
+        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
         XCTAssertEqual(messages.count, 2)
 
         let systemMsg = messages[0]
@@ -429,13 +429,13 @@ extension DeepSeekProviderTests {
             .system("Compacted."),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateOpenAICompat(transcript, systemPrompt: nil)
+        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
         XCTAssertEqual(messages.count, 3)
 
-        // .thinking -> assistant with "[Thinking]" prefix
+        // .thinking -> assistant with reasoning_content
         let thinkingMsg = messages[1]
         XCTAssertEqual(thinkingMsg["role"] as? String, "assistant")
-        XCTAssertEqual(thinkingMsg["content"] as? String, "[Thinking] Let me think.")
+        XCTAssertEqual(thinkingMsg["reasoning_content"] as? String, "Let me think.")
 
         // .system -> user with "[System]" prefix
         let sysMsg = messages[2]
@@ -721,7 +721,7 @@ extension DeepSeekProviderTests {
             SessionToolDefinition(name: "Bash", description: "Run a shell command", parameters: schema),
         ]
 
-        let result = DeepSeekToolTranslator.translateOpenAICompat(tools)
+        let result = DeepSeekToolTranslator.translateChatCompletions(tools)
         XCTAssertEqual(result.count, 1)
 
         let tool = result[0]
@@ -745,7 +745,7 @@ extension DeepSeekProviderTests {
             SessionToolDefinition(name: "Simple", description: "Simple tool", parameters: schema),
         ]
 
-        let result = DeepSeekToolTranslator.translateOpenAICompat(tools)
+        let result = DeepSeekToolTranslator.translateChatCompletions(tools)
         XCTAssertEqual(result.count, 1)
 
         let function = result[0]["function"] as? [String: Any]
@@ -759,7 +759,7 @@ extension DeepSeekProviderTests {
             .prompt("Hello"),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateOpenAICompat(
+        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(
             transcript,
             systemPrompt: "You are an assistant."
         )

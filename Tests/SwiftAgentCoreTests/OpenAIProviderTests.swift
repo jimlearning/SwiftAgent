@@ -204,7 +204,7 @@ extension OpenAIProviderTests {
             .prompt("Hello"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translate(transcript, systemPrompt: nil)
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 2, "Expected 2 messages (system + user)")
         XCTAssertEqual(messages[0]["role"] as? String, "system")
@@ -218,7 +218,7 @@ extension OpenAIProviderTests {
             .prompt("Hello"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translate(
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(
             transcript, systemPrompt: "You are Claude."
         )
 
@@ -238,7 +238,7 @@ extension OpenAIProviderTests {
             .toolCall(id: "call_1", name: "Bash", input: inputData),
         ])
 
-        let messages = OpenAITranscriptTranslator.translate(transcript, systemPrompt: nil)
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 2)
 
@@ -269,7 +269,7 @@ extension OpenAIProviderTests {
             .toolOutput(id: "call_1", output: "result output", isError: false),
         ])
 
-        let messages = OpenAITranscriptTranslator.translate(transcript, systemPrompt: nil)
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 3)
 
@@ -285,7 +285,7 @@ extension OpenAIProviderTests {
             .response("Hi there"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translate(transcript, systemPrompt: nil)
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 2)
         XCTAssertEqual(messages[0]["role"] as? String, "user")
@@ -300,7 +300,7 @@ extension OpenAIProviderTests {
             .thinking("Let me reason carefully...", signature: nil),
         ])
 
-        let messages = OpenAITranscriptTranslator.translate(transcript, systemPrompt: nil)
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 2)
         let thinkingMsg = messages[1]
@@ -316,7 +316,7 @@ extension OpenAIProviderTests {
             .prompt("Continue"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translate(transcript, systemPrompt: nil)
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
 
         XCTAssertEqual(messages.count, 2)
         let sysMsg = messages[0]

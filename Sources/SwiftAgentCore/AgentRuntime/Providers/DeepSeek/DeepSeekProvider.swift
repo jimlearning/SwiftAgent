@@ -222,11 +222,11 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         options: GenerationOptions,
         channel: GenerationChannel
     ) async throws {
-        let messages = DeepSeekTranscriptTranslator.translateOpenAICompat(
+        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(
             transcript,
             systemPrompt: nil
         )
-        let toolDefs = tools.isEmpty ? nil : DeepSeekToolTranslator.translateOpenAICompat(tools)
+        let toolDefs = tools.isEmpty ? nil : DeepSeekToolTranslator.translateChatCompletions(tools)
 
         // Build Chat Completions request body
         var body: [String: Any] = [
