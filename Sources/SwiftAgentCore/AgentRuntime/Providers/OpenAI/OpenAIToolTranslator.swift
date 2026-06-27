@@ -1,64 +1,60 @@
 import Foundation
 
-/// Translates SessionToolDefinition values into OpenAI function-calling format.
+/// Translates SessionToolDefinition values into OpenAI wire formats for both
+/// Responses API and Chat Completions.
 /// Pure-functional: no mutable state, no side effects.
 ///
-/// OpenAI function-calling format: each tool is a dict with keys
-/// `type: "function"` and `function: { name, description, parameters }`.
-/// Uses Codable round-trip through JSONEncoder for nested schema support.
+/// Responses API tool format (same struct, explicit naming):
+/// → [{type: "function", function: {name, description, parameters}}]
+///
+/// Chat Completions tool format (identical structure, legacy naming):
+/// → [{type: "function", function: {name, description, parameters}}]
 struct OpenAIToolTranslator: Sendable {
 
-    /// Convert an array of SessionToolDefinition to OpenAI function-calling format.
-    ///
-    /// Each output dict has: `type`, `function.name`, `function.description`,
-    /// `function.parameters`, and optionally `function.strict`.
-    ///
-    /// - Parameters:
-    ///   - tools: The tool definitions to translate.
-    ///   - enableStrictMode: If true, sets `strict: true` on function schemas.
-    ///     Only enable when all tool schemas meet OpenAI strict-mode requirements
-    ///     (all properties listed in `required`, `additionalProperties: false`,
-    ///     no `default` values). Defaults to `false`.
-    /// - Returns: An array of dicts in OpenAI function-calling format.
-    static func translate(_ tools: [SessionToolDefinition], enableStrictMode: Bool = false) -> [[String: Any]] {
-        tools.map { tool in
-            var function: [String: Any] = [
-                "name": tool.name,
-                "description": tool.description,
-            ]
+    /// Convert SessionToolDefinition to Responses API tool format.
+    /// Responses API uses the same function-calling struct as Chat Completions,
+    /// but named explicitly for forward compatibility (additional tool types like
+    /// `computer_use`, `web_search`, `file_search` are Responses API-only).
+    static func translateResponses(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
+        tools.map(buildFunctionTool)
+    }
 
-            // Map JSONSchema to OpenAI parameters format via Codable round-trip.
-            // This handles nested schemas, enum values, array items, etc.
-            if let data = try? JSONEncoder().encode(tool.parameters),
-               let schemaDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+    /// Convert SessionToolDefinition to Chat Completions function-calling format (legacy).
+    static func translateChatCompletions(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
+        tools.map(buildFunctionTool)
+    }
 
-                var params: [String: Any] = [:]
-                for (key, value) in schemaDict {
-                    // Flatten to OpenAI-compatible parameter keys.
-                    // JSONSchema uses snake_case internally but Codable+CodingKeys
-                    // maps to camelCase, so we need the actual encoded keys.
-                    params[key] = value
-                }
+    /// Build a single function tool dictionary from a tool definition.
+    private static func buildFunctionTool(_ tool: SessionToolDefinition) -> [String: Any] {
+        var function: [String: Any] = [
+            "name": tool.name,
+            "description": tool.description,
+        ]
 
-                // Ensure required fields exist
-                if params["type"] == nil {
-                    params["type"] = "object"
-                }
-
-                function["parameters"] = params
-            } else {
-                function["parameters"] = ["type": "object"]
+        if let data = try? JSONEncoder().encode(tool.parameters),
+           let schemaDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var params: [String: Any] = [:]
+            for (key, value) in schemaDict {
+                params[key] = value
             }
-
-            // OpenAI strict mode — only when caller opts in and schemas are compatible
-            if enableStrictMode {
-                function["strict"] = true
+            if params["type"] == nil {
+                params["type"] = "object"
             }
-
-            return [
-                "type": "function",
-                "function": function,
-            ]
+            function["parameters"] = params
+        } else {
+            function["parameters"] = ["type": "object"]
         }
+
+        return [
+            "type": "function",
+            "function": function,
+        ]
+    }
+
+    // MARK: - Deprecated
+
+    @available(*, deprecated, renamed: "translateChatCompletions")
+    static func translate(_ tools: [SessionToolDefinition], enableStrictMode: Bool = false) -> [[String: Any]] {
+        translateChatCompletions(tools)
     }
 }

@@ -1,11 +1,23 @@
 import Foundation
 
-/// OpenAI Chat Completions API provider implementing the LanguageModel + LanguageModelExecutor
-/// contract. Both model metadata and inference live in one Sendable struct.
+/// OpenAI provider implementing the LanguageModel + LanguageModelExecutor contract.
 ///
-/// This is the post-migration provider. The legacy LLMClient/LLMProvider path is
-/// deprecated and will be removed in Phase 4.
+/// Supports two API compatibility modes:
+/// - `.responses` (default): Uses `/v1/responses` endpoint with Responses API format.
+///   Recommended for all new projects (2026+).
+/// - `.chatCompletions` (legacy): Uses `/v1/chat/completions` endpoint with Chat
+///   Completions format. Kept for backward compatibility.
 public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
+
+    // MARK: - API Compatibility
+
+    /// Wire format and endpoint selection.
+    public enum APICompatibility: Sendable {
+        /// Responses API — `/v1/responses`, `input` array, typed items.
+        case responses
+        /// Chat Completions (legacy) — `/v1/chat/completions`, `messages` array.
+        case chatCompletions
+    }
 
     // MARK: - Configuration
 
@@ -13,11 +25,18 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
         public let apiKey: String
         public let baseURL: URL
         public let modelID: String
+        public let compatibility: APICompatibility
 
-        public init(apiKey: String, baseURL: URL = URL(string: "https://api.openai.com")!, modelID: String) {
+        public init(
+            apiKey: String,
+            baseURL: URL = URL(string: "https://api.openai.com")!,
+            modelID: String,
+            compatibility: APICompatibility = .responses
+        ) {
             self.apiKey = apiKey
             self.baseURL = baseURL
             self.modelID = modelID
+            self.compatibility = compatibility
         }
     }
 
@@ -29,6 +48,7 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
     private let apiKey: String
     private let baseURL: URL
     private let modelID: String
+    private let compatibility: APICompatibility
     private let session: URLSession
 
     // MARK: - Model Capability Lookup
@@ -72,12 +92,16 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
         apiKey: String,
         baseURL: URL = URL(string: "https://api.openai.com")!,
         modelID: String,
+        compatibility: APICompatibility = .responses,
         displayName: String? = nil
     ) {
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.modelID = modelID
-        self.executorConfiguration = Configuration(apiKey: apiKey, baseURL: baseURL, modelID: modelID)
+        self.compatibility = compatibility
+        self.executorConfiguration = Configuration(
+            apiKey: apiKey, baseURL: baseURL, modelID: modelID, compatibility: compatibility
+        )
 
         let caps = Self.modelCapabilities[modelID]
             ?? LanguageModelCapabilities(providerDisplayName: modelID)
@@ -102,10 +126,93 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
         to request: LanguageModelExecutorGenerationRequest,
         streamingInto channel: GenerationChannel
     ) async throws {
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(request.transcript, systemPrompt: nil)
-        let toolDefs = OpenAIToolTranslator.translate(request.enabledTools)
+        switch compatibility {
+        case .responses:
+            try await respondResponses(request: request, channel: channel)
+        case .chatCompletions:
+            try await respondChatCompletions(request: request, channel: channel)
+        }
+    }
 
-        // Build request body
+    // MARK: - Responses API Path
+
+    private func respondResponses(
+        request: LanguageModelExecutorGenerationRequest,
+        channel: GenerationChannel
+    ) async throws {
+        let input = OpenAITranscriptTranslator.translateResponses(request.transcript, systemPrompt: nil)
+        let toolDefs = OpenAIToolTranslator.translateResponses(request.enabledTools)
+
+        var body: [String: Any] = [
+            "model": modelID,
+            "input": input,
+            "stream": true,
+        ]
+
+        if !toolDefs.isEmpty {
+            body["tools"] = toolDefs
+        }
+
+        if let maxTokens = request.generationOptions.maximumResponseTokens {
+            body["max_output_tokens"] = maxTokens
+        }
+
+        let isO4 = modelID == "o4"
+        if isO4, let budget = request.generationOptions.reasoningBudget {
+            body["reasoning_effort"] = mapBudgetToEffort(budget)
+        }
+
+        if let temperature = request.generationOptions.temperature, !isO4 {
+            body["temperature"] = temperature
+        }
+
+        let url = baseURL.appendingPathComponent("v1/responses")
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = 600
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) else {
+            await channel.fail(with: .invalidResponse(reason: "Failed to encode request body to JSON"))
+            return
+        }
+        urlRequest.httpBody = bodyData
+
+        do {
+            let (bytes, response) = try await session.bytes(for: urlRequest)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                await channel.fail(with: .serverError(statusCode: status, body: nil))
+                return
+            }
+
+            let parser = ResponsesSSEParser()
+            try await parser.parse(lines: bytes.lines, channel: channel)
+        } catch let error as AgentRuntimeError {
+            await channel.fail(with: error)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorTimedOut {
+                await channel.fail(with: .timeout(.init(duration: nil)))
+            } else {
+                await channel.fail(with: .serverError(statusCode: 0, body: error.localizedDescription))
+            }
+        }
+    }
+
+    // MARK: - Chat Completions Path (Legacy)
+
+    private func respondChatCompletions(
+        request: LanguageModelExecutorGenerationRequest,
+        channel: GenerationChannel
+    ) async throws {
+        let messages = OpenAITranscriptTranslator.translateChatCompletions(request.transcript, systemPrompt: nil)
+        let toolDefs = OpenAIToolTranslator.translateChatCompletions(request.enabledTools)
+
         var body: [String: Any] = [
             "model": modelID,
             "messages": messages,
@@ -122,7 +229,6 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
             body["max_completion_tokens"] = maxTokens
         }
 
-        // o4 model: reasoning_effort mapping, no temperature
         let isO4 = modelID == "o4"
         if isO4, let budget = request.generationOptions.reasoningBudget {
             body["reasoning_effort"] = mapBudgetToEffort(budget)
@@ -132,7 +238,6 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
             body["temperature"] = temperature
         }
 
-        // Construct URL
         let url = baseURL.appendingPathComponent("v1/chat/completions")
 
         var urlRequest = URLRequest(url: url)
@@ -157,7 +262,6 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
                 return
             }
 
-            // Convert URLSession.AsyncBytes.lines to AsyncStream<String> for the parser
             let lineStream = AsyncStream<String> { continuation in
                 Task {
                     do {
@@ -188,10 +292,6 @@ public struct OpenAIProvider: LanguageModel, LanguageModelExecutor, Sendable {
 
     // MARK: - Private Helpers
 
-    /// Map a reasoning budget in tokens to an OpenAI reasoning_effort string.
-    /// - 0...4096 → "low"
-    /// - 4097...16384 → "medium"
-    /// - 16385+ → "high"
     private func mapBudgetToEffort(_ budget: Int) -> String {
         switch budget {
         case 0...4096: return "low"

@@ -526,7 +526,7 @@ extension OpenAIProviderTests {
             SessionToolDefinition(name: "Bash", description: "Run a shell command", parameters: schema),
         ]
 
-        let result = OpenAIToolTranslator.translate(tools)
+        let result = OpenAIToolTranslator.translateResponses(tools)
         XCTAssertEqual(result.count, 1)
 
         let toolDict = result[0]
@@ -545,7 +545,7 @@ extension OpenAIProviderTests {
     }
 
     func test_toolTranslator_emptyTools() {
-        let result = OpenAIToolTranslator.translate([])
+        let result = OpenAIToolTranslator.translateResponses([])
         XCTAssertEqual(result.count, 0)
     }
 

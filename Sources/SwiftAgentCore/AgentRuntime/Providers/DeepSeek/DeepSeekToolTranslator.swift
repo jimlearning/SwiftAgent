@@ -1,9 +1,15 @@
 import Foundation
 
 /// Translates SessionToolDefinition values into DeepSeek wire format
-/// for both Anthropic-compatible and OpenAI-compatible endpoints.
-/// Pure-functional: no mutable state, no side effects.
+/// for Anthropic-compatible and Chat Completions endpoints.
+/// Pur-functional: no mutable state, no side effects.
 struct DeepSeekToolTranslator: Sendable {
+
+    /// Convert SessionToolDefinition to Responses API tool format.
+    /// Delegates to the canonical OpenAIToolTranslator.
+    static func translateResponses(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
+        OpenAIToolTranslator.translateResponses(tools)
+    }
 
     /// Convert SessionToolDefinition array to Anthropic-format tool dicts
     /// (identical to AnthropicToolTranslator pattern).
@@ -23,7 +29,7 @@ struct DeepSeekToolTranslator: Sendable {
         }
     }
 
-    /// Convert SessionToolDefinition array to Chat Completions function-calling format.
+    /// Convert SessionToolDefinition array to Chat Completions function-calling format (legacy).
     ///
     /// Output format: [{type: "function", function: {name, description, parameters: <JSONSchema>}}]
     /// parameters maps JSONSchema fields directly — no $schema, no items at top level.
