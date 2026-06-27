@@ -166,8 +166,6 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         )
         let toolDefs = tools.isEmpty ? nil : DeepSeekToolTranslator.translateAnthropicCompat(tools)
 
-        // Build request body — DeepSeek Anthropic-compat endpoint does NOT support
-        // Anthropic thinking configuration (budget_tokens).
         var body: [String: Any] = [
             "model": modelID,
             "max_tokens": options.maximumResponseTokens ?? 8_192,
@@ -180,6 +178,10 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         if let toolDefs {
             body["tools"] = toolDefs
         }
+        // Do NOT send thinking config for DeepSeek reasoning models — the model
+        // returns thinking blocks with valid signatures (via signature_delta)
+        // regardless of config, and including thinking config triggers stricter
+        // server-side validation that blocks re-prompt with thinking blocks.
 
         // Construct URL: {baseURL}/anthropic/v1/messages
         let url = baseURL.appendingPathComponent("anthropic/v1/messages")
@@ -198,6 +200,16 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
             return
         }
         request.httpBody = bodyData
+
+        // Debug: print request body
+        if let bodyStr = String(data: bodyData, encoding: .utf8) {
+            // Print full body for requests containing assistant messages (re-prompts)
+            if bodyStr.contains("\"assistant\"") {
+                print("[DeepSeekProvider] anthropic RE-PROMPT:\n\(bodyStr)")
+            } else {
+                print("[DeepSeekProvider] anthropic FIRST request: \(bodyStr.prefix(500))")
+            }
+        }
 
         try await streamAndParse(request: request, channel: channel, compatibility: compatibility)
     }
@@ -247,6 +259,11 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         }
         request.httpBody = bodyData
 
+        // Debug: print request body
+        if let bodyStr = String(data: bodyData, encoding: .utf8) {
+            print("[DeepSeekProvider] openAI request: \(bodyStr.prefix(3000))")
+        }
+
         try await streamAndParse(request: request, channel: channel, compatibility: compatibility)
     }
 
@@ -278,22 +295,8 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
                 return
             }
 
-            let lineStream = AsyncStream<String> { continuation in
-                Task {
-                    do {
-                        for try await line in bytes.lines {
-                            if Task.isCancelled { break }
-                            continuation.yield(line)
-                        }
-                        continuation.finish()
-                    } catch {
-                        continuation.finish()
-                    }
-                }
-            }
-
             let parser = DeepSeekSSEParser()
-            try await parser.parse(lines: lineStream, channel: channel, compatibility: compatibility)
+            try await parser.parse(lines: bytes.lines, channel: channel, compatibility: compatibility)
         } catch let error as AgentRuntimeError {
             await channel.fail(with: error)
         } catch {

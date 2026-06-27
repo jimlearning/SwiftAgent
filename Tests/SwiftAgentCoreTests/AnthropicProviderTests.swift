@@ -240,7 +240,7 @@ extension AnthropicProviderTests {
     func test_transcriptTranslator_thinking() {
         let transcript = Transcript(entries: [
             .prompt("Think about this"),
-            .thinking("Let me reason about this carefully..."),
+            .thinking("Let me reason about this carefully...", signature: nil),
         ])
 
         let result = AnthropicTranscriptTranslator.translate(transcript, systemPrompt: nil)

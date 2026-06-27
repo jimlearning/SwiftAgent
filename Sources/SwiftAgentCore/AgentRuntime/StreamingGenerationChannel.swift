@@ -32,6 +32,11 @@ public actor StreamingGenerationChannel: GenerationChannel {
     /// by DeepSeek/Anthropic thinking mode).
     public private(set) var accumulatedThinking: String = ""
 
+    /// Opaque signature token for thinking blocks (required by thinking mode).
+    /// Captured from SSE content_block_start events and passed to transcript
+    /// so it can be included in subsequent API requests.
+    public private(set) var thinkingSignature: String? = nil
+
     /// Records tool calls that were streamed through this channel.
     /// Used by the agent loop to inspect which tools were requested
     /// after the executor finishes, so it can execute them and re-prompt.
@@ -88,6 +93,11 @@ public actor StreamingGenerationChannel: GenerationChannel {
         guard !isFinished else { return }
         isFinished = true
         continuation?.yield(.turnCompleted(usage: usage, stopReason: stopReason))
+    }
+
+    /// Store the thinking signature for the agent loop to read after streaming.
+    public func update(thinkingSignature: String) async {
+        self.thinkingSignature = thinkingSignature
     }
 
     /// Finish the turn with an error.

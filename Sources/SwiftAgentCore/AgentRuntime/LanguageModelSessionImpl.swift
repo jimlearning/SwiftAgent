@@ -10,6 +10,7 @@ private actor CollectingChannel: GenerationChannel {
     private var isFinished: Bool = false
     private var accumulatedText: String = ""
     private(set) var accumulatedThinking: String = ""
+    private(set) var thinkingSignature: String? = nil
 
     func send(textDelta: String) async {
         guard !isFinished else { return }
@@ -21,6 +22,10 @@ private actor CollectingChannel: GenerationChannel {
         guard !isFinished else { return }
         accumulatedThinking = thinkingDelta
         events.append(.thinkingDelta(accumulatedThinking))
+    }
+
+    func update(thinkingSignature: String) async {
+        self.thinkingSignature = thinkingSignature
     }
 
     func send(toolCallRequest id: String, name: String, input: Data) async {
@@ -170,13 +175,12 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
         let maxIterations = 50
         var responseText = ""
         var thinkingText = ""
-        var responseTextFlushed = false
+        var thinkingSig: String? = nil
         var finalUsage: Usage? = nil
         var finalStopReason: String? = nil
 
         while !turnComplete && iterationCount < maxIterations {
             iterationCount += 1
-            responseTextFlushed = false
 
             let channel = CollectingChannel()
             let executor = modelProvider.makeExecutor()
@@ -190,35 +194,22 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
             let events = await channel.events
             var hasToolCalls = false
             thinkingText = await channel.accumulatedThinking
+            thinkingSig = await channel.thinkingSignature
+            print("[SessionImpl] thinkingText.isEmpty=\(thinkingText.isEmpty) thinkingSig='\(thinkingSig ?? "nil")'")
 
+            // First pass: collect all events, identify tool calls
+            var pendingToolCalls: [(id: String, name: String, input: Data)] = []
             for event in events {
                 switch event {
                 case .textDelta(let text):
                     responseText = text
                 case .thinkingDelta:
-                    break  // Handled via accumulatedThinking read above
+                    break
                 case .toolCallRequested(let id, let name, let input):
                     hasToolCalls = true
-                    // Flush thinking + response text BEFORE tool calls — the model
-                    // generates thinking → text → tools, and the transcript must
-                    // preserve that order so the re-prompt is well-formed.
-                    if !thinkingText.isEmpty {
-                        transcript.entries.append(.thinking(thinkingText))
-                        thinkingText = ""
-                    }
-                    if !responseTextFlushed && !responseText.isEmpty {
-                        transcript.entries.append(.response(responseText))
-                        responseTextFlushed = true
-                    }
-                    transcript.entries.append(.toolCall(id: id, name: name, input: input))
-                    do {
-                        let output = try await executeTool(name: name, input: input)
-                        transcript.entries.append(.toolOutput(id: id, output: output.stringValue, isError: false))
-                    } catch {
-                        transcript.entries.append(.toolOutput(id: id, output: error.localizedDescription, isError: true))
-                    }
+                    pendingToolCalls.append((id, name, input))
                 case .toolCallCompleted:
-                    break  // Already handled inline with toolCallRequested
+                    break
                 case .turnCompleted(let usage, let stopReason):
                     finalUsage = usage
                     finalStopReason = stopReason
@@ -227,13 +218,51 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                 }
             }
 
+            // Second pass: flush thinking + text, then ALL tool_calls, then ALL tool_outputs.
+            // This keeps the transcript well-formed: one assistant message with all
+            // tool_use blocks, followed by one user message with all tool_results.
+            // Without batching, each tool_call + tool_output pair creates separate
+            // assistant/user messages, which some API endpoints reject.
+            if hasToolCalls {
+                if !thinkingText.isEmpty {
+                    transcript.entries.append(.thinking(thinkingText, signature: thinkingSig))
+                    thinkingText = ""
+                }
+                if !responseText.isEmpty {
+                    transcript.entries.append(.response(responseText))
+                    responseText = ""
+                }
+                for call in pendingToolCalls {
+                    transcript.entries.append(.toolCall(id: call.id, name: call.name, input: call.input))
+                }
+                for call in pendingToolCalls {
+                    do {
+                        let output = try await executeTool(name: call.name, input: call.input)
+                        transcript.entries.append(.toolOutput(id: call.id, output: output.stringValue, isError: false))
+                    } catch {
+                        transcript.entries.append(.toolOutput(id: call.id, output: error.localizedDescription, isError: true))
+                    }
+                }
+            }
+
+            // Debug: log transcript entries
+            for e in transcript.entries {
+                switch e {
+                case .thinking(let t, let s): print("[Transcript] thinking(sig:'\(s ?? "nil")', text:'\(t.prefix(40))...')")
+                case .response(let t): print("[Transcript] response('\(t.prefix(40))...')")
+                case .toolCall(let id, let name, _): print("[Transcript] toolCall(id:\(id), name:\(name))")
+                case .toolOutput(let id, _, _): print("[Transcript] toolOutput(id:\(id))")
+                default: break
+                }
+            }
+
             turnComplete = !hasToolCalls
         }
 
         if !thinkingText.isEmpty {
-            transcript.entries.append(.thinking(thinkingText))
+            transcript.entries.append(.thinking(thinkingText, signature: thinkingSig))
         }
-        if !responseText.isEmpty && !responseTextFlushed {
+        if !responseText.isEmpty {
             transcript.entries.append(.response(responseText))
         }
         try? await memoryStore.store(key: "latest", namespace: "sessions", value: transcript)
@@ -297,8 +326,9 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                         // Thinking MUST be in the transcript so the API receives it
                         // back on subsequent turns (required by thinking mode).
                         let thinkingText = await channel.accumulatedThinking
+                        let thinkingSig = await channel.thinkingSignature
                         if !thinkingText.isEmpty {
-                            await self.transcript.entries.append(.thinking(thinkingText))
+                            await self.transcript.entries.append(.thinking(thinkingText, signature: thinkingSig))
                         }
                         let responseText = await channel.accumulatedText
                         if !responseText.isEmpty {

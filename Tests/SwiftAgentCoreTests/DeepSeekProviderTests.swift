@@ -219,7 +219,7 @@ extension DeepSeekProviderTests {
     func test_transcriptTranslator_anthropicCompat_thinking() {
         let transcript = Transcript(entries: [
             .prompt("Think about this"),
-            .thinking("Let me reason carefully."),
+            .thinking("Let me reason carefully.", signature: nil),
         ])
 
         let result = DeepSeekTranscriptTranslator.translateAnthropicCompat(transcript, systemPrompt: nil)
@@ -425,7 +425,7 @@ extension DeepSeekProviderTests {
     func test_transcriptTranslator_openAICompat_thinkingAndSystem() {
         let transcript = Transcript(entries: [
             .prompt("Hello"),
-            .thinking("Let me think."),
+            .thinking("Let me think.", signature: nil),
             .system("Compacted."),
         ])
 

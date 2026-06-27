@@ -11,17 +11,23 @@ import Foundation
 ///
 /// Snapshot semantics REQUIRED: accumulate text/thinking internally,
 /// send FULL accumulated string each time (PITFALLS.md Pitfall 2).
-actor DeepSeekSSEParser {
+///
+/// Note: This is a struct, not an actor. The parser is stateless — all
+/// accumulation uses local variables. Making it a struct allows callers
+/// to iterate URLSession.AsyncBytes directly without an AsyncStream bridge,
+/// which ensures network errors propagate naturally through the try/catch
+/// chain instead of being silently swallowed by an unstructured Task.
+struct DeepSeekSSEParser {
 
     // MARK: - Public Entry Point
 
     /// Parse SSE lines and emit SessionEvent values through the channel.
     /// Dispatches to the appropriate internal parser based on compatibility.
-    func parse(
-        lines: AsyncStream<String>,
+    func parse<S: AsyncSequence>(
+        lines: S,
         channel: GenerationChannel,
         compatibility: APICompatibility
-    ) async throws {
+    ) async throws where S.Element == String {
         switch compatibility {
         case .anthropicCompatible:
             try await parseAnthropicCompat(lines: lines, channel: channel)
@@ -34,10 +40,10 @@ actor DeepSeekSSEParser {
 
     /// Parse Anthropic-compatible SSE lines.
     /// Delegates to AnthropicSSEParser which implements the full event-type dispatch.
-    private func parseAnthropicCompat(
-        lines: AsyncStream<String>,
+    private func parseAnthropicCompat<S: AsyncSequence>(
+        lines: S,
         channel: GenerationChannel
-    ) async throws {
+    ) async throws where S.Element == String {
         let parser = AnthropicSSEParser()
         try await parser.parse(lines: lines, channel: channel)
     }
@@ -52,16 +58,16 @@ actor DeepSeekSSEParser {
     /// - multi-chunk tool call accumulation -> toolCallRequested events
     /// - finish_reason -> turnCompleted
     /// - [DONE] sentinel
-    private func parseOpenAICompat(
-        lines: AsyncStream<String>,
+    private func parseOpenAICompat<S: AsyncSequence>(
+        lines: S,
         channel: GenerationChannel
-    ) async throws {
+    ) async throws where S.Element == String {
         var accumulatedText: String = ""
         var accumulatedThinking: String = ""
         var toolAccumulator = OpenAIToolCallAccumulator()
         var usage: Usage?
 
-        for await line in lines {
+        for try await line in lines {
             if Task.isCancelled { break }
 
             guard line.hasPrefix("data: ") else { continue }

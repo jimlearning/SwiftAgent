@@ -26,8 +26,9 @@ public struct Transcript: Sendable, Codable {
         /// Output from a completed tool execution.
         case toolOutput(id: String, output: String, isError: Bool)
 
-        /// Model thinking/reasoning content.
-        case thinking(String)
+        /// Model thinking/reasoning content with optional signature
+        /// (opaque token required by thinking mode for multi-turn).
+        case thinking(String, signature: String? = nil)
 
         /// System-level message (e.g., compaction notification).
         case system(String)

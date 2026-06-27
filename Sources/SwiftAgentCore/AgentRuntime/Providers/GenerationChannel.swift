@@ -23,4 +23,12 @@ public protocol GenerationChannel: Sendable {
 
     /// Signal an error from the executor.
     func fail(with error: AgentRuntimeError) async
+
+    /// Update the thinking signature (opaque token from API, required to
+    /// pass thinking blocks back in subsequent requests).
+    func update(thinkingSignature: String) async
+}
+
+extension GenerationChannel {
+    public func update(thinkingSignature: String) async {}
 }

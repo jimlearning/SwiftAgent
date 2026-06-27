@@ -47,6 +47,9 @@ struct DeepSeekTranscriptTranslator: Sendable {
                 currentBlocks.append(["type": "text", "text": text])
 
             case .toolCall(let id, let name, let input):
+                // tool_use must be in the SAME assistant message as preceding
+                // thinking/text blocks (Anthropic Messages API requirement).
+                // Do NOT flush() — that would create a separate assistant message.
                 if currentRole != "assistant" { flush() }
                 currentRole = "assistant"
                 let parsedInput = (try? JSONSerialization.jsonObject(with: input) as? [String: Any]) ?? [:]
@@ -58,7 +61,7 @@ struct DeepSeekTranscriptTranslator: Sendable {
                 ])
 
             case .toolOutput(let id, let output, let isError):
-                flush()
+                if currentRole != "user" { flush() }
                 currentRole = "user"
                 currentBlocks.append([
                     "type": "tool_result",
@@ -67,12 +70,17 @@ struct DeepSeekTranscriptTranslator: Sendable {
                     "is_error": isError,
                 ])
 
-            case .thinking(let text):
-                // DeepSeek Anthropic-compat endpoint requires thinking to be passed
-                // back as proper thinking content blocks (NOT as text blocks).
+            case .thinking(let text, let signature):
+                // Include thinking blocks for round-trip. DeepSeek reasoning models
+                // return thinking blocks with signature:"" — omit the signature key
+                // entirely when empty to avoid server-side validation issues.
                 if currentRole != "assistant" { flush() }
                 currentRole = "assistant"
-                currentBlocks.append(["type": "thinking", "thinking": text])
+                var block: [String: Any] = ["type": "thinking", "thinking": text]
+                if let sig = signature, !sig.isEmpty {
+                    block["signature"] = sig
+                }
+                currentBlocks.append(block)
 
             case .system(let text):
                 flush()
@@ -164,21 +172,21 @@ struct DeepSeekTranscriptTranslator: Sendable {
                     ]],
                 ])
 
-            case .toolOutput(let id, let output, let isError):
+            case .toolOutput(let id, let output, _):
                 messages.append([
                     "role": "tool",
                     "tool_call_id": id,
                     "content": output,
                 ])
 
-            case .thinking(let text):
-                // DeepSeek's native API stores thinking as reasoning_content on
-                // the assistant message. Separate message for simplicity — the
-                // model accepts consecutive same-role messages.
-                messages.append([
-                    "role": "assistant",
-                    "reasoning_content": text,
-                ])
+            case .thinking:
+                // Drop thinking entries from re-prompt history. Reasoning models
+                // return reasoning_content in streaming, but re-prompt messages
+                // carry only standard Chat Completions fields (role/content/tool_calls).
+                // Including reasoning_content or thinking-as-text triggers server-side
+                // thinking-mode validation on some models (e.g. deepseek-v4-pro).
+                // This matches Claude Code's convention of clean re-prompts.
+                break
 
             case .system(let text):
                 messages.append([

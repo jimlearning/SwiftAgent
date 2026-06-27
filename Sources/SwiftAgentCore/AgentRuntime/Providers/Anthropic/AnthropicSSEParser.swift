@@ -16,19 +16,20 @@ struct AnthropicSSEParser: Sendable {
     /// Consume an async stream of SSE lines, parse events, and emit through the channel.
     ///
     /// - Parameters:
-    ///   - lines: An AsyncStream of SSE data lines.
+    ///   - lines: An async sequence of SSE data lines.
     ///   - channel: The GenerationChannel to emit SessionEvent values through.
-    func parse(
-        lines: AsyncStream<String>,
+    func parse<S: AsyncSequence>(
+        lines: S,
         channel: GenerationChannel
-    ) async throws {
+    ) async throws where S.Element == String {
         var accumulatedText: String = ""
         var accumulatedThinking: String = ""
         var accumulator = AnthropicContentAccumulator()
         var receivedMessageDelta = false
         var lastEventTime = ContinuousClock.now
+        var thinkingSignature: String? = nil
 
-        for await line in lines {
+        for try await line in lines {
             if Task.isCancelled { break }
 
             guard line.hasPrefix("data: ") else { continue }
@@ -54,6 +55,15 @@ struct AnthropicSSEParser: Sendable {
                     if let name = block["name"] as? String, let id = block["id"] as? String {
                         accumulator.recordToolCall(index: index, id: id, name: name)
                     }
+                case "thinking":
+                    // Capture the opaque signature token — required to pass
+                    // thinking blocks back in subsequent API requests.
+                    let rawSig = block["signature"] as? String
+                    print("[AnthropicSSEParser] thinking block: sig='\(rawSig ?? "nil")' thinking='\((block["thinking"] as? String)?.prefix(80) ?? "nil")...'")
+                    if let sig = rawSig {
+                        thinkingSignature = sig
+                        await channel.update(thinkingSignature: sig)
+                    }
                 default:
                     break
                 }
@@ -72,6 +82,12 @@ struct AnthropicSSEParser: Sendable {
                     if let thinking = delta["thinking"] as? String {
                         accumulatedThinking += thinking
                         await channel.send(thinkingDelta: accumulatedThinking)
+                    }
+                case "signature_delta":
+                    if let sig = delta["signature"] as? String {
+                        print("[AnthropicSSEParser] signature_delta: '\(sig)'")
+                        thinkingSignature = sig
+                        await channel.update(thinkingSignature: sig)
                     }
                 case "input_json_delta":
                     if let partialJSON = delta["partial_json"] as? String,

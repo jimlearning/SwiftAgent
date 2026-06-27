@@ -81,7 +81,7 @@ struct OpenAITranscriptTranslator: Sendable {
                     "content": output,
                 ])
 
-            case .thinking(let text):
+            case .thinking(let text, _):
                 // For non-o4 models: thinking content is included as assistant content
                 // with a "[Thinking]" prefix. OpenAI rejects thinking content in message
                 // history for non-reasoning models. The modelID is not available to the

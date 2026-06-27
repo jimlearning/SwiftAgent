@@ -48,7 +48,9 @@ struct AnthropicTranscriptTranslator: Sendable {
                 currentBlocks.append(["type": "text", "text": text])
 
             case .toolCall(let id, let name, let input):
-                flush()  // tool_use is always its own message
+                // Keep tool_use in the SAME assistant message as preceding
+                // thinking/text blocks (Anthropic Messages API requirement).
+                if currentRole != "assistant" { flush() }
                 currentRole = "assistant"
                 let parsedInput = (try? JSONSerialization.jsonObject(with: input) as? [String: Any]) ?? [:]
                 currentBlocks.append([
@@ -59,7 +61,8 @@ struct AnthropicTranscriptTranslator: Sendable {
                 ])
 
             case .toolOutput(let id, let output, let isError):
-                flush()  // tool_result is always its own message
+                // Consecutive tool_results go in the SAME user message.
+                if currentRole != "user" { flush() }
                 currentRole = "user"
                 currentBlocks.append([
                     "type": "tool_result",
@@ -68,10 +71,12 @@ struct AnthropicTranscriptTranslator: Sendable {
                     "is_error": isError,
                 ])
 
-            case .thinking(let text):
+            case .thinking(let text, let signature):
                 if currentRole != "assistant" { flush() }
                 currentRole = "assistant"
-                currentBlocks.append(["type": "thinking", "thinking": text])
+                var block: [String: Any] = ["type": "thinking", "thinking": text]
+                if let sig = signature { block["signature"] = sig }
+                currentBlocks.append(block)
 
             case .system(let text):
                 flush()  // system reminders are always their own message

@@ -297,7 +297,7 @@ extension OpenAIProviderTests {
     func test_transcriptTranslator_thinking() {
         let transcript = Transcript(entries: [
             .prompt("Think about this"),
-            .thinking("Let me reason carefully..."),
+            .thinking("Let me reason carefully...", signature: nil),
         ])
 
         let messages = OpenAITranscriptTranslator.translate(transcript, systemPrompt: nil)
