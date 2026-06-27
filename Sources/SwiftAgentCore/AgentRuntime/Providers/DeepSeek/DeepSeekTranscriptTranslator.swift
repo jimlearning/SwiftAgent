@@ -154,23 +154,47 @@ struct DeepSeekTranscriptTranslator: Sendable {
                 messages.append(["role": "user", "content": text])
 
             case .response(let text):
-                messages.append(["role": "assistant", "content": text])
+                // Merge with last assistant message if it has reasoning_content
+                // (from a preceding .thinking entry), otherwise create a new one.
+                if var lastMsg = messages.last,
+                   lastMsg["role"] as? String == "assistant",
+                   lastMsg["reasoning_content"] != nil {
+                    lastMsg["content"] = text
+                    messages[messages.count - 1] = lastMsg
+                } else {
+                    messages.append(["role": "assistant", "content": text])
+                }
 
             case .toolCall(let id, let name, let input):
                 let argsStr = (try? JSONSerialization.jsonObject(with: input))
                     .flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                     .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-                messages.append([
-                    "role": "assistant",
-                    "tool_calls": [[
-                        "id": id,
-                        "type": "function",
-                        "function": [
-                            "name": name,
-                            "arguments": argsStr,
-                        ],
-                    ]],
-                ])
+                let toolCallDict: [String: Any] = [
+                    "id": id,
+                    "type": "function",
+                    "function": [
+                        "name": name,
+                        "arguments": argsStr,
+                    ],
+                ]
+                // Merge consecutive tool_calls into the same assistant message.
+                // Also merges with an assistant message that has reasoning_content
+                // (from a preceding .thinking entry) but no tool_calls yet.
+                if messages.last?["role"] as? String == "assistant" {
+                    var lastMsg = messages.removeLast()
+                    if var existingCalls = lastMsg["tool_calls"] as? [[String: Any]] {
+                        existingCalls.append(toolCallDict)
+                        lastMsg["tool_calls"] = existingCalls
+                    } else {
+                        lastMsg["tool_calls"] = [toolCallDict]
+                    }
+                    messages.append(lastMsg)
+                } else {
+                    messages.append([
+                        "role": "assistant",
+                        "tool_calls": [toolCallDict],
+                    ])
+                }
 
             case .toolOutput(let id, let output, _):
                 messages.append([
@@ -179,14 +203,17 @@ struct DeepSeekTranscriptTranslator: Sendable {
                     "content": output,
                 ])
 
-            case .thinking:
-                // Drop thinking entries from re-prompt history. Reasoning models
-                // return reasoning_content in streaming, but re-prompt messages
-                // carry only standard Chat Completions fields (role/content/tool_calls).
-                // Including reasoning_content or thinking-as-text triggers server-side
-                // thinking-mode validation on some models (e.g. deepseek-v4-pro).
-                // This matches Claude Code's convention of clean re-prompts.
-                break
+            case .thinking(let text, _):
+                // Add reasoning_content for models that require it in re-prompt
+                // (e.g. deepseek-v4-pro in thinking mode). Merge with an existing
+                // assistant message if possible, otherwise create a new one.
+                if messages.last?["role"] as? String == "assistant" {
+                    var lastMsg = messages.removeLast()
+                    lastMsg["reasoning_content"] = text
+                    messages.append(lastMsg)
+                } else {
+                    messages.append(["role": "assistant", "reasoning_content": text])
+                }
 
             case .system(let text):
                 messages.append([

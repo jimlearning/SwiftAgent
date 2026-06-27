@@ -33,7 +33,8 @@ import Testing
         let provider = DeepSeekProvider(
             apiKey: apiKey,
             baseURL: URL(string: "https://api.deepseek.com")!,
-            modelID: modelID
+            modelID: modelID,
+            compatibility: .openAICompatible
         )
 
         // ── Tool Engine ──
