@@ -72,16 +72,17 @@ func respond(
 
 `Providers/GenerationChannel.swift:8` — 执行器与运行时之间的流式抽象。六个方法，全部 `async`：
 
-| 方法 | 用途 |
-|------|------|
-| `send(textDelta:)` | 累积文本快照 |
-| `send(thinkingDelta:)` | 累积思考快照 |
+| 方法                                   | 用途             |
+| -------------------------------------- | ---------------- |
+| `send(textDelta:)`                     | 累积文本快照     |
+| `send(thinkingDelta:)`                 | 累积思考快照     |
 | `send(toolCallRequest:id:name:input:)` | 模型请求工具执行 |
-| `send(toolCallCompleted:id:output:)` | 工具执行完成 |
-| `complete(stopReason:usage:)` | 本轮正常结束 |
-| `fail(with:)` | 流式过程中的错误 |
+| `send(toolCallCompleted:id:output:)`   | 工具执行完成     |
+| `complete(stopReason:usage:)`          | 本轮正常结束     |
+| `fail(with:)`                          | 流式过程中的错误 |
 
 两种具体实现：
+
 - **`StreamingGenerationChannel`**（`StreamingGenerationChannel.swift:15`）— 公开 actor，桥接到 `AsyncThrowingStream` 的 continuation。用于流式的 `streamResponse(to:)` 路径。
 - **`CollectingChannel`**（`LanguageModelSessionImpl.swift:8`）— 私有 actor，将事件记录在本地。用于非流式的 `respond(to:)` 路径，事后检查。
 
@@ -261,19 +262,20 @@ streamResponse(to: "run ls")
 ### 3.5 工具执行
 
 `LanguageModelSessionImpl.swift:113` — `executeTool(name:input:)`：
+
 1. 通信类工具（`SendUserMessage`、`TaskOutput`）跳过权限检查。
 2. 其他所有工具：通过 `permissionForTool(_:)` 将名称映射为 `AgentPermission`，调用 `permissionEngine.check(permission)`，然后 `toolEngine.execute(name:input:)`。
 3. 失败时：将 `.toolOutput(id:output:isError:true)` 追加到 transcript——模型可以对错误做出响应。
 
 ### 3.6 Channel 对比
 
-| | CollectingChannel | StreamingGenerationChannel |
-|---|---|---|
-| 可见性 | private actor | public actor |
-| 存储方式 | `events: [SessionEvent]` 数组 | `AsyncThrowingStream` continuation |
-| 工具追踪 | events 数组包含 toolCallRequested | `recordedToolCalls` 数组 |
-| 使用场景 | `respond(to:)` 非流式 | `streamResponse(to:)` 流式 |
-| 完成后守卫 | `isFinished` 标志 | `isFinished` 标志 |
+|            | CollectingChannel                 | StreamingGenerationChannel         |
+| ---------- | --------------------------------- | ---------------------------------- |
+| 可见性     | private actor                     | public actor                       |
+| 存储方式   | `events: [SessionEvent]` 数组     | `AsyncThrowingStream` continuation |
+| 工具追踪   | events 数组包含 toolCallRequested | `recordedToolCalls` 数组           |
+| 使用场景   | `respond(to:)` 非流式             | `streamResponse(to:)` 流式         |
+| 完成后守卫 | `isFinished` 标志                 | `isFinished` 标志                  |
 
 ---
 
@@ -311,25 +313,32 @@ streamResponse(to: "run ls")
 
 `Providers/DeepSeek/DeepSeekProvider.swift:15` — 通过 `APICompatibility` 枚举支持双 API 兼容模式：
 
-| 模式 | 端点 | Transcript 翻译器 |
-|------|------|-------------------|
-| `.anthropicCompatible` | `/anthropic/v1/messages` | `translateAnthropicCompat()` |
-| `.openAICompatible` | `/v1/chat/completions` | `translateOpenAICompat()` |
+| 模式 | 端点 | Transcript 翻译器 | SSE 解析器 |
+|------|------|-------------------|------------|
+| `.anthropicCompatible` | `/anthropic/v1/messages` | `translateAnthropicCompat()` | `DeepSeekSSEParser`（→`AnthropicSSEParser`） |
+| `.openAICompatible` | `/v1/chat/completions` | `translateChatCompletions()` | `ChatCompletionsSSEParser` |
+
+两个翻译器均委托给规范实现并附加 DeepSeek 后处理：
+- `translateAnthropicCompat` → `AnthropicTranscriptTranslator.translate`，然后剥离 `cache_control` 键和空的 `signature`（思考块）。
+- `translateChatCompletions` → `OpenAITranscriptTranslator.translateChatCompletions`。
+- `DeepSeekToolTranslator` 遵循相同的委托模式，分别委托给 `AnthropicToolTranslator` 和 `OpenAIToolTranslator`。
 
 与 Anthropic 的关键差异：
+
 - 剥离 `anthropic-beta` 头和 `cache_control` 标记（DeepSeek 拒绝它们）。
-- 思考块在 Anthropic 模式下保留为 `{"type": "thinking", "thinking": text}`，在 OpenAI 模式下使用 `reasoning_content`。
+- 思考块在 Anthropic 模式下保留为 `{"type": "thinking", "thinking": text}`，在 Chat Completions 模式下使用 `reasoning_content`（DeepSeek 要求重提示时包含此字段）。
+- `translateResponses` 保留供未来使用（待 DeepSeek 支持 Responses API 后切换）。
 - 模型：`deepseek-v4-pro`（128K 上下文，32K 输出）、`deepseek-v4-flash`（128K 上下文，8K 输出）、`deepseek-chat`、`deepseek-reasoner`。
 
 ### 4.4 OpenAIProvider
 
-`Providers/OpenAI/OpenAIProvider.swift:8` — 目标端点 `/v1/chat/completions`。
+`Providers/OpenAI/OpenAIProvider.swift:8` — 目标端点 `/v1/responses`（OpenAI Responses API，2025+）。
 
-- **Transcript 翻译**：`OpenAITranscriptTranslator` — Chat Completions 格式（role/content 及 tool_calls 数组）。
-- **Tool 翻译**：`OpenAIToolTranslator` — OpenAI `tools` 参数格式，包含 `function` 类型。
-- **SSE 解析**：`OpenAISSEParser` — Chat Completions SSE 分块（`choices[0].delta`）。
+- **Transcript 翻译**：`OpenAITranscriptTranslator.translateResponses` — Responses API 类型化条目（message、reasoning、function_call、tool_call_output）。
+- **Tool 翻译**：`OpenAIToolTranslator.translateResponses` — `{"type": "function", "function": {name, description, parameters}}`。
+- **SSE 解析**：`ResponsesSSEParser` — 基于事件的 SSE（`response.output_text.delta`、`response.function_call_arguments.delta`、`response.completed`）。
 - **o4 推理**：将 `reasoningBudget` 映射为 `reasoning_effort`（"low"/"medium"/"high"），对推理模型省略 temperature。
-- **流选项**：包含 `stream_options: ["include_usage": true]`，用于每个分块的 usage 报告。
+- **Chat Completions 支持**：`OpenAITranscriptTranslator` 和 `OpenAIToolTranslator` 同时提供 `translateChatCompletions` 方法，供使用旧格式的 Provider 使用（例如 DeepSeek 的 `openAICompatible` 模式）。
 
 ---
 
@@ -351,20 +360,24 @@ streamResponse(to: "run ls")
 每个 Provider 有自己的 SSE 解析器，但共享相同的输出接口（都写入 `GenerationChannel`）：
 
 - **`AnthropicSSEParser`** — 解析 Anthropic SSE 事件：`content_block_start`（注册工具调用）、`content_block_delta`（text/thinking/input_json）、`content_block_stop`（完成工具调用）、`message_delta`（usage/stop_reason）、`error`。
-- **`DeepSeekSSEParser`** — 双模式解析器，根据 `APICompatibility` 分发。Anthropic 兼容模式委托给 `AnthropicSSEParser`；OpenAI 兼容模式处理 Chat Completions 分块及 `reasoning_content`。
-- **`OpenAISSEParser`** — 解析 OpenAI Chat Completions SSE：`choices[0].delta.content` → text、`choices[0].delta.tool_calls` → tool call、`choices[0].finish_reason` → complete、`usage` → usage 追踪。
+- **`DeepSeekSSEParser`** — 仅支持 Anthropic 模式；完全委托给 `AnthropicSSEParser`。Chat Completions 路径由 `ChatCompletionsSSEParser` 直接处理。
+- **`ResponsesSSEParser`** — 解析 OpenAI Responses API 基于事件的 SSE：`response.output_text.delta`、`response.reasoning.delta`、`response.function_call_arguments.delta`、`response.output_item.done`、`response.completed`。
+- **`ChatCompletionsSSEParser`** — 解析 Chat Completions SSE：`choices[0].delta.content` → text、`choices[0].delta.reasoning_content` → 思考、`choices[0].delta.tool_calls` → tool call、`choices[0].finish_reason` → complete。由 DeepSeek `openAICompatible` 模式使用。
 
 ### 5.3 Transcript 翻译器
 
 将 `Transcript` 转换为特定 Provider 的线路格式的纯函数：
 
-| 翻译器 | 输入 | 输出 |
-|--------|------|------|
-| `AnthropicTranscriptTranslator` | Transcript | `(messages: [[String: Any]], system: Any?)` |
-| `DeepSeekTranscriptTranslator` | Transcript | 同上（两种兼容模式） |
-| `OpenAITranscriptTranslator` | Transcript | `[[String: Any]]` |
+| 翻译器 | 输入 | 输出 | 格式 |
+|--------|------|------|------|
+| `AnthropicTranscriptTranslator.translate` | Transcript | `(messages, system)` | Anthropic Messages API |
+| `DeepSeekTranscriptTranslator.translateAnthropicCompat` | Transcript | `(messages, system)` | Anthropic Messages（委托 + 剥离 cache_control） |
+| `DeepSeekTranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions（委托给 `OpenAITranscriptTranslator`） |
+| `DeepSeekTranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API（委托给 `OpenAITranscriptTranslator`） |
+| `OpenAITranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions messages[] 带角色刷新 |
+| `OpenAITranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API 类型化输入条目 |
 
-所有翻译器都包含角色刷新逻辑：连续的相同角色条目合并到一条消息中；角色变化（user↔assistant）或工具边界触发刷新。
+所有翻译器都包含角色刷新逻辑：连续的相同角色条目合并到一条消息中；角色变化（user↔assistant）或工具边界触发刷新。DeepSeek 翻译器委托给规范的 Anthropic/OpenAI 翻译器，并附加格式特定的后处理。
 
 ---
 
@@ -413,11 +426,11 @@ public struct ToolMetadata: Sendable {
 
 工具分为 3 个批次以支持并行加载：
 
-| 批次 | 数量 | 类别 | 文件 |
-|------|------|------|------|
-| Batch 1 | ~15 | 只读：FileRead、Grep、Glob、WebSearch、WebFetch、ListSkills 等 | `Batch1ToolRegistry.swift` |
-| Batch 23 | ~9 | 文件修改 + 命令：FileWrite、FileEdit、Bash、NotebookEdit、LSP | `Batch23ToolRegistry.swift` |
-| Batch 45 | ~36 | 任务/Agent/工作流/MCP/定时任务/通知：AgentTool、TaskCreate、MCPTool、SkillTool 等 | `Batch45ToolRegistry.swift` |
+| 批次     | 数量 | 类别                                                         | 文件                        |
+| -------- | ---- | ------------------------------------------------------------ | --------------------------- |
+| Batch 1  | ~15  | 只读：FileRead、Grep、Glob、WebSearch、WebFetch、ListSkills 等 | `Batch1ToolRegistry.swift`  |
+| Batch 23 | ~9   | 文件修改 + 命令：FileWrite、FileEdit、Bash、NotebookEdit、LSP | `Batch23ToolRegistry.swift` |
+| Batch 45 | ~36  | 任务/Agent/工作流/MCP/定时任务/通知：AgentTool、TaskCreate、MCPTool、SkillTool 等 | `Batch45ToolRegistry.swift` |
 
 每个注册表暴露 `static func tools(...) -> [(any Tool, ToolMetadata)]`，参数通过依赖注入传入（工作目录、MCP 客户端等）。
 
@@ -524,24 +537,24 @@ public protocol SessionMemoryStore: Sendable {
 
 模仿 Apple `LanguageModelError` 嵌套 info 类型的六个专用结构体：
 
-| 结构体 | 属性 | Apple 来源 |
-|--------|------|-----------|
-| `ContextSizeExceeded` | `maxTokens: Int`, `requestedTokens: Int` | `LanguageModelError.ContextSizeExceeded` |
-| `RateLimited` | `retryAfter: TimeInterval?` | `LanguageModelError.RateLimited` |
-| `Refusal` | `reason: String` | `LanguageModelError.Refusal` |
-| `Timeout` | `duration: TimeInterval?` | `LanguageModelError.Timeout` |
-| `GuardrailViolation` | `guardrail: String`, `reason: String` | `LanguageModelError.GuardrailViolation` |
-| `UnsupportedCapability` | `capability: String` | `LanguageModelError.UnsupportedCapability` |
+| 结构体                  | 属性                                     | Apple 来源                                 |
+| ----------------------- | ---------------------------------------- | ------------------------------------------ |
+| `ContextSizeExceeded`   | `maxTokens: Int`, `requestedTokens: Int` | `LanguageModelError.ContextSizeExceeded`   |
+| `RateLimited`           | `retryAfter: TimeInterval?`              | `LanguageModelError.RateLimited`           |
+| `Refusal`               | `reason: String`                         | `LanguageModelError.Refusal`               |
+| `Timeout`               | `duration: TimeInterval?`                | `LanguageModelError.Timeout`               |
+| `GuardrailViolation`    | `guardrail: String`, `reason: String`    | `LanguageModelError.GuardrailViolation`    |
+| `UnsupportedCapability` | `capability: String`                     | `LanguageModelError.UnsupportedCapability` |
 
 ### 9.2 按领域分类的错误类型
 
-| 领域 | 错误类型 |
-|------|----------|
-| **模型 (Model)** | `rateLimited(RateLimited)`、`unauthorized(reason:)`、`serverError(statusCode:body:)`、`timeout(Timeout)`、`contextSizeExceeded(ContextSizeExceeded)`、`invalidResponse(reason:)`、`refusal(Refusal)`、`guardrailViolation(GuardrailViolation)`、`unsupportedCapability(UnsupportedCapability)` |
-| **内存 (Memory)** | `storageFull(availableBytes:)`、`keyNotFound(key:namespace:)`、`migrationFailed(fromVersion:toVersion:reason:)` |
+| 领域                  | 错误类型                                                     |
+| --------------------- | ------------------------------------------------------------ |
+| **模型 (Model)**      | `rateLimited(RateLimited)`、`unauthorized(reason:)`、`serverError(statusCode:body:)`、`timeout(Timeout)`、`contextSizeExceeded(ContextSizeExceeded)`、`invalidResponse(reason:)`、`refusal(Refusal)`、`guardrailViolation(GuardrailViolation)`、`unsupportedCapability(UnsupportedCapability)` |
+| **内存 (Memory)**     | `storageFull(availableBytes:)`、`keyNotFound(key:namespace:)`、`migrationFailed(fromVersion:toVersion:reason:)` |
 | **权限 (Permission)** | `permissionDenied(permission:reason:)`、`sandboxViolation(resource:)` |
-| **工具 (Tool)** | `toolNotFound(name:)`、`toolExecutionFailed(name:reason:)`、`toolValidationFailed(name:field:reason:)` |
-| **图 (Graph)** | `cycleDetected(nodes:)`、`nodeFailed(nodeID:reason:)` |
+| **工具 (Tool)**       | `toolNotFound(name:)`、`toolExecutionFailed(name:reason:)`、`toolValidationFailed(name:field:reason:)` |
+| **图 (Graph)**        | `cycleDetected(nodes:)`、`nodeFailed(nodeID:reason:)`        |
 
 每种错误都提供了可供 UI 展示的 `errorDescription`。模型类错误（rateLimited、timeout、contextSizeExceeded、refusal、guardrailViolation、unsupportedCapability）携带结构化信息供编程处理——重试等待时间、token 计数、拒绝原因等。
 
@@ -554,12 +567,14 @@ public protocol SessionMemoryStore: Sendable {
 `ViewModels/ThreadViewModel.swift:40` — 对话线程的 `@MainActor` ViewModel。
 
 **会话创建**：`AppViewModel.makeSession()` 创建 `LanguageModelSessionImpl`，包含：
+
 - `DeepSeekProvider`（Anthropic 兼容模式，`deepseek-v4-pro`）
 - `SQLiteMemoryStore` 位于 `~/.swift-agent/projects/<path>/`
 - `AgentPermissionBridge` 封装旧版 `PermissionEngine`
 - `DefaultToolEngine` 加载 Batch1 + Batch23 工具
 
 **流处理**（`send()` L257 → `startAgentRun()` L293）：
+
 1. 追加用户消息，创建助手占位符，设置 `state = .executing`
 2. 调用 `session.streamResponse(to: trimmed)` → 返回 `AsyncThrowingStream`
 3. `for try await event in stream` 分发到 `handleSessionEvent()`：
@@ -612,43 +627,43 @@ public protocol AgentGraph: Sendable {
 
 ## 文件索引
 
-| 文件 | 用途 |
-|------|------|
-| `LanguageModelSession.swift` | 编排器协议 + ToolEngine + 3 个桩子系统协议 |
-| `LanguageModelSessionImpl.swift` | Actor 实现 — Agent 循环、工具执行、流式/非流式两条路径 |
-| `StreamingGenerationChannel.swift` | 公开 actor — 带快照语义的 continuation 桥接 |
-| `GenerationChannel.swift` | 6 方法流式抽象协议 |
-| `SessionEvent.swift` | 与提供商无关的流式事件枚举 |
-| `Transcript.swift` | 可编解码对话历史（7 种条目类型） |
-| `LanguageModel.swift` | LanguageModel 协议 + LanguageModelCapabilities |
-| `LanguageModelExecutor.swift` | 执行器协议 + GenerationOptions + SessionToolDefinition |
-| `AgentPermission.swift` | 运行时权限枚举（13 种）+ SessionPermissionEngine 协议 |
-| `AgentRuntimeError.swift` | 统一错误类型（19 种，5 个领域，6 个对齐 Apple 的 info structs） |
-| `RuntimeAgentTool.swift` | Tool 协议，带双关联类型（Arguments, Output） |
-| `Prompt.swift` | Prompt/PromptRepresentable/PromptBuilder + 多模态附件类型 |
-| `Instructions.swift` | Instructions 结构体 + InstructionsBuilder 结果构建器 |
-| `TranscriptErrorHandlingPolicy.swift` | 生成过程中的错误处理策略（工具错误、上下文溢出） |
-| `Usage.swift` | Token 用量（与 CC NonNullableUsage 对齐） |
-| `Response.swift` | Response 结构体 + ResponseStream 类型别名 |
-| `SubsystemStubs.swift` | NoOp 桩 + DefaultToolEngine actor |
-| `AgentPermissionBridge.swift` | 旧版 PermissionEngine 的 SessionPermissionEngine 适配器 |
-| `SQLiteMemoryStore.swift` | 基于 SQLite3 actor 的存储，含 schema 迁移 |
-| **Provider 文件** | |
-| `AnthropicProvider.swift` | Anthropic Messages API 提供者 |
-| `DeepSeekProvider.swift` | DeepSeek 双 API 提供者 |
-| `OpenAIProvider.swift` | OpenAI Chat Completions 提供者 |
-| `AnthropicSSEParser.swift` | Anthropic SSE 流解析器 |
-| `DeepSeekSSEParser.swift` | DeepSeek 双模式 SSE 解析器 |
-| `OpenAISSEParser.swift` | OpenAI Chat Completions SSE 解析器 |
-| `AnthropicTranscriptTranslator.swift` | Transcript → Anthropic 线路格式 |
-| `DeepSeekTranscriptTranslator.swift` | Transcript → DeepSeek 线路格式（两种模式） |
-| `OpenAITranscriptTranslator.swift` | Transcript → OpenAI 线路格式 |
-| `AnthropicContentAccumulator.swift` | 按索引的工具输入 JSON 累加器 |
-| **工具批次文件** | |
-| `Batch1ToolRegistry.swift` | 15 个只读工具 |
-| `Batch23ToolRegistry.swift` | 9 个文件/命令工具 |
-| `Batch45ToolRegistry.swift` | 36 个任务/Agent/MCP 工具 |
-| **集成文件** | |
-| `ThreadViewModel.swift` | App：会话创建、流处理、持久化 |
-| `AppViewModel.swift` | App：API Key、Provider 配置、会话工厂 |
-| `ChatCommand.swift` | CLI：会话创建、ANSI 渲染 |
+| 文件                                  | 用途                                                         |
+| ------------------------------------- | ------------------------------------------------------------ |
+| `LanguageModelSession.swift`          | 编排器协议 + ToolEngine + 3 个桩子系统协议                   |
+| `LanguageModelSessionImpl.swift`      | Actor 实现 — Agent 循环、工具执行、流式/非流式两条路径       |
+| `StreamingGenerationChannel.swift`    | 公开 actor — 带快照语义的 continuation 桥接                  |
+| `GenerationChannel.swift`             | 6 方法流式抽象协议                                           |
+| `SessionEvent.swift`                  | 与提供商无关的流式事件枚举                                   |
+| `Transcript.swift`                    | 可编解码对话历史（7 种条目类型）                             |
+| `LanguageModel.swift`                 | LanguageModel 协议 + LanguageModelCapabilities               |
+| `LanguageModelExecutor.swift`         | 执行器协议 + GenerationOptions + SessionToolDefinition       |
+| `AgentPermission.swift`               | 运行时权限枚举（13 种）+ SessionPermissionEngine 协议        |
+| `AgentRuntimeError.swift`             | 统一错误类型（19 种，5 个领域，6 个对齐 Apple 的 info structs） |
+| `RuntimeAgentTool.swift`              | Tool 协议，带双关联类型（Arguments, Output）                 |
+| `Prompt.swift`                        | Prompt/PromptRepresentable/PromptBuilder + 多模态附件类型    |
+| `Instructions.swift`                  | Instructions 结构体 + InstructionsBuilder 结果构建器         |
+| `TranscriptErrorHandlingPolicy.swift` | 生成过程中的错误处理策略（工具错误、上下文溢出）             |
+| `Usage.swift`                         | Token 用量（与 CC NonNullableUsage 对齐）                    |
+| `Response.swift`                      | Response 结构体 + ResponseStream 类型别名                    |
+| `SubsystemStubs.swift`                | NoOp 桩 + DefaultToolEngine actor                            |
+| `AgentPermissionBridge.swift`         | 旧版 PermissionEngine 的 SessionPermissionEngine 适配器      |
+| `SQLiteMemoryStore.swift`             | 基于 SQLite3 actor 的存储，含 schema 迁移                    |
+| **Provider 文件**                     |                                                              |
+| `AnthropicProvider.swift`             | Anthropic Messages API 提供者                                |
+| `DeepSeekProvider.swift`              | DeepSeek 双 API 提供者                                       |
+| `OpenAIProvider.swift`                | OpenAI Chat Completions 提供者                               |
+| `AnthropicSSEParser.swift`            | Anthropic SSE 流解析器                                       |
+| `DeepSeekSSEParser.swift`             | DeepSeek 双模式 SSE 解析器                                   |
+| `OpenAISSEParser.swift`               | OpenAI Chat Completions SSE 解析器                           |
+| `AnthropicTranscriptTranslator.swift` | Transcript → Anthropic 线路格式                              |
+| `DeepSeekTranscriptTranslator.swift`  | Transcript → DeepSeek 线路格式（两种模式）                   |
+| `OpenAITranscriptTranslator.swift`    | Transcript → OpenAI 线路格式                                 |
+| `AnthropicContentAccumulator.swift`   | 按索引的工具输入 JSON 累加器                                 |
+| **工具批次文件**                      |                                                              |
+| `Batch1ToolRegistry.swift`            | 15 个只读工具                                                |
+| `Batch23ToolRegistry.swift`           | 9 个文件/命令工具                                            |
+| `Batch45ToolRegistry.swift`           | 36 个任务/Agent/MCP 工具                                     |
+| **集成文件**                          |                                                              |
+| `ThreadViewModel.swift`               | App：会话创建、流处理、持久化                                |
+| `AppViewModel.swift`                  | App：API Key、Provider 配置、会话工厂                        |
+| `ChatCommand.swift`                   | CLI：会话创建、ANSI 渲染                                     |
