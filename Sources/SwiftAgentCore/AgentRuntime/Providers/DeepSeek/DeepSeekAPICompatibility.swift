@@ -5,6 +5,9 @@ import Foundation
 /// DeepSeek supports two wire formats:
 /// - Anthropic-compatible: POST /anthropic/v1/messages (same shape as Anthropic Messages API)
 /// - OpenAI-compatible:    POST /v1/chat/completions (Chat Completions format)
+///
+/// When DeepSeek adds Responses API support, switch `endpointPath` to `/v1/responses`
+/// and use the Responses API translators/parser instead of Chat Completions.
 public enum APICompatibility: Sendable {
     case anthropicCompatible
     case openAICompatible

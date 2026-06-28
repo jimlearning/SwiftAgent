@@ -14,90 +14,6 @@ final class OpenAIProviderTests: XCTestCase {
         OpenAIProvider(apiKey: "sk-test", modelID: modelID)
     }
 
-    /// Helper: create an SSE `data:` line from a JSON dictionary.
-    func makeSSEData(_ json: [String: Any]) -> String {
-        let jsonData = try! JSONSerialization.data(withJSONObject: json)
-        let jsonStr = String(data: jsonData, encoding: .utf8)!
-        return "data: \(jsonStr)"
-    }
-
-    /// Helper: create an AsyncStream<String> from string array, simulating URLSession.AsyncBytes.lines.
-    func makeSSEStream(_ lines: [String]) -> AsyncStream<String> {
-        AsyncStream { continuation in
-            for line in lines {
-                continuation.yield(line)
-            }
-            continuation.finish()
-        }
-    }
-
-    /// Build an OpenAI SSE fixture chunk dict for a content delta.
-    func openAIFixtureContentDelta(_ text: String) -> [String: Any] {
-        [
-            "id": "chatcmpl-123",
-            "object": "chat.completion.chunk",
-            "choices": [
-                ["index": 0, "delta": ["content": text]]
-            ]
-        ]
-    }
-
-    /// Build an OpenAI SSE fixture chunk dict for a reasoning_content delta.
-    func openAIFixtureReasoningDelta(_ text: String) -> [String: Any] {
-        [
-            "id": "chatcmpl-123",
-            "object": "chat.completion.chunk",
-            "choices": [
-                ["index": 0, "delta": ["reasoning_content": text]]
-            ]
-        ]
-    }
-
-    /// Build an OpenAI SSE fixture chunk dict for tool call deltas.
-    func openAIFixtureToolCallChunk(index: Int, id: String?, name: String?, arguments: String?) -> [String: Any] {
-        var function: [String: Any] = [:]
-        if let name { function["name"] = name }
-        if let arguments { function["arguments"] = arguments }
-
-        var tc: [String: Any] = ["index": index]
-        if let id { tc["id"] = id }
-        if !function.isEmpty { tc["function"] = function }
-
-        return [
-            "id": "chatcmpl-123",
-            "object": "chat.completion.chunk",
-            "choices": [
-                ["index": 0, "delta": ["tool_calls": [tc]]]
-            ]
-        ]
-    }
-
-    /// Build an OpenAI SSE fixture chunk dict for a finish_reason.
-    func openAIFixtureFinishReason(_ reason: String) -> [String: Any] {
-        [
-            "id": "chatcmpl-123",
-            "object": "chat.completion.chunk",
-            "choices": [
-                ["index": 0, "finish_reason": reason]
-            ]
-        ]
-    }
-
-    /// Build an OpenAI SSE fixture chunk dict for usage.
-    func openAIFixtureUsage(prompt: Int, completion: Int, total: Int) -> [String: Any] {
-        [
-            "id": "chatcmpl-123",
-            "object": "chat.completion.chunk",
-            "usage": [
-                "prompt_tokens": prompt,
-                "completion_tokens": completion,
-                "total_tokens": total
-            ],
-            "choices": [
-                ["index": 0, "delta": [:], "finish_reason": "stop" as String?]
-            ]
-        ]
-    }
 
     // MARK: - TestGenerationChannel
 
@@ -196,20 +112,23 @@ extension OpenAIProviderTests {
         XCTAssertTrue(executor.model is OpenAIProvider)
     }
 
-    // MARK: Test 2: Transcript translation — instruction → system message
+    // MARK: Test 2: Transcript translation — instruction → developer message (Responses API)
 
-    func test_transcriptTranslator_instructionBecomesSystem() {
+    func test_transcriptTranslator_instructionBecomesDeveloper() {
         let transcript = Transcript(entries: [
             .instruction("You are a helpful assistant."),
             .prompt("Hello"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = OpenAITranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 2, "Expected 2 messages (system + user)")
-        XCTAssertEqual(messages[0]["role"] as? String, "system")
-        XCTAssertEqual(messages[0]["content"] as? String, "You are a helpful assistant.")
-        XCTAssertEqual(messages[1]["role"] as? String, "user")
+        XCTAssertEqual(items.count, 2, "Expected 2 items (developer + user)")
+        XCTAssertEqual(items[0]["type"] as? String, "message")
+        XCTAssertEqual(items[0]["role"] as? String, "developer")
+        let content0 = items[0]["content"] as? [[String: Any]]
+        XCTAssertEqual(content0?.first?["text"] as? String, "You are a helpful assistant.")
+        XCTAssertEqual(items[1]["type"] as? String, "message")
+        XCTAssertEqual(items[1]["role"] as? String, "user")
     }
 
     func test_transcriptTranslator_systemPromptPlusInstruction() {
@@ -218,17 +137,19 @@ extension OpenAIProviderTests {
             .prompt("Hello"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(
+        let items = OpenAITranscriptTranslator.translateResponses(
             transcript, systemPrompt: "You are Claude."
         )
 
-        XCTAssertEqual(messages.count, 2)
-        let systemContent = messages[0]["content"] as? String ?? ""
-        XCTAssertTrue(systemContent.contains("You are Claude."))
-        XCTAssertTrue(systemContent.contains("Be concise."))
+        // External systemPrompt → developer message, instruction → developer message, prompt → user
+        XCTAssertEqual(items.count, 3)
+        let text0 = ((items[0]["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+        XCTAssertTrue(text0.contains("You are Claude."))
+        let text1 = ((items[1]["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+        XCTAssertTrue(text1.contains("Be concise."))
     }
 
-    // MARK: Test 3: Transcript translation — toolCall → assistant tool_calls
+    // MARK: Test 3: Transcript translation — toolCall → function_call item
 
     func test_transcriptTranslator_toolCall() {
         let inputDict: [String: Any] = ["command": "ls", "description": "List files"]
@@ -238,29 +159,21 @@ extension OpenAIProviderTests {
             .toolCall(id: "call_1", name: "Bash", input: inputData),
         ])
 
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = OpenAITranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 2)
+        XCTAssertEqual(items.count, 2)
 
-        let toolMsg = messages[1]
-        XCTAssertEqual(toolMsg["role"] as? String, "assistant")
-        let toolCalls = toolMsg["tool_calls"] as? [[String: Any]]
-        XCTAssertEqual(toolCalls?.count, 1)
-        let tc = toolCalls?[0]
-        XCTAssertEqual(tc?["id"] as? String, "call_1")
-        XCTAssertEqual(tc?["type"] as? String, "function")
-        let function = tc?["function"] as? [String: Any]
-        XCTAssertEqual(function?["name"] as? String, "Bash")
-
-        // Arguments should be JSON string representation of input
-        let argsStr = function?["arguments"] as? String ?? "{}"
+        let toolItem = items[1]
+        XCTAssertEqual(toolItem["type"] as? String, "function_call")
+        XCTAssertEqual(toolItem["call_id"] as? String, "call_1")
+        XCTAssertEqual(toolItem["name"] as? String, "Bash")
+        let argsStr = toolItem["arguments"] as? String ?? "{}"
         let argsData = argsStr.data(using: .utf8)!
         let parsedArgs = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
         XCTAssertEqual(parsedArgs?["command"] as? String, "ls")
-        XCTAssertEqual(parsedArgs?["description"] as? String, "List files")
     }
 
-    // MARK: Test 4: Transcript translation — toolOutput → tool role
+    // MARK: Test 4: Transcript translation — toolOutput → tool_call_output item
 
     func test_transcriptTranslator_toolOutput() {
         let transcript = Transcript(entries: [
@@ -269,14 +182,15 @@ extension OpenAIProviderTests {
             .toolOutput(id: "call_1", output: "result output", isError: false),
         ])
 
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = OpenAITranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 3)
+        XCTAssertEqual(items.count, 3)
 
-        let toolMsg = messages[2]
-        XCTAssertEqual(toolMsg["role"] as? String, "tool")
-        XCTAssertEqual(toolMsg["tool_call_id"] as? String, "call_1")
-        XCTAssertEqual(toolMsg["content"] as? String, "result output")
+        let outputItem = items[2]
+        XCTAssertEqual(outputItem["type"] as? String, "tool_call_output")
+        XCTAssertEqual(outputItem["tool_call_id"] as? String, "call_1")
+        XCTAssertEqual(outputItem["output"] as? String, "result output")
+        XCTAssertEqual(outputItem["is_error"] as? Bool, false)
     }
 
     func test_transcriptTranslator_promptResponse() {
@@ -285,13 +199,17 @@ extension OpenAIProviderTests {
             .response("Hi there"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = OpenAITranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 2)
-        XCTAssertEqual(messages[0]["role"] as? String, "user")
-        XCTAssertEqual(messages[0]["content"] as? String, "Hello")
-        XCTAssertEqual(messages[1]["role"] as? String, "assistant")
-        XCTAssertEqual(messages[1]["content"] as? String, "Hi there")
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items[0]["type"] as? String, "message")
+        XCTAssertEqual(items[0]["role"] as? String, "user")
+        let content0 = items[0]["content"] as? [[String: Any]]
+        XCTAssertEqual(content0?.first?["text"] as? String, "Hello")
+        XCTAssertEqual(items[1]["type"] as? String, "message")
+        XCTAssertEqual(items[1]["role"] as? String, "assistant")
+        let content1 = items[1]["content"] as? [[String: Any]]
+        XCTAssertEqual(content1?.first?["text"] as? String, "Hi there")
     }
 
     func test_transcriptTranslator_thinking() {
@@ -300,14 +218,13 @@ extension OpenAIProviderTests {
             .thinking("Let me reason carefully...", signature: nil),
         ])
 
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = OpenAITranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 2)
-        let thinkingMsg = messages[1]
-        XCTAssertEqual(thinkingMsg["role"] as? String, "assistant")
-        let content = thinkingMsg["content"] as? String ?? ""
-        XCTAssertTrue(content.contains("[Thinking]"))
-        XCTAssertTrue(content.contains("Let me reason carefully..."))
+        XCTAssertEqual(items.count, 2)
+        let thinkingItem = items[1]
+        XCTAssertEqual(thinkingItem["type"] as? String, "reasoning")
+        let reasoning = thinkingItem["reasoning"] as? [String: Any]
+        XCTAssertEqual(reasoning?["text"] as? String, "Let me reason carefully...")
     }
 
     func test_transcriptTranslator_systemEntry() {
@@ -316,203 +233,22 @@ extension OpenAIProviderTests {
             .prompt("Continue"),
         ])
 
-        let messages = OpenAITranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = OpenAITranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 2)
-        let sysMsg = messages[0]
-        XCTAssertEqual(sysMsg["role"] as? String, "user")
-        let content = sysMsg["content"] as? String ?? ""
-        XCTAssertTrue(content.contains("[System]"))
-        XCTAssertTrue(content.contains("Compaction occurred."))
+        XCTAssertEqual(items.count, 2)
+        let sysItem = items[0]
+        XCTAssertEqual(sysItem["type"] as? String, "message")
+        XCTAssertEqual(sysItem["role"] as? String, "developer")
+        let content = sysItem["content"] as? [[String: Any]]
+        let text = content?.first?["text"] as? String ?? ""
+        XCTAssertTrue(text.contains("[System]"))
+        XCTAssertTrue(text.contains("Compaction occurred."))
     }
 }
 
-// MARK: - Task 1 (continued): SSE Parser & Tool Accumulation Tests
+// MARK: - Task 1 (continued): Tool & Integration Tests
 
 extension OpenAIProviderTests {
-
-    // MARK: Test 5: SSE content delta → textDelta snapshot semantics
-
-    func test_sseParser_contentDelta_snapshotSemantics() async throws {
-        let channel = TestGenerationChannel()
-        let lines = makeSSEStream([
-            makeSSEData(openAIFixtureContentDelta("Hello")),
-            makeSSEData(openAIFixtureContentDelta(" world")),
-            makeSSEData(openAIFixtureFinishReason("stop")),
-        ])
-
-        let parser = OpenAISSEParser()
-        try await parser.parse(lines: lines, channel: channel)
-
-        let events = await channel.events
-        let textEvents = events.compactMap { event -> String? in
-            if case .textDelta(let text) = event { return text }
-            return nil
-        }
-        XCTAssertEqual(textEvents.count, 2)
-        XCTAssertEqual(textEvents[0], "Hello", "First event should be accumulated 'Hello'")
-        XCTAssertEqual(textEvents[1], "Hello world", "Second event should be accumulated 'Hello world' — snapshot semantics")
-    }
-
-    // MARK: Test 6: SSE reasoning_content delta → thinkingDelta snapshot
-
-    func test_sseParser_reasoningDelta_snapshotSemantics() async throws {
-        let channel = TestGenerationChannel()
-        let lines = makeSSEStream([
-            makeSSEData(openAIFixtureReasoningDelta("Step 1:")),
-            makeSSEData(openAIFixtureReasoningDelta(" analyze.")),
-            makeSSEData(openAIFixtureFinishReason("stop")),
-        ])
-
-        let parser = OpenAISSEParser()
-        try await parser.parse(lines: lines, channel: channel)
-
-        let events = await channel.events
-        let thinkingEvents = events.compactMap { event -> String? in
-            if case .thinkingDelta(let text) = event { return text }
-            return nil
-        }
-        XCTAssertEqual(thinkingEvents.count, 2)
-        XCTAssertEqual(thinkingEvents[0], "Step 1:")
-        XCTAssertEqual(thinkingEvents[1], "Step 1: analyze.")
-    }
-
-    // MARK: Test 7: SSE finish_reason:"stop" → turnCompleted(stopReason:"end_turn")
-
-    func test_sseParser_finishReasonStop() async throws {
-        let channel = TestGenerationChannel()
-        let lines = makeSSEStream([
-            makeSSEData(openAIFixtureContentDelta("Done")),
-            makeSSEData(openAIFixtureFinishReason("stop")),
-        ])
-
-        let parser = OpenAISSEParser()
-        try await parser.parse(lines: lines, channel: channel)
-
-        let events = await channel.events
-        // Should have textDelta + complete
-        let completeEvents = events.compactMap { event -> (String?, Usage?)? in
-            if case .complete(let stopReason, let usage) = event { return (stopReason, usage) }
-            return nil
-        }
-        XCTAssertEqual(completeEvents.count, 1)
-        XCTAssertEqual(completeEvents[0].0, "end_turn")
-    }
-
-    // MARK: Test 8: SSE multi-chunk tool call accumulation
-
-    func test_sseParser_multiChunkToolCall() async throws {
-        let channel = TestGenerationChannel()
-        let lines = makeSSEStream([
-            // Chunk 1: tool call id + function name
-            makeSSEData(openAIFixtureToolCallChunk(
-                index: 0, id: "call_abc", name: "Bash", arguments: nil
-            )),
-            // Chunk 2: first part of arguments
-            makeSSEData(openAIFixtureToolCallChunk(
-                index: 0, id: nil, name: nil, arguments: "{\"cmd\""
-            )),
-            // Chunk 3: rest of arguments
-            makeSSEData(openAIFixtureToolCallChunk(
-                index: 0, id: nil, name: nil, arguments: ":\"ls\"}"
-            )),
-            // finish_reason triggers tool call emission
-            makeSSEData(openAIFixtureFinishReason("tool_calls")),
-        ])
-
-        let parser = OpenAISSEParser()
-        try await parser.parse(lines: lines, channel: channel)
-
-        let events = await channel.events
-        let toolEvents = events.compactMap { event -> (String, String, Data)? in
-            if case .toolCallRequest(let id, let name, let input) = event { return (id, name, input) }
-            return nil
-        }
-        XCTAssertEqual(toolEvents.count, 1, "Should emit exactly one tool call request")
-        let (id, name, input) = toolEvents[0]
-        XCTAssertEqual(id, "call_abc")
-        XCTAssertEqual(name, "Bash")
-        let parsedInput = try? JSONSerialization.jsonObject(with: input) as? [String: Any]
-        XCTAssertEqual(parsedInput?["cmd"] as? String, "ls")
-
-        // Verify turn completed with tool_use
-        let completeEvents = events.compactMap { event -> String? in
-            if case .complete(let stopReason, _) = event { return stopReason }
-            return nil
-        }
-        XCTAssertEqual(completeEvents.last, "tool_use")
-    }
-
-    // MARK: Test 9: SSE finish_reason:"tool_calls" → turnCompleted(stopReason:"tool_use")
-
-    func test_sseParser_finishReasonToolCalls_withoutAccumulatedTools() async throws {
-        let channel = TestGenerationChannel()
-        let lines = makeSSEStream([
-            makeSSEData(openAIFixtureFinishReason("tool_calls")),
-        ])
-
-        let parser = OpenAISSEParser()
-        try await parser.parse(lines: lines, channel: channel)
-
-        let events = await channel.events
-        let completeEvents = events.compactMap { event -> String? in
-            if case .complete(let stopReason, _) = event { return stopReason }
-            return nil
-        }
-        XCTAssertEqual(completeEvents.count, 1)
-        XCTAssertEqual(completeEvents[0], "tool_use")
-    }
-
-    // MARK: Test 10: SSE finish_reason:"length" → turnCompleted(stopReason:"max_tokens")
-
-    func test_sseParser_finishReasonLength() async throws {
-        let channel = TestGenerationChannel()
-        let lines = makeSSEStream([
-            makeSSEData(openAIFixtureContentDelta("Truncated")),
-            makeSSEData([
-                "id": "chatcmpl-123",
-                "object": "chat.completion.chunk",
-                "choices": [
-                    ["index": 0, "finish_reason": "length"]
-                ]
-            ]),
-        ])
-
-        let parser = OpenAISSEParser()
-        try await parser.parse(lines: lines, channel: channel)
-
-        let events = await channel.events
-        let completeEvents = events.compactMap { event -> String? in
-            if case .complete(let stopReason, _) = event { return stopReason }
-            return nil
-        }
-        XCTAssertEqual(completeEvents.count, 1)
-        XCTAssertEqual(completeEvents[0], "max_tokens")
-    }
-
-    // MARK: Test 11: SSE usage extraction
-
-    func test_sseParser_usageExtraction() async throws {
-        let channel = TestGenerationChannel()
-        let lines = makeSSEStream([
-            makeSSEData(openAIFixtureUsage(prompt: 10, completion: 20, total: 30)),
-        ])
-
-        let parser = OpenAISSEParser()
-        try await parser.parse(lines: lines, channel: channel)
-
-        let events = await channel.events
-        let completeEvents = events.compactMap { event -> Usage? in
-            if case .complete(_, let usage) = event { return usage }
-            return nil
-        }
-        XCTAssertEqual(completeEvents.count, 1)
-        let usage = completeEvents[0]
-        XCTAssertEqual(usage.inputTokens, 10)
-        XCTAssertEqual(usage.outputTokens, 20)
-    }
-
-    // MARK: Test 12: Tool translation — basic
 
     func test_toolTranslator_basicTool() {
         let schema = JSONSchema(

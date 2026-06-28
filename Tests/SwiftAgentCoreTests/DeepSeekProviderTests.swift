@@ -277,7 +277,7 @@ extension DeepSeekProviderTests {
         ])
 
         let parser = DeepSeekSSEParser()
-        try await parser.parse(lines: lines, channel: channel, compatibility: .anthropicCompatible)
+        try await parser.parse(lines: lines, channel: channel)
 
         let events = await channel.events
         XCTAssertEqual(events.count, 2)
@@ -312,7 +312,7 @@ extension DeepSeekProviderTests {
         ])
 
         let parser = DeepSeekSSEParser()
-        try await parser.parse(lines: lines, channel: channel, compatibility: .anthropicCompatible)
+        try await parser.parse(lines: lines, channel: channel)
 
         let events = await channel.events
         let toolEvents = events.compactMap { event -> (String, String, Data)? in
@@ -340,7 +340,7 @@ extension DeepSeekProviderTests {
         ])
 
         let parser = DeepSeekSSEParser()
-        try await parser.parse(lines: lines, channel: channel, compatibility: .anthropicCompatible)
+        try await parser.parse(lines: lines, channel: channel)
 
         let events = await channel.events
         XCTAssertEqual(events.count, 1)
@@ -358,7 +358,7 @@ extension DeepSeekProviderTests {
 
 extension DeepSeekProviderTests {
 
-    // MARK: Test 7: OpenAICompat translation — toolCall mapping
+    // MARK: Test 7: OpenAICompat translation — toolCall mapping (Responses API)
 
     func test_transcriptTranslator_openAICompat_toolCall() {
         let inputDict: [String: Any] = ["command": "ls"]
@@ -368,28 +368,21 @@ extension DeepSeekProviderTests {
             .toolCall(id: "call_1", name: "Bash", input: inputData),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = DeepSeekTranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 2, "Expected user message + assistant tool call message")
-
-        let toolMsg = messages[1]
-        XCTAssertEqual(toolMsg["role"] as? String, "assistant")
-        let toolCalls = toolMsg["tool_calls"] as? [[String: Any]]
-        XCTAssertEqual(toolCalls?.count, 1)
-        let tc = toolCalls?[0]
-        XCTAssertEqual(tc?["id"] as? String, "call_1")
-        XCTAssertEqual(tc?["type"] as? String, "function")
-        let funcDict = tc?["function"] as? [String: Any]
-        XCTAssertEqual(funcDict?["name"] as? String, "Bash")
-        // Arguments should be JSON string
-        let argsStr = funcDict?["arguments"] as? String
+        XCTAssertEqual(items.count, 2, "Expected prompt + function_call items")
+        let toolItem = items[1]
+        XCTAssertEqual(toolItem["type"] as? String, "function_call")
+        XCTAssertEqual(toolItem["call_id"] as? String, "call_1")
+        XCTAssertEqual(toolItem["name"] as? String, "Bash")
+        let argsStr = toolItem["arguments"] as? String
         XCTAssertNotNil(argsStr)
         let argsData = argsStr?.data(using: .utf8)
         let argsDict = try? JSONSerialization.jsonObject(with: argsData ?? Data()) as? [String: Any]
         XCTAssertEqual(argsDict?["command"] as? String, "ls")
     }
 
-    // MARK: Test 8: OpenAICompat translation — toolOutput mapping
+    // MARK: Test 8: OpenAICompat translation — toolOutput mapping (Responses API)
 
     func test_transcriptTranslator_openAICompat_toolOutput() {
         let transcript = Transcript(entries: [
@@ -398,28 +391,30 @@ extension DeepSeekProviderTests {
             .toolOutput(id: "call_2", output: "result output", isError: false),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let items = DeepSeekTranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
 
-        XCTAssertEqual(messages.count, 3)
-
-        let outputMsg = messages[2]
-        XCTAssertEqual(outputMsg["role"] as? String, "tool")
-        XCTAssertEqual(outputMsg["tool_call_id"] as? String, "call_2")
-        XCTAssertEqual(outputMsg["content"] as? String, "result output")
+        XCTAssertEqual(items.count, 3)
+        let outputItem = items[2]
+        XCTAssertEqual(outputItem["type"] as? String, "tool_call_output")
+        XCTAssertEqual(outputItem["tool_call_id"] as? String, "call_2")
+        XCTAssertEqual(outputItem["output"] as? String, "result output")
+        XCTAssertEqual(outputItem["is_error"] as? Bool, false)
     }
 
-    func test_transcriptTranslator_openAICompat_instructionBecomesSystemMessage() {
+    func test_transcriptTranslator_openAICompat_instructionBecomesDeveloperMessage() {
         let transcript = Transcript(entries: [
             .instruction("You are helpful."),
             .prompt("Hello"),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
-        XCTAssertEqual(messages.count, 2)
+        let items = DeepSeekTranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
+        XCTAssertEqual(items.count, 2)
 
-        let systemMsg = messages[0]
-        XCTAssertEqual(systemMsg["role"] as? String, "system")
-        XCTAssertEqual(systemMsg["content"] as? String, "You are helpful.")
+        let developerItem = items[0]
+        XCTAssertEqual(developerItem["type"] as? String, "message")
+        XCTAssertEqual(developerItem["role"] as? String, "developer")
+        let content = developerItem["content"] as? [[String: Any]]
+        XCTAssertEqual(content?.first?["text"] as? String, "You are helpful.")
     }
 
     func test_transcriptTranslator_openAICompat_thinkingAndSystem() {
@@ -429,228 +424,21 @@ extension DeepSeekProviderTests {
             .system("Compacted."),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
-        XCTAssertEqual(messages.count, 3)
+        let items = DeepSeekTranscriptTranslator.translateResponses(transcript, systemPrompt: nil)
+        XCTAssertEqual(items.count, 3)
 
-        // .thinking -> assistant with reasoning_content
-        let thinkingMsg = messages[1]
-        XCTAssertEqual(thinkingMsg["role"] as? String, "assistant")
-        XCTAssertEqual(thinkingMsg["reasoning_content"] as? String, "Let me think.")
+        // .thinking -> reasoning item
+        let thinkingItem = items[1]
+        XCTAssertEqual(thinkingItem["type"] as? String, "reasoning")
+        let reasoning = thinkingItem["reasoning"] as? [String: Any]
+        XCTAssertEqual(reasoning?["text"] as? String, "Let me think.")
 
-        // .system -> user with "[System]" prefix
-        let sysMsg = messages[2]
-        XCTAssertEqual(sysMsg["role"] as? String, "user")
-        XCTAssertEqual(sysMsg["content"] as? String, "[System] Compacted.")
-    }
-
-    // MARK: Test 9: OpenAICompat SSE — text delta snapshots
-
-    func test_sseParser_openAICompat_textDeltaSnapshots() async throws {
-        let channel = TestGenerationChannel()
-        // Omit finish_reason when nil — valid SSE chunks don't include it
-        let chunk1: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["content": "Hello"]],
-            ],
-        ]
-        let chunk2: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["content": " world"], "finish_reason": "stop"],
-            ],
-        ]
-        let lines = makeSSEStream([
-            makeSSEData(chunk1),
-            makeSSEData(chunk2),
-        ])
-
-        let parser = DeepSeekSSEParser()
-        try await parser.parse(lines: lines, channel: channel, compatibility: .openAICompatible)
-
-        let events = await channel.events
-        // Should have textDelta events + complete
-        let textEvents = events.compactMap { event -> String? in
-            if case .textDelta(let text) = event { return text }
-            return nil
-        }
-        XCTAssertEqual(textEvents.count, 2)
-        XCTAssertEqual(textEvents[0], "Hello")
-        XCTAssertEqual(textEvents[1], "Hello world")
-
-        let completeEvents = events.compactMap { event -> (String?, Usage?)? in
-            if case .complete(let reason, let usage) = event { return (reason, usage) }
-            return nil
-        }
-        XCTAssertEqual(completeEvents.count, 1, "Should have one turn completed event")
-        XCTAssertEqual(completeEvents[0].0, "end_turn", "stop -> end_turn mapping")
-    }
-
-    // MARK: Test 10: OpenAICompat SSE — R1 reasoning_content -> thinkingDelta
-
-    func test_sseParser_openAICompat_reasoningToThinkingDelta() async throws {
-        let channel = TestGenerationChannel()
-        let chunk1: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["reasoning_content": "Step 1: analyze"]],
-            ],
-        ]
-        let chunk2: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["reasoning_content": " the problem"]],
-            ],
-        ]
-        let chunk3: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["content": "Answer"], "finish_reason": "stop"],
-            ],
-        ]
-        let lines = makeSSEStream([
-            makeSSEData(chunk1),
-            makeSSEData(chunk2),
-            makeSSEData(chunk3),
-        ])
-
-        let parser = DeepSeekSSEParser()
-        try await parser.parse(lines: lines, channel: channel, compatibility: .openAICompatible)
-
-        let events = await channel.events
-        let thinkingEvents = events.compactMap { event -> String? in
-            if case .thinkingDelta(let text) = event { return text }
-            return nil
-        }
-        XCTAssertEqual(thinkingEvents.count, 2)
-        XCTAssertEqual(thinkingEvents[0], "Step 1: analyze")
-        XCTAssertEqual(thinkingEvents[1], "Step 1: analyze the problem")
-
-        // Should also have text delta and turn completed
-        let textEvents = events.compactMap { event -> String? in
-            if case .textDelta(let text) = event { return text }
-            return nil
-        }
-        XCTAssertEqual(textEvents.count, 1)
-        XCTAssertEqual(textEvents[0], "Answer")
-    }
-
-    // MARK: Test 11: OpenAICompat SSE — multi-chunk tool call accumulation
-
-    func test_sseParser_openAICompat_multiChunkToolCall() async throws {
-        let channel = TestGenerationChannel()
-
-        // Simulate 3 chunks building up a tool call
-        let toolCallDelta1: [String: Any] = ["index": 0, "id": "call_1", "type": "function",
-                                             "function": ["name": "Bash", "arguments": "{\"cmd\""]]
-        let toolCallDelta2: [String: Any] = ["index": 0, "function": ["arguments": ":\"ls\"}"]]
-        let chunk1: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["tool_calls": [toolCallDelta1]]],
-            ],
-        ]
-        let chunk2: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["tool_calls": [toolCallDelta2]]],
-            ],
-        ]
-        let chunk3: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": [:], "finish_reason": "tool_calls"],
-            ],
-        ]
-
-        let lines = makeSSEStream([
-            makeSSEData(chunk1),
-            makeSSEData(chunk2),
-            makeSSEData(chunk3),
-        ])
-
-        let parser = DeepSeekSSEParser()
-        try await parser.parse(lines: lines, channel: channel, compatibility: .openAICompatible)
-
-        let events = await channel.events
-
-        // Should have one toolCallRequest event with accumulated arguments
-        let toolEvents = events.compactMap { event -> (String, String, Data)? in
-            if case .toolCallRequest(let id, let name, let input) = event {
-                return (id, name, input)
-            }
-            return nil
-        }
-        XCTAssertEqual(toolEvents.count, 1, "Should emit exactly one tool call request for accumulated multi-chunk arguments")
-        let (id, name, input) = toolEvents[0]
-        XCTAssertEqual(id, "call_1")
-        XCTAssertEqual(name, "Bash")
-        let parsed = try? JSONSerialization.jsonObject(with: input) as? [String: Any]
-        XCTAssertEqual(parsed?["cmd"] as? String, "ls")
-
-        // Should also have turn completed with stopReason "tool_use"
-        let completeEvents = events.compactMap { event -> (String?, Usage?)? in
-            if case .complete(let reason, let usage) = event { return (reason, usage) }
-            return nil
-        }
-        XCTAssertEqual(completeEvents.count, 1)
-        XCTAssertEqual(completeEvents[0].0, "tool_use")
-    }
-
-    // MARK: Test 12: Cross-path equivalence
-
-    func test_crossPathEquivalence() async throws {
-        // Same Transcript fed through both compat paths produces equivalent SessionEvent sequences.
-        let transcript = Transcript(entries: [
-            .prompt("Hello"),
-            .response("Hi there!"),
-        ])
-
-        let lines: [String] = [
-            makeSSEData(["type": "content_block_delta", "index": 0,
-                         "delta": ["type": "text_delta", "text": "Hi there!"]]),
-            makeSSEData(["type": "message_delta",
-                         "delta": ["stop_reason": "end_turn"],
-                         "usage": ["input_tokens": 5, "output_tokens": 3]]),
-        ]
-
-        // AnthropicCompat path
-        let channelAC = TestGenerationChannel()
-        let parserAC = DeepSeekSSEParser()
-        try await parserAC.parse(lines: makeSSEStream(lines), channel: channelAC, compatibility: .anthropicCompatible)
-
-        // OpenAICompat path — same text content
-        let openAIChunk: [String: Any] = [
-            "choices": [
-                ["index": 0, "delta": ["content": "Hi there!"], "finish_reason": "stop"],
-            ],
-        ]
-        let openAILines: [String] = [makeSSEData(openAIChunk)]
-        let channelOA = TestGenerationChannel()
-        let parserOA = DeepSeekSSEParser()
-        try await parserOA.parse(lines: makeSSEStream(openAILines), channel: channelOA, compatibility: .openAICompatible)
-
-        let eventsAC = await channelAC.events
-        let eventsOA = await channelOA.events
-
-        // Both paths should have textDelta(s) + a complete event
-        let textAC = eventsAC.compactMap { event -> String? in
-            if case .textDelta(let t) = event { return t }
-            return nil
-        }
-        let textOA = eventsOA.compactMap { event -> String? in
-            if case .textDelta(let t) = event { return t }
-            return nil
-        }
-
-        XCTAssertFalse(textAC.isEmpty, "AnthropicCompat should have text deltas")
-        XCTAssertFalse(textOA.isEmpty, "OpenAICompat should have text deltas")
-        // The final accumulated text should be equivalent
-        XCTAssertEqual(textAC.last, "Hi there!")
-        XCTAssertEqual(textOA.last, "Hi there!")
-
-        let completeAC = eventsAC.compactMap { event -> String? in
-            if case .complete(let reason, _) = event { return reason }
-            return nil
-        }
-        let completeOA = eventsOA.compactMap { event -> String? in
-            if case .complete(let reason, _) = event { return reason }
-            return nil
-        }
-        XCTAssertEqual(completeAC.count, 1)
-        XCTAssertEqual(completeOA.count, 1)
+        // .system -> developer message with "[System]" prefix
+        let sysItem = items[2]
+        XCTAssertEqual(sysItem["type"] as? String, "message")
+        XCTAssertEqual(sysItem["role"] as? String, "developer")
+        let sysContent = sysItem["content"] as? [[String: Any]]
+        XCTAssertTrue((sysContent?.first?["text"] as? String ?? "").contains("[System]"))
     }
 
     // MARK: Test 13: LanguageModelSessionImpl integration
@@ -721,7 +509,7 @@ extension DeepSeekProviderTests {
             SessionToolDefinition(name: "Bash", description: "Run a shell command", parameters: schema),
         ]
 
-        let result = DeepSeekToolTranslator.translateChatCompletions(tools)
+        let result = DeepSeekToolTranslator.translateResponses(tools)
         XCTAssertEqual(result.count, 1)
 
         let tool = result[0]
@@ -745,7 +533,7 @@ extension DeepSeekProviderTests {
             SessionToolDefinition(name: "Simple", description: "Simple tool", parameters: schema),
         ]
 
-        let result = DeepSeekToolTranslator.translateChatCompletions(tools)
+        let result = DeepSeekToolTranslator.translateResponses(tools)
         XCTAssertEqual(result.count, 1)
 
         let function = result[0]["function"] as? [String: Any]
@@ -759,16 +547,16 @@ extension DeepSeekProviderTests {
             .prompt("Hello"),
         ])
 
-        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(
+        let items = DeepSeekTranscriptTranslator.translateResponses(
             transcript,
             systemPrompt: "You are an assistant."
         )
 
-        let systemMsg = messages[0]
-        XCTAssertEqual(systemMsg["role"] as? String, "system")
-        let content = systemMsg["content"] as? String
-        XCTAssertNotNil(content)
-        XCTAssertTrue(content?.contains("You are an assistant.") ?? false)
-        XCTAssertTrue(content?.contains("Be concise.") ?? false)
+        // External systemPrompt → developer[0], instruction → developer[1], prompt → user[2]
+        XCTAssertEqual(items.count, 3)
+        let text0 = ((items[0]["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+        XCTAssertTrue(text0.contains("You are an assistant."))
+        let text1 = ((items[1]["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+        XCTAssertTrue(text1.contains("Be concise."))
     }
 }

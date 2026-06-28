@@ -318,25 +318,31 @@ All three providers follow the same pattern:
 
 `Providers/DeepSeek/DeepSeekProvider.swift:15` — dual API compatibility via `APICompatibility` enum:
 
-| Mode | Endpoint | Transcript Translator |
-|------|----------|----------------------|
-| `.anthropicCompatible` | `/anthropic/v1/messages` | `translateAnthropicCompat()` |
-| `.openAICompatible` | `/v1/chat/completions` | `translateOpenAICompat()` |
+| Mode | Endpoint | Transcript Translator | SSE Parser |
+|------|----------|----------------------|------------|
+| `.anthropicCompatible` | `/anthropic/v1/messages` | `translateAnthropicCompat()` | `DeepSeekSSEParser` (→`AnthropicSSEParser`) |
+| `.openAICompatible` | `/v1/chat/completions` | `translateChatCompletions()` | `ChatCompletionsSSEParser` |
+
+Both translators delegate to canonical implementations with DeepSeek-specific post-processing:
+- `translateAnthropicCompat` → `AnthropicTranscriptTranslator.translate` then strips `cache_control` keys and empty `signature` from thinking blocks.
+- `translateChatCompletions` → `OpenAITranscriptTranslator.translateChatCompletions`.
+- `DeepSeekToolTranslator` follows the same delegation pattern to `AnthropicToolTranslator` and `OpenAIToolTranslator`.
 
 Key differences from Anthropic:
 - Strips `anthropic-beta` header and `cache_control` markers (DeepSeek rejects them).
-- Thinking blocks preserved as `{"type": "thinking", "thinking": text}` in Anthropic mode, `reasoning_content` in OpenAI mode.
+- Thinking blocks preserved as `{"type": "thinking", "thinking": text}` in Anthropic mode, `reasoning_content` in Chat Completions mode (required by DeepSeek for re-prompt validation).
+- `translateResponses` kept for future use when DeepSeek adds Responses API support.
 - Models: `deepseek-v4-pro` (128K ctx, 32K output), `deepseek-v4-flash` (128K ctx, 8K output), `deepseek-chat`, `deepseek-reasoner`.
 
 ### 4.4 OpenAIProvider
 
-`Providers/OpenAI/OpenAIProvider.swift:8` — targets `/v1/chat/completions`.
+`Providers/OpenAI/OpenAIProvider.swift:8` — targets `/v1/responses` (OpenAI Responses API, 2025+).
 
-- **Transcript translation**: `OpenAITranscriptTranslator` — Chat Completions format (role/content with tool_calls array).
-- **Tool translation**: `OpenAIToolTranslator` — OpenAI `tools` parameter format with `function` type.
-- **SSE parsing**: `OpenAISSEParser` — Chat Completions SSE chunks (`choices[0].delta`).
+- **Transcript translation**: `OpenAITranscriptTranslator.translateResponses` — Responses API typed items (message, reasoning, function_call, tool_call_output).
+- **Tool translation**: `OpenAIToolTranslator.translateResponses` — `{"type": "function", "function": {name, description, parameters}}`.
+- **SSE parsing**: `ResponsesSSEParser` — event-based SSE (`response.output_text.delta`, `response.function_call_arguments.delta`, `response.completed`).
 - **o4 reasoning**: Maps `reasoningBudget` to `reasoning_effort` ("low"/"medium"/"high"), omits temperature for reasoning models.
-- **Stream options**: Includes `stream_options: ["include_usage": true]` for per-chunk usage reporting.
+- **Chat Completions support**: Both `OpenAITranscriptTranslator` and `OpenAIToolTranslator` also expose `translateChatCompletions` for providers using the legacy format (e.g. DeepSeek `openAICompatible`).
 
 ---
 
@@ -358,20 +364,24 @@ Thread safety: `recordedToolCalls` and `accumulatedText`/`accumulatedThinking` a
 Each provider has its own SSE parser, but all share the same output interface (they write to `GenerationChannel`):
 
 - **`AnthropicSSEParser`** — Parses Anthropic SSE events: `content_block_start` (registers tool call), `content_block_delta` (text/thinking/input_json), `content_block_stop` (finalizes tool call), `message_delta` (usage/stop_reason), `error`.
-- **`DeepSeekSSEParser`** — Dual-mode parser dispatching on `APICompatibility`. Anthropic-compat mode delegates to `AnthropicSSEParser`; OpenAI-compat mode handles Chat Completions chunks with `reasoning_content`.
-- **`OpenAISSEParser`** — Parses OpenAI Chat Completions SSE: `choices[0].delta.content` → text, `choices[0].delta.tool_calls` → tool call, `choices[0].finish_reason` → complete, `usage` → usage tracking.
+- **`DeepSeekSSEParser`** — Anthropic-compat only; delegates entirely to `AnthropicSSEParser`. The Chat Completions path uses `ChatCompletionsSSEParser` directly.
+- **`ResponsesSSEParser`** — Parses OpenAI Responses API event-based SSE: `response.output_text.delta`, `response.reasoning.delta`, `response.function_call_arguments.delta`, `response.output_item.done`, `response.completed`.
+- **`ChatCompletionsSSEParser`** — Parses Chat Completions SSE: `choices[0].delta.content` → text, `choices[0].delta.reasoning_content` → thinking, `choices[0].delta.tool_calls` → tool call, `choices[0].finish_reason` → complete. Used by DeepSeek `openAICompatible` mode.
 
 ### 5.3 Transcript Translators
 
 Pure functions converting `Transcript` → provider-specific wire format:
 
-| Translator | Input | Output |
-|------------|-------|--------|
-| `AnthropicTranscriptTranslator` | Transcript | `(messages: [[String: Any]], system: Any?)` |
-| `DeepSeekTranscriptTranslator` | Transcript | Same (both compat modes) |
-| `OpenAITranscriptTranslator` | Transcript | `[[String: Any]]` |
+| Translator | Input | Output | Format |
+|------------|-------|--------|--------|
+| `AnthropicTranscriptTranslator.translate` | Transcript | `(messages, system)` | Anthropic Messages API |
+| `DeepSeekTranscriptTranslator.translateAnthropicCompat` | Transcript | `(messages, system)` | Anthropic Messages (delegates + strips cache_control) |
+| `DeepSeekTranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions (delegates to `OpenAITranscriptTranslator`) |
+| `DeepSeekTranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API (delegates to `OpenAITranscriptTranslator`) |
+| `OpenAITranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions messages[] with role-flushing |
+| `OpenAITranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API typed input items |
 
-All translators include role-flushing logic: consecutive same-role entries are merged into one message; role changes (user↔assistant) or tool boundaries trigger a flush.
+All translators include role-flushing logic: consecutive same-role entries are merged into one message; role changes (user↔assistant) or tool boundaries trigger a flush. DeepSeek translators delegate to canonical Anthropic/OpenAI translators with format-specific post-processing.
 
 ---
 

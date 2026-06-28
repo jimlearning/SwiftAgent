@@ -191,7 +191,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         request.timeoutInterval = 600
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("2026-06-01", forHTTPHeaderField: "anthropic-version")
         // CRITICAL: NO anthropic-beta header (PITFALLS.md Pitfall 1).
         // DeepSeek's endpoint silently rejects Anthropic beta headers.
 
@@ -211,7 +211,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
             }
         }
 
-        try await streamAndParse(request: request, channel: channel, compatibility: compatibility)
+        try await streamAndParse(request: request, channel: channel)
     }
 
     // MARK: - OpenAI-Compatible Streaming
@@ -222,11 +222,8 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         options: GenerationOptions,
         channel: GenerationChannel
     ) async throws {
-        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(
-            transcript,
-            systemPrompt: nil
-        )
-        let toolDefs = tools.isEmpty ? nil : DeepSeekToolTranslator.translateChatCompletions(tools)
+        let messages = DeepSeekTranscriptTranslator.translateChatCompletions(transcript, systemPrompt: nil)
+        let toolDefs = DeepSeekToolTranslator.translateChatCompletions(tools)
 
         // Build Chat Completions request body
         var body: [String: Any] = [
@@ -240,12 +237,12 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         if let temperature = options.temperature {
             body["temperature"] = temperature
         }
-        if let toolDefs {
+        if !toolDefs.isEmpty {
             body["tools"] = toolDefs
         }
 
-        // Construct URL: {baseURL}/v1/chat/completions
-        let url = baseURL.appendingPathComponent("v1/chat/completions")
+        // Construct URL via endpoint path (currently /v1/chat/completions)
+        let url = baseURL.appendingPathComponent(compatibility.endpointPath)
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -264,7 +261,37 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
             print("[DeepSeekProvider] openAI request: \(bodyStr.prefix(3000))")
         }
 
-        try await streamAndParse(request: request, channel: channel, compatibility: compatibility)
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                var errorBody: String? = nil
+                var errorData = Data()
+                do {
+                    for try await byte in bytes.prefix(4096) {
+                        errorData.append(byte)
+                    }
+                    errorBody = String(data: errorData, encoding: .utf8)
+                } catch {}
+                print("[DeepSeekProvider] HTTP \(status): \(errorBody ?? "no body")")
+                await channel.fail(with: .serverError(statusCode: status, body: errorBody))
+                return
+            }
+
+            let parser = ChatCompletionsSSEParser()
+            try await parser.parse(lines: bytes.lines, channel: channel)
+        } catch let error as AgentRuntimeError {
+            await channel.fail(with: error)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorTimedOut {
+                await channel.fail(with: .timeout(.init(duration: nil)))
+            } else {
+                await channel.fail(with: .serverError(statusCode: 0, body: error.localizedDescription))
+            }
+        }
     }
 
     // MARK: - Shared Stream + Parse
@@ -272,8 +299,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
     /// Execute the URLRequest, stream SSE lines, and parse through DeepSeekSSEParser.
     private func streamAndParse(
         request: URLRequest,
-        channel: GenerationChannel,
-        compatibility: APICompatibility
+        channel: GenerationChannel
     ) async throws {
         do {
             let (bytes, response) = try await session.bytes(for: request)
@@ -296,7 +322,7 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
             }
 
             let parser = DeepSeekSSEParser()
-            try await parser.parse(lines: bytes.lines, channel: channel, compatibility: compatibility)
+            try await parser.parse(lines: bytes.lines, channel: channel)
         } catch let error as AgentRuntimeError {
             await channel.fail(with: error)
         } catch {

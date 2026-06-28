@@ -1,26 +1,19 @@
 import Foundation
 
-/// Translates SessionToolDefinition values into OpenAI wire formats for both
-/// Responses API and Chat Completions.
+/// Translates SessionToolDefinition values into OpenAI Responses API tool format.
 /// Pure-functional: no mutable state, no side effects.
 ///
-/// Responses API tool format (same struct, explicit naming):
-/// → [{type: "function", function: {name, description, parameters}}]
-///
-/// Chat Completions tool format (identical structure, legacy naming):
-/// → [{type: "function", function: {name, description, parameters}}]
+/// Output: [{type: "function", function: {name, description, parameters}}]
 struct OpenAIToolTranslator: Sendable {
 
-    /// Convert SessionToolDefinition to Responses API tool format.
-    /// Responses API uses the same function-calling struct as Chat Completions,
-    /// but named explicitly for forward compatibility (additional tool types like
-    /// `computer_use`, `web_search`, `file_search` are Responses API-only).
-    static func translateResponses(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
+    /// Convert SessionToolDefinition to Chat Completions tool format.
+    /// The tool shape is identical to Responses API (both use `type: "function"`).
+    static func translateChatCompletions(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
         tools.map(buildFunctionTool)
     }
 
-    /// Convert SessionToolDefinition to Chat Completions function-calling format (legacy).
-    static func translateChatCompletions(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
+    /// Convert SessionToolDefinition to Responses API tool format.
+    static func translateResponses(_ tools: [SessionToolDefinition]) -> [[String: Any]] {
         tools.map(buildFunctionTool)
     }
 
@@ -51,10 +44,4 @@ struct OpenAIToolTranslator: Sendable {
         ]
     }
 
-    // MARK: - Deprecated
-
-    @available(*, deprecated, renamed: "translateChatCompletions")
-    static func translate(_ tools: [SessionToolDefinition], enableStrictMode: Bool = false) -> [[String: Any]] {
-        translateChatCompletions(tools)
-    }
 }

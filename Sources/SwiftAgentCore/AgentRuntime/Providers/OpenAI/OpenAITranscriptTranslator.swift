@@ -1,15 +1,126 @@
 import Foundation
 
-/// Translates Transcript entries into OpenAI wire formats.
-///
-/// Provides two translation paths:
-/// - `translateResponses()`: Responses API format (recommended for new projects, 2026+).
-///   Outputs typed items in an `input` array: message, reasoning, function_call, tool_call_output.
-/// - `translateChatCompletions()`: Legacy Chat Completions format (messages[] array).
-///   Kept for backward compatibility with older endpoints.
+/// Translates Transcript entries into OpenAI wire format for both
+/// Chat Completions and Responses API.
 ///
 /// Pure-functional: no mutable state, no side effects. Independently testable.
 struct OpenAITranscriptTranslator: Sendable {
+
+    // MARK: - Chat Completions API
+
+    /// Translate Transcript into Chat Completions `messages[]` format.
+    ///
+    /// Uses role-flushing to batch consecutive assistant entries (response,
+    /// thinking, toolCall) into a single assistant message.
+    ///
+    /// Mapping:
+    ///  .instruction       → system role
+    ///  .prompt            → user role
+    ///  .response          → assistant content (accumulated with tool_calls)
+    ///  .toolCall          → assistant tool_calls (accumulated with content)
+    ///  .toolOutput        → tool role with tool_call_id
+    ///  .thinking          → assistant reasoning_content (DeepSeek requirement)
+    ///  .system            → user with [System] prefix
+    ///
+    /// - Returns: Array of Chat Completions message dicts.
+    static func translateChatCompletions(
+        _ transcript: Transcript,
+        systemPrompt: String?
+    ) -> [[String: Any]] {
+        var messages: [[String: Any]] = []
+        var systemParts: [String] = []
+        var currentContent: String?
+        var currentReasoning: String?
+        var currentToolCalls: [[String: Any]] = []
+
+        func flushAssistant() {
+            guard currentContent != nil || currentReasoning != nil || !currentToolCalls.isEmpty else { return }
+            var msg: [String: Any] = ["role": "assistant"]
+            if currentToolCalls.isEmpty {
+                msg["content"] = currentContent ?? ""
+            } else {
+                msg["content"] = currentContent
+                msg["tool_calls"] = currentToolCalls
+            }
+            if let reasoning = currentReasoning {
+                msg["reasoning_content"] = reasoning
+            }
+            messages.append(msg)
+            currentContent = nil
+            currentReasoning = nil
+            currentToolCalls = []
+        }
+
+        for entry in transcript.entries {
+            switch entry {
+            case .instruction(let text):
+                systemParts.append(text)
+
+            case .prompt(let text):
+                flushAssistant()
+                messages.append(["role": "user", "content": text])
+
+            case .response(let text):
+                flushAssistant()
+                currentContent = text
+
+            case .toolCall(let id, let name, let input):
+                if currentContent == nil && currentReasoning == nil {
+                    flushAssistant()
+                }
+                let argsStr = (try? JSONSerialization.jsonObject(with: input))
+                    .flatMap { try? JSONSerialization.data(withJSONObject: $0, options: .sortedKeys) }
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                currentToolCalls.append([
+                    "id": id,
+                    "type": "function",
+                    "function": ["name": name, "arguments": argsStr],
+                ])
+
+            case .toolOutput(let id, let output, let isError):
+                flushAssistant()
+                var msg: [String: Any] = [
+                    "role": "tool",
+                    "tool_call_id": id,
+                    "content": output,
+                ]
+                if isError { msg["is_error"] = true }
+                messages.append(msg)
+
+            case .thinking(let text, _):
+                // DeepSeek reasoning models require `reasoning_content` to be
+                // passed back verbatim on re-prompt. Flush only if preceding
+                // role is not already assistant, so thinking batches with the
+                // same assistant turn.
+                if currentContent != nil || !currentToolCalls.isEmpty {
+                    // Already accumulating an assistant message — add reasoning alongside.
+                    currentReasoning = text
+                } else {
+                    flushAssistant()
+                    currentReasoning = text
+                }
+
+            case .system(let text):
+                flushAssistant()
+                messages.append(["role": "user", "content": "[System] \(text)"])
+            }
+        }
+        flushAssistant()
+
+        // Prepend external system prompt + instruction parts as system message
+        var systemPartsAll = systemParts
+        if let prompt = systemPrompt, !prompt.isEmpty {
+            systemPartsAll.insert(prompt, at: 0)
+        }
+        if !systemPartsAll.isEmpty {
+            messages.insert([
+                "role": "system",
+                "content": systemPartsAll.joined(separator: "\n\n"),
+            ], at: 0)
+        }
+
+        return messages
+    }
 
     // MARK: - Responses API (Recommended)
 
@@ -81,94 +192,6 @@ struct OpenAITranscriptTranslator: Sendable {
         }
 
         return items
-    }
-
-    // MARK: - Chat Completions (Legacy)
-
-    /// Translate Transcript into Chat Completions messages[] array.
-    ///
-    /// Legacy format: flat message array where one entry maps to one message.
-    /// Prefer `translateResponses()` for new projects.
-    ///
-    /// - Returns: Array of message dicts, each with "role" and "content" keys.
-    static func translateChatCompletions(
-        _ transcript: Transcript,
-        systemPrompt: String?
-    ) -> [[String: Any]] {
-        var messages: [[String: Any]] = []
-
-        // Collect all instruction entries to build a single system message at the start.
-        var systemParts: [String] = []
-        for entry in transcript.entries {
-            if case .instruction(let text) = entry {
-                systemParts.append(text)
-            }
-        }
-
-        // Build system message: external systemPrompt prepended to transcript instructions
-        var effectiveSystem: String?
-        if let external = systemPrompt {
-            var parts = [external]
-            parts.append(contentsOf: systemParts)
-            effectiveSystem = parts.joined(separator: "\n\n")
-        } else if !systemParts.isEmpty {
-            effectiveSystem = systemParts.joined(separator: "\n\n")
-        }
-
-        if let system = effectiveSystem, !system.isEmpty {
-            messages.append(["role": "system", "content": system])
-        }
-
-        // Translate each entry to a single message (flat array, one entry → one message)
-        for entry in transcript.entries {
-            switch entry {
-            case .instruction:
-                break // Already handled above
-
-            case .prompt(let text):
-                messages.append(["role": "user", "content": text])
-
-            case .response(let text):
-                messages.append(["role": "assistant", "content": text])
-
-            case .toolCall(let id, let name, let input):
-                let args = String(data: input, encoding: .utf8) ?? "{}"
-                messages.append([
-                    "role": "assistant",
-                    "tool_calls": [[
-                        "id": id,
-                        "type": "function",
-                        "function": [
-                            "name": name,
-                            "arguments": args,
-                        ],
-                    ]],
-                ])
-
-            case .toolOutput(let id, let output, let isError):
-                _ = isError
-                messages.append([
-                    "role": "tool",
-                    "tool_call_id": id,
-                    "content": output,
-                ])
-
-            case .thinking(let text, _):
-                messages.append(["role": "assistant", "content": "[Thinking] \(text)"])
-
-            case .system(let text):
-                messages.append(["role": "user", "content": "[System] \(text)"])
-            }
-        }
-
-        return messages
-    }
-
-    // MARK: - Deprecated (renamed to translateChatCompletions)
-
-    @available(*, deprecated, renamed: "translateChatCompletions")
-    static func translate(_ transcript: Transcript, systemPrompt: String?) -> [[String: Any]] {
-        translateChatCompletions(transcript, systemPrompt: systemPrompt)
     }
 
     // MARK: - Helpers
