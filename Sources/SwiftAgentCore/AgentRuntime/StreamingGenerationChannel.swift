@@ -42,6 +42,11 @@ public actor StreamingGenerationChannel: GenerationChannel {
     /// after the executor finishes, so it can execute them and re-prompt.
     public private(set) var recordedToolCalls: [(id: String, name: String, input: Data)] = []
 
+    /// Whether `complete()` was called — signals the SSE stream included a
+    /// proper `message_delta` completion event. Stays `false` if the stream
+    /// was truncated, errored via `fail()`, or produced no events at all.
+    public private(set) var receivedCompletion: Bool = false
+
     // MARK: - Initialization
 
     public init() {}
@@ -92,6 +97,7 @@ public actor StreamingGenerationChannel: GenerationChannel {
     public func complete(stopReason: String?, usage: Usage?) async {
         guard !isFinished else { return }
         isFinished = true
+        receivedCompletion = true
         continuation?.yield(.turnCompleted(usage: usage, stopReason: stopReason))
     }
 

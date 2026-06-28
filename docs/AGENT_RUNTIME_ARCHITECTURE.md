@@ -244,6 +244,9 @@ streamResponse(to: "run ls")
     │       ├─                              channel.send(toolCallRequest:)
     │       └─                              channel.complete(stopReason:usage:)
     │
+    ├─ Guard 1: channel.receivedCompletion? → NO → fail stream (truncated response)
+    ├─ Guard 2: no thinking, no text, no tools? → YES → fail stream (empty response)
+    │
     ├─ Read channel.accumulatedThinking → transcript.entries.append(.thinking)
     ├─ Read channel.accumulatedText → transcript.entries.append(.response)
     │
@@ -258,6 +261,12 @@ streamResponse(to: "run ls")
     │
     └─ NO → memoryStore.store(transcript) → continuation.finish()
 ```
+
+Key ordering guarantee: **thinking → text → toolCall → toolOutput** is strictly maintained in the transcript. This is required by thinking-mode APIs (DeepSeek, Anthropic) which validate block ordering.
+
+Response validation (two guards before processing content):
+- **Guard 1 — Completion check**: If `channel.receivedCompletion` is `false`, the SSE stream never delivered a `message_delta` event. The response was truncated or malformed — fail the stream with `.invalidResponse`.
+- **Guard 2 — Content check**: If the model returns `end_turn` but produced no text, no thinking, and no tools, the API returned an empty response. This is treated as `.invalidResponse` rather than a silent "success" that would show nothing to the user.
 
 Key ordering guarantee: **thinking → text → toolCall → toolOutput** is strictly maintained in the transcript. This is required by thinking-mode APIs (DeepSeek, Anthropic) which validate block ordering.
 
@@ -354,6 +363,7 @@ Key differences from Anthropic:
 
 - **Snapshot semantics**: `send(textDelta:)` and `send(thinkingDelta:)` use REPLACEMENT — each call overwrites `accumulatedText`/`accumulatedThinking` and yields the full value. The executor provides accumulated totals, not incremental deltas.
 - **Post-complete guard**: After `complete()` or `fail()`, `isFinished = true` — all subsequent sends silently drop. Prevents dangling events after turn completion.
+- **Completion detection**: `receivedCompletion: Bool` is set `true` only by `complete()`. Stays `false` if the stream was truncated, errored via `fail()`, or produced no events. The agent loop checks this to distinguish valid completions from malformed responses.
 - **Tool tracking**: `recordedToolCalls: [(id, name, input)]` — the agent loop inspects this after the executor finishes to decide whether to execute tools or finish.
 - **Continuation lifecycle**: `setContinuation()` stores the stream continuation. `fail(with:)` calls `continuation.finish(throwing:)`; normal completion calls `continuation.finish()` from the agent loop.
 
@@ -363,7 +373,7 @@ Thread safety: `recordedToolCalls` and `accumulatedText`/`accumulatedThinking` a
 
 Each provider has its own SSE parser, but all share the same output interface (they write to `GenerationChannel`):
 
-- **`AnthropicSSEParser`** — Parses Anthropic SSE events: `content_block_start` (registers tool call), `content_block_delta` (text/thinking/input_json), `content_block_stop` (finalizes tool call), `message_delta` (usage/stop_reason), `error`.
+- **`AnthropicSSEParser`** — Parses Anthropic SSE events: `content_block_start` (registers tool call), `content_block_delta` (text/thinking/input_json), `content_block_stop` (finalizes tool call), `message_delta` (usage/stop_reason → `channel.complete()`), `error` → `channel.fail()`. After the loop, if no `message_delta` was received, the stream was truncated and the parser calls `channel.fail()` — preventing the agent loop from treating an empty response as a valid completion.
 - **`DeepSeekSSEParser`** — Anthropic-compat only; delegates entirely to `AnthropicSSEParser`. The Chat Completions path uses `ChatCompletionsSSEParser` directly.
 - **`ResponsesSSEParser`** — Parses OpenAI Responses API event-based SSE: `response.output_text.delta`, `response.reasoning.delta`, `response.function_call_arguments.delta`, `response.output_item.done`, `response.completed`.
 - **`ChatCompletionsSSEParser`** — Parses Chat Completions SSE: `choices[0].delta.content` → text, `choices[0].delta.reasoning_content` → thinking, `choices[0].delta.tool_calls` → tool call, `choices[0].finish_reason` → complete. Used by DeepSeek `openAICompatible` mode.

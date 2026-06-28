@@ -123,5 +123,15 @@ struct AnthropicSSEParser: Sendable {
                 break // Unknown types silently ignored (defense in depth)
             }
         }
+
+        // If the loop exits without receiving a proper message_delta completion
+        // event, the SSE stream was truncated or malformed — fail the channel
+        // so the agent loop doesn't treat an empty/incomplete response as valid.
+        if !receivedMessageDelta && !Task.isCancelled {
+            print("[AnthropicSSEParser] Stream ended without message_delta — response truncated or empty")
+            await channel.fail(with: .invalidResponse(
+                reason: "SSE stream ended without message_delta completion event"
+            ))
+        }
     }
 }

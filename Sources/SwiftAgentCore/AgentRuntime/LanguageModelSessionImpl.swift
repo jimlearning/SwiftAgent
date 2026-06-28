@@ -199,6 +199,7 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
 
             // First pass: collect all events, identify tool calls
             var pendingToolCalls: [(id: String, name: String, input: Data)] = []
+            var receivedCompletion = false
             for event in events {
                 switch event {
                 case .textDelta(let text):
@@ -213,9 +214,26 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                 case .turnCompleted(let usage, let stopReason):
                     finalUsage = usage
                     finalStopReason = stopReason
+                    receivedCompletion = true
                 case .error(let err):
                     throw err
                 }
+            }
+
+            // Guard: the SSE stream must include a completion event.
+            // Without it, the response was truncated or malformed.
+            guard receivedCompletion else {
+                throw AgentRuntimeError.invalidResponse(
+                    reason: "Model response truncated — no completion event received"
+                )
+            }
+
+            // Guard: the model must produce some content (text, thinking, or tools).
+            // An empty response with end_turn is likely an API error.
+            if !hasToolCalls && thinkingText.isEmpty && responseText.isEmpty {
+                throw AgentRuntimeError.invalidResponse(
+                    reason: "Model returned end_turn with no content (iteration \(iterationCount))"
+                )
             }
 
             // Second pass: flush thinking + text, then ALL tool_calls, then ALL tool_outputs.
@@ -333,6 +351,29 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                         let responseText = await channel.accumulatedText
                         if !responseText.isEmpty {
                             await self.transcript.entries.append(.response(responseText))
+                        }
+
+                        // Guard 1: If the SSE stream never sent a completion event, the
+                        // response was truncated or malformed — fail the stream so the
+                        // consumer sees an error instead of a silent hang.
+                        let receivedCompletion = await channel.receivedCompletion
+                        guard receivedCompletion else {
+                            print("[SessionImpl] Response truncated — no message_delta received (iteration \(iterationCount))")
+                            continuation.finish(throwing: AgentRuntimeError.invalidResponse(
+                                reason: "Model response truncated — no completion event received"
+                            ))
+                            return
+                        }
+
+                        // Guard 2: If the model produced absolutely nothing (no text,
+                        // no thinking, no tools), the API returned an empty response.
+                        // Treat this as an error rather than silently showing nothing.
+                        if calls.isEmpty && thinkingText.isEmpty && responseText.isEmpty {
+                            print("[SessionImpl] Empty response — model returned end_turn with no content (iteration \(iterationCount))")
+                            continuation.finish(throwing: AgentRuntimeError.invalidResponse(
+                                reason: "Model returned end_turn with no content"
+                            ))
+                            return
                         }
 
                         if calls.isEmpty {
