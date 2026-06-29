@@ -9,25 +9,54 @@ public actor SessionMetaStore {
     public struct Meta: Codable, Sendable {
         public var title: String?
         public var isPinned: Bool
+        public var isCompleted: Bool
         public var model: String?
         public var effort: String?
         public var permissionMode: PermissionMode?
         public var updatedAt: Date?
+        /// Last reported context-window usage percentage. Persisted so the status
+        /// bar can show it on session open without waiting for the next response.
+        public var contextPercent: Double?
+        /// Cumulative response duration in milliseconds across the session.
+        public var totalDurationMs: Double?
 
         public init(
             title: String? = nil,
             isPinned: Bool = false,
+            isCompleted: Bool = false,
             model: String? = nil,
             effort: String? = nil,
             permissionMode: PermissionMode? = nil,
-            updatedAt: Date? = nil
+            updatedAt: Date? = nil,
+            contextPercent: Double? = nil,
+            totalDurationMs: Double? = nil
         ) {
             self.title = title
             self.isPinned = isPinned
+            self.isCompleted = isCompleted
             self.model = model
             self.effort = effort
             self.permissionMode = permissionMode
             self.updatedAt = updatedAt
+            self.contextPercent = contextPercent
+            self.totalDurationMs = totalDurationMs
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case title, isPinned, isCompleted, model, effort, permissionMode, updatedAt, contextPercent, totalDurationMs
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+            isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+            isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+            model = try container.decodeIfPresent(String.self, forKey: .model)
+            effort = try container.decodeIfPresent(String.self, forKey: .effort)
+            permissionMode = try container.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
+            updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
+            contextPercent = try container.decodeIfPresent(Double.self, forKey: .contextPercent)
+            totalDurationMs = try container.decodeIfPresent(Double.self, forKey: .totalDurationMs)
         }
     }
 

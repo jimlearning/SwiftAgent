@@ -4,6 +4,7 @@ import ClarcCore
 struct StatusLineView: View {
     @Environment(ChatBridge.self) private var chatBridge
     @Environment(WindowState.self) private var windowState
+    @Environment(\.scenePhase) private var scenePhase
     @State private var rateLimit: RateLimitUsage?
 
     private var modelDisplayName: String {
@@ -11,7 +12,10 @@ struct StatusLineView: View {
     }
 
     private var totalResponseDuration: Double {
-        chatBridge.sessionStats.durationMs
+        // Sourced from the cumulative session stat (persisted per session) rather
+        // than summing live message durations, so it shows on session open before
+        // any new response. durationMs is milliseconds.
+        chatBridge.sessionStats.durationMs / 1000
     }
 
     private var contextPercentage: Double? {
@@ -76,6 +80,11 @@ struct StatusLineView: View {
         }
         .onChange(of: chatBridge.isStreaming) { old, new in
             if old && !new {
+                Task { await refreshRateLimit() }
+            }
+        }
+        .onChange(of: scenePhase) { _, new in
+            if new == .active {
                 Task { await refreshRateLimit() }
             }
         }

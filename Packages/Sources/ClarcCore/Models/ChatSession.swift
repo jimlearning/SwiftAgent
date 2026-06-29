@@ -10,10 +10,13 @@ public struct ChatSession: Identifiable, Codable, Sendable {
     public let createdAt: Date
     public var updatedAt: Date
     public var isPinned: Bool
+    public var isCompleted: Bool
     public var model: String?
     public var effort: String?
     public var permissionMode: PermissionMode?
     public var origin: SessionOrigin
+    public var contextPercent: Double?
+    public var totalDurationMs: Double?
 
     public init(
         id: String,
@@ -23,10 +26,13 @@ public struct ChatSession: Identifiable, Codable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isPinned: Bool = false,
+        isCompleted: Bool = false,
         model: String? = nil,
         effort: String? = nil,
         permissionMode: PermissionMode? = nil,
-        origin: SessionOrigin = .cliBacked
+        origin: SessionOrigin = .cliBacked,
+        contextPercent: Double? = nil,
+        totalDurationMs: Double? = nil
     ) {
         self.id = id
         self.projectId = projectId
@@ -35,14 +41,17 @@ public struct ChatSession: Identifiable, Codable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isPinned = isPinned
+        self.isCompleted = isCompleted
         self.model = model
         self.effort = effort
         self.permissionMode = permissionMode
         self.origin = origin
+        self.contextPercent = contextPercent
+        self.totalDurationMs = totalDurationMs
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, projectId, title, messages, createdAt, updatedAt, isPinned, model, effort, permissionMode, origin
+        case id, projectId, title, messages, createdAt, updatedAt, isPinned, isCompleted, model, effort, permissionMode, origin, contextPercent, totalDurationMs
     }
 
     public init(from decoder: Decoder) throws {
@@ -54,10 +63,13 @@ public struct ChatSession: Identifiable, Codable, Sendable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
         model = try container.decodeIfPresent(String.self, forKey: .model)
         effort = try container.decodeIfPresent(String.self, forKey: .effort)
         permissionMode = try container.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
         origin = try container.decodeIfPresent(SessionOrigin.self, forKey: .origin) ?? .legacyClarc
+        contextPercent = try container.decodeIfPresent(Double.self, forKey: .contextPercent)
+        totalDurationMs = try container.decodeIfPresent(Double.self, forKey: .totalDurationMs)
     }
 
     public struct Summary: Identifiable, Codable, Sendable, Equatable {
@@ -67,10 +79,13 @@ public struct ChatSession: Identifiable, Codable, Sendable {
         public let createdAt: Date
         public var updatedAt: Date
         public var isPinned: Bool
+        public var isCompleted: Bool
         public var model: String?
         public var effort: String?
         public var permissionMode: PermissionMode?
         public var origin: SessionOrigin
+        public var contextPercent: Double?
+        public var totalDurationMs: Double?
 
         public init(
             id: String,
@@ -79,10 +94,13 @@ public struct ChatSession: Identifiable, Codable, Sendable {
             createdAt: Date,
             updatedAt: Date,
             isPinned: Bool,
+            isCompleted: Bool = false,
             model: String? = nil,
             effort: String? = nil,
             permissionMode: PermissionMode? = nil,
-            origin: SessionOrigin = .cliBacked
+            origin: SessionOrigin = .cliBacked,
+            contextPercent: Double? = nil,
+            totalDurationMs: Double? = nil
         ) {
             self.id = id
             self.projectId = projectId
@@ -90,14 +108,17 @@ public struct ChatSession: Identifiable, Codable, Sendable {
             self.createdAt = createdAt
             self.updatedAt = updatedAt
             self.isPinned = isPinned
+            self.isCompleted = isCompleted
             self.model = model
             self.effort = effort
             self.permissionMode = permissionMode
             self.origin = origin
+            self.contextPercent = contextPercent
+            self.totalDurationMs = totalDurationMs
         }
 
         private enum CodingKeys: String, CodingKey {
-            case id, projectId, title, createdAt, updatedAt, isPinned, model, effort, permissionMode, origin
+            case id, projectId, title, createdAt, updatedAt, isPinned, isCompleted, model, effort, permissionMode, origin, contextPercent, totalDurationMs
         }
 
         public init(from decoder: Decoder) throws {
@@ -108,10 +129,13 @@ public struct ChatSession: Identifiable, Codable, Sendable {
             createdAt = try container.decode(Date.self, forKey: .createdAt)
             updatedAt = try container.decode(Date.self, forKey: .updatedAt)
             isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+            isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
             model = try container.decodeIfPresent(String.self, forKey: .model)
             effort = try container.decodeIfPresent(String.self, forKey: .effort)
             permissionMode = try container.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
             origin = try container.decodeIfPresent(SessionOrigin.self, forKey: .origin) ?? .legacyClarc
+            contextPercent = try container.decodeIfPresent(Double.self, forKey: .contextPercent)
+            totalDurationMs = try container.decodeIfPresent(Double.self, forKey: .totalDurationMs)
         }
     }
 
@@ -123,10 +147,13 @@ public struct ChatSession: Identifiable, Codable, Sendable {
             createdAt: createdAt,
             updatedAt: updatedAt,
             isPinned: isPinned,
+            isCompleted: isCompleted,
             model: model,
             effort: effort,
             permissionMode: permissionMode,
-            origin: origin
+            origin: origin,
+            contextPercent: contextPercent,
+            totalDurationMs: totalDurationMs
         )
     }
 }
@@ -136,7 +163,9 @@ extension ChatSession.Summary {
         ChatSession(id: id, projectId: projectId, title: title,
                     messages: [], createdAt: createdAt,
                     updatedAt: updatedAt, isPinned: isPinned,
+                    isCompleted: isCompleted,
                     model: model, effort: effort, permissionMode: permissionMode,
-                    origin: origin)
+                    origin: origin,
+                    contextPercent: contextPercent, totalDurationMs: totalDurationMs)
     }
 }

@@ -4,6 +4,9 @@ struct GeneralSettingsView: View {
     @EnvironmentObject var viewModel: SettingsViewModel
     @EnvironmentObject var appViewModel: AppViewModel
 
+    @State private var apiKeyInput: String = ""
+    @State private var showKeyInput: Bool = false
+
     private var apiKeyStatusView: some View {
         HStack(spacing: 8) {
             switch appViewModel.apiKeyStatus {
@@ -30,6 +33,61 @@ struct GeneralSettingsView: View {
                     .foregroundColor(.textSecondary)
             }
         }
+    }
+
+    private var apiKeyControls: some View {
+        HStack(spacing: 8) {
+            if showKeyInput || appViewModel.apiKeyStatus == .missing {
+                SecureField("sk-…", text: $apiKeyInput)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .frame(width: 280)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.borderSubtle, lineWidth: 1)
+                    )
+                    .onSubmit { saveKey() }
+
+                Button("Save") { saveKey() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if appViewModel.apiKeyStatus == .configured && !showKeyInput {
+                Button("Change…") {
+                    apiKeyInput = ""
+                    showKeyInput = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button("Remove") {
+                    appViewModel.deleteAPIKey()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            if appViewModel.apiKeyStatus == .configured, showKeyInput {
+                Button("Cancel") {
+                    apiKeyInput = ""
+                    showKeyInput = false
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private func saveKey() {
+        let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        appViewModel.saveAPIKey(trimmed)
+        apiKeyInput = ""
+        showKeyInput = false
     }
 
     var body: some View {
@@ -79,9 +137,12 @@ struct GeneralSettingsView: View {
 
             Divider().background(Color.borderSubtle)
 
-            // API Key status
+            // API Key
             SettingsRow(label: "DeepSeek API Key") {
-                apiKeyStatusView
+                VStack(alignment: .leading, spacing: 6) {
+                    apiKeyStatusView
+                    apiKeyControls
+                }
             }
 
             Divider().background(Color.borderSubtle)

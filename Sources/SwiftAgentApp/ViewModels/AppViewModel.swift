@@ -657,6 +657,19 @@ public final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Remove the API key from Keychain and tear down the agent session.
+    public func deleteAPIKey() {
+        do {
+            try KeychainStore.delete()
+        } catch {
+            // Keychain delete failed — still clear local state below
+        }
+        self.provider = nil
+        self.session = nil
+        self.apiKeyStatus = .missing
+        self.showAPIKeyBanner = true
+    }
+
     // MARK: - Key resolution
 
     private func resolveKey() -> (key: String, isDeepSeek: Bool)? {

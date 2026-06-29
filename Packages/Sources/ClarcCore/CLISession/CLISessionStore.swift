@@ -206,10 +206,13 @@ public actor CLISessionStore {
                 createdAt: snippet.firstTimestamp ?? mtimeDate,
                 updatedAt: snippet.lastTimestamp ?? mtimeDate,
                 isPinned: meta.isPinned,
+                isCompleted: meta.isCompleted,
                 model: meta.model,
                 effort: meta.effort,
                 permissionMode: meta.permissionMode,
-                origin: .cliBacked
+                origin: .cliBacked,
+                contextPercent: meta.contextPercent,
+                totalDurationMs: meta.totalDurationMs
             ))
         }
         return summaries.sorted { $0.updatedAt > $1.updatedAt }

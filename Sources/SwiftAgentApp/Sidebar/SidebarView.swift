@@ -102,10 +102,11 @@ struct SidebarView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(CellTokens.padding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .cellHoverHighlight()
+        .hoverBackgroundOnly(background: CellTokens.hoverBackground, cornerRadius: CellTokens.cornerRadius)
         .help(title)
     }
 
@@ -234,10 +235,11 @@ struct SidebarView: View {
             }
             .foregroundColor(.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(CellTokens.padding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .cellHoverHighlight()
+        .hoverBackgroundOnly(background: CellTokens.hoverBackground, cornerRadius: CellTokens.cornerRadius)
         .accessibilityLabel("Open Settings")
         .keyboardShortcut(",", modifiers: .command)
         .help("Open Settings (⌘,)")
@@ -458,13 +460,13 @@ private struct ClarcThreadRowView: View {
                     .foregroundStyle(ClaudeTheme.textTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(CellTokens.padding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .hoverHighlight(
+        .hoverBackgroundOnly(
             background: isSelected ? CellTokens.selectedHoverBackground : CellTokens.hoverBackground,
-            cornerRadius: CellTokens.cornerRadius,
-            padding: CellTokens.padding
+            cornerRadius: CellTokens.cornerRadius
         )
         .background(
             RoundedRectangle(cornerRadius: CellTokens.cornerRadius)

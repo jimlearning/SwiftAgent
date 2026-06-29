@@ -68,4 +68,20 @@ public extension View {
             padding: padding
         ))
     }
+
+    /// Hover-only background — no padding added. Use when the caller
+    /// already applies CellTokens.padding inside the content (e.g.
+    /// inside a Button label where the tap target must match the
+    /// highlight). Separated from `hoverHighlight` because stacking
+    /// two paddings creates a ghost region outside the tap area.
+    func hoverBackgroundOnly(
+        background: Color = Color.white.opacity(0.06),
+        cornerRadius: CGFloat = 4
+    ) -> some View {
+        modifier(HoverHighlight(
+            hoverBackground: background,
+            cornerRadius: cornerRadius,
+            padding: EdgeInsets()  // zero — caller owns the padding
+        ))
+    }
 }
