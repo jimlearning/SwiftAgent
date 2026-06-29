@@ -38,6 +38,10 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
     private let apiKey: String
     private let baseURL: URL
     public let modelID: String
+
+    /// Public accessors for services that need direct API access (e.g. SessionTitleGenerator).
+    public var apiKeyValue: String { apiKey }
+    public var baseURLValue: URL { baseURL }
     private let compatibility: APICompatibility
     private let session: URLSession
 

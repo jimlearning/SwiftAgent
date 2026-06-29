@@ -172,6 +172,18 @@ public struct AiTitleEntry: Sendable, Codable {
     public let type: String  // "ai-title"
     public let sessionID: String
     public let aiTitle: String
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case sessionID = "sessionId"
+        case aiTitle
+    }
+
+    public init(type: String = "ai-title", sessionID: String, aiTitle: String) {
+        self.type = type
+        self.sessionID = sessionID
+        self.aiTitle = aiTitle
+    }
 }
 
 /// Last prompt entry. Matches CC's LastPromptMessage.

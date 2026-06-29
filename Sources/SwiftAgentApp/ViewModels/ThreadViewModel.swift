@@ -250,6 +250,60 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         // No-op: message persistence handled by persistMessageWithBlocks via store.appendMessage.
     }
 
+    // MARK: - Auto-Title
+
+    /// Set an instant placeholder + fire-and-forget AI title generation.
+    /// Matches CC's two-tier approach: regex placeholder → Haiku-generated title.
+    private func autoTitleFromFirstMessage(_ text: String) {
+        // 1. Instant placeholder from first sentence (synchronous, no network)
+        let threadId = id
+        let cwd = projectId ?? workingDirectory
+
+        if let generator = appViewModel?.titleGenerator {
+            let placeholder = generator.derivePlaceholder(from: text)
+            if let placeholder {
+                print("[ThreadVM] autoTitle: setting placeholder=\"\(placeholder)\"")
+                title = placeholder
+                if let s = store {
+                    let entry = LogEntry.aiTitle(AiTitleEntry(sessionID: threadId, aiTitle: placeholder))
+                    Task.detached { [store = s] in
+                        try? store.appendMetadata(entry, sessionId: threadId, projectPath: cwd)
+                    }
+                }
+            }
+
+            // 2. Fire-and-forget: AI-generated title via LLM
+            let weakStore = store
+            Task.detached { [weak self, generator] in
+                guard let aiTitle = await generator.generateTitle(from: text) else { return }
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    if self.title == placeholder || self.title == "Untitled" || self.title == "New Chat" {
+                        print("[ThreadVM] autoTitle: AI title=\"\(aiTitle)\"")
+                        self.title = aiTitle
+                    }
+                    guard let s = weakStore else { return }
+                    let entry = LogEntry.aiTitle(AiTitleEntry(sessionID: threadId, aiTitle: aiTitle))
+                    Task.detached { [store = s] in
+                        try? store.appendMetadata(entry, sessionId: threadId, projectPath: cwd)
+                    }
+                }
+            }
+        } else {
+            // Fallback: title generator not available (no API key configured yet).
+            // Use first 60 chars as the title so the user still sees something.
+            print("[ThreadVM] autoTitle: titleGenerator nil — using snippet fallback")
+            let snippet = String(text.prefix(60))
+            title = snippet
+            if let s = store {
+                let entry = LogEntry.customTitle(CustomTitleEntry(sessionID: threadId, customTitle: snippet))
+                Task.detached { [store = s] in
+                    try? store.appendMetadata(entry, sessionId: threadId, projectPath: cwd)
+                }
+            }
+        }
+    }
+
     // MARK: - Send (Agent Loop)
 
     /// Send a user message and run the full agent loop.
@@ -349,15 +403,9 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             persistState()
         }
 
-        // Auto-title from first message
+        // Auto-title from first message: instant regex placeholder + fire-and-forget AI title.
         if title == "Untitled" || title == "New Chat" {
-            let snippet = String(trimmed.prefix(60))
-            title = snippet
-            if let s = store {
-                let cwd = projectId ?? workingDirectory
-                let entry = LogEntry.customTitle(CustomTitleEntry(sessionID: id, customTitle: snippet))
-                try? s.appendMetadata(entry, sessionId: id, projectPath: cwd)
-            }
+            autoTitleFromFirstMessage(trimmed)
         }
 
         print("[ThreadVM] send() threadId=\(id.prefix(8)) projectId=\(projectId ?? "nil") workingDir=\(workingDirectory)")

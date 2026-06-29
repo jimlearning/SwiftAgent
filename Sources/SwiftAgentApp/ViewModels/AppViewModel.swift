@@ -16,6 +16,10 @@ public final class AppViewModel: ObservableObject {
     /// The current model provider (nil if no API key configured).
     @Published public private(set) var provider: DeepSeekProvider?
 
+    /// Session title generator (instant placeholder + AI-generated).
+    /// Created when the provider is configured. Threads use it to auto-name themselves.
+    public private(set) var titleGenerator: SessionTitleGenerator?
+
     /// The agent runtime session — owns the agent loop.
     @Published public private(set) var session: LanguageModelSessionImpl?
 
@@ -328,7 +332,7 @@ public final class AppViewModel: ObservableObject {
                     vm.appViewModel = self
                     vm.projectId = entry.projectPath ?? project.originalPath
                     print("[AppVM] loadAllData: session=\(entry.sessionId.prefix(8)) projectId=\(vm.projectId ?? "nil") (index.projectPath=\(entry.projectPath ?? "nil") discover.originalPath=\(project.originalPath))")
-                    vm.title = entry.customTitle ?? entry.firstPrompt ?? "New Chat"
+                    vm.title = entry.customTitle ?? entry.aiTitle ?? entry.firstPrompt ?? "New Chat"
                     vm.selectedModel = provider?.modelID ?? "deepseek-v4-pro"
                     vm.updatedAt = ISO8601DateFormatter().date(from: entry.modified) ?? Date()
 
@@ -358,7 +362,7 @@ public final class AppViewModel: ObservableObject {
                                 let vm = ThreadViewModel(id: entry.sessionId, session: self.session, store: store)
                                 vm.appViewModel = self
                                 vm.projectId = entry.projectPath ?? project.originalPath
-                                vm.title = entry.customTitle ?? entry.firstPrompt ?? "New Chat"
+                                vm.title = entry.customTitle ?? entry.aiTitle ?? entry.firstPrompt ?? "New Chat"
                                 vm.selectedModel = provider?.modelID ?? "deepseek-v4-pro"
                                 vm.updatedAt = ISO8601DateFormatter().date(from: entry.modified) ?? Date()
                                 vmMap[entry.sessionId] = vm
@@ -516,7 +520,7 @@ public final class AppViewModel: ObservableObject {
         // Message persistence is handled by ThreadViewModel via SwiftAgentStore
     }
 
-    /// Rename a thread (updates sessions-index.json customTitle).
+    /// Rename a thread (updates sessions-index.json customTitle + writes to JSONL).
     public func renameThread(id: String, title: String) {
         guard let vm = threadViewModels[id] else { return }
         let cwd = vm.projectId ?? vm.workingDirectory
@@ -531,6 +535,11 @@ public final class AppViewModel: ObservableObject {
                 isSidechain: false
             )
             try store.sessionIndex.upsert(entry, projectPath: cwd)
+
+            // Also persist to JSONL so index rebuild preserves the rename
+            let logEntry = LogEntry.customTitle(CustomTitleEntry(sessionID: id, customTitle: title))
+            try store.transcripts.append(logEntry, sessionId: id, projectPath: cwd)
+
             vm.title = title
         } catch {
             print("[AppViewModel] Rename failed: \(error)")
@@ -636,6 +645,7 @@ public final class AppViewModel: ObservableObject {
             let baseURL = isDeepSeek ? "https://api.deepseek.com" : "https://api.anthropic.com"
             let dp = DeepSeekProvider(apiKey: key, baseURL: URL(string: baseURL), modelID: "deepseek-v4-pro")
             self.provider = dp
+            self.titleGenerator = SessionTitleGenerator(apiKey: dp.apiKeyValue, baseURL: dp.baseURLValue)
             self.apiKeyStatus = .configured
             self.showAPIKeyBanner = false
             Task {
@@ -661,6 +671,7 @@ public final class AppViewModel: ObservableObject {
             try KeychainStore.save(apiKey: trimmed)
             let dp = DeepSeekProvider(apiKey: trimmed, baseURL: URL(string: "https://api.deepseek.com"), modelID: "deepseek-v4-pro")
             self.provider = dp
+            self.titleGenerator = SessionTitleGenerator(apiKey: dp.apiKeyValue, baseURL: dp.baseURLValue)
             self.apiKeyStatus = .configured
             self.showAPIKeyBanner = false
             Task {

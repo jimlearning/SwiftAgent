@@ -13,6 +13,7 @@ public struct SessionIndexEntry: Sendable, Codable, Identifiable {
     public var firstPrompt: String?
     public var summary: String?
     public var customTitle: String?
+    public var aiTitle: String?
     public var messageCount: Int
     public var created: String   // ISO 8601 date string
     public var modified: String  // ISO 8601 date string
@@ -32,6 +33,7 @@ public struct SessionIndexEntry: Sendable, Codable, Identifiable {
         case firstPrompt
         case summary
         case customTitle
+        case aiTitle
         case messageCount
         case created
         case modified
@@ -52,6 +54,7 @@ public struct SessionIndexEntry: Sendable, Codable, Identifiable {
         firstPrompt: String? = nil,
         summary: String? = nil,
         customTitle: String? = nil,
+        aiTitle: String? = nil,
         messageCount: Int = 0,
         created: String = ISO8601DateFormatter().string(from: Date()),
         modified: String = ISO8601DateFormatter().string(from: Date()),
@@ -70,6 +73,7 @@ public struct SessionIndexEntry: Sendable, Codable, Identifiable {
         self.firstPrompt = firstPrompt
         self.summary = summary
         self.customTitle = customTitle
+        self.aiTitle = aiTitle
         self.messageCount = messageCount
         self.created = created
         self.modified = modified
@@ -166,6 +170,7 @@ public final class SessionIndexStore: @unchecked Sendable {
                 updated.firstPrompt = entry.firstPrompt ?? updated.firstPrompt
                 updated.summary = entry.summary ?? updated.summary
                 updated.customTitle = entry.customTitle ?? updated.customTitle
+                updated.aiTitle = entry.aiTitle ?? updated.aiTitle
                 updated.messageCount = entry.messageCount > 0 ? entry.messageCount : updated.messageCount
                 updated.modified = entry.modified
                 updated.gitBranch = entry.gitBranch ?? updated.gitBranch
@@ -248,7 +253,8 @@ public final class SessionIndexStore: @unchecked Sendable {
                 fileMtime: (attrs?[.modificationDate] as? Date).flatMap { $0.timeIntervalSince1970 * 1000 },
                 firstPrompt: metadata.firstPrompt,
                 summary: metadata.summary,
-                customTitle: metadata.customTitle ?? metadata.aiTitle,
+                customTitle: metadata.customTitle,
+                aiTitle: metadata.aiTitle,
                 messageCount: messageCount,
                 created: created,
                 modified: modified,
