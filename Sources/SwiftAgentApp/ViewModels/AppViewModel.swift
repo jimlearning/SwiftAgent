@@ -196,6 +196,24 @@ public final class AppViewModel: ObservableObject {
         loadSkills()
         loadMCPServers()
         isStorageReady = true
+        // Re-create the session now that projects are loaded so
+        // resolveWorkingDirectory() picks up the correct project path
+        // instead of falling back to NSHomeDirectory().
+        refreshSession()
+    }
+
+    /// Re-create the agent session with the correct working directory.
+    /// Called after storage loads so resolveWorkingDirectory() sees the
+    /// actual project paths rather than falling back to ~.
+    private func refreshSession() {
+        guard let provider = self.provider else { return }
+        Task {
+            let s = await makeSession(provider: provider)
+            self.session = s
+            for vm in threadViewModels.values {
+                vm.setSession(s)
+            }
+        }
     }
 
     // MARK: - Skills

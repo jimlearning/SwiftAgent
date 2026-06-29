@@ -26,6 +26,9 @@ struct InputBarView<Accessory: View, TopAccessory: View>: View {
     @State private var textFieldLayoutID = 0
     @State private var measuredInputHeight: CGFloat = 20
     @State private var inputHasMarkedText = false
+    /// Set true while selectAtFile is replacing @-text with a file path,
+    /// so handleInputTextChange doesn't mistake the path for a pasted attachment.
+    @State private var suppressPasteDetection = false
 
     init(accessory: Accessory, @ViewBuilder topAccessory: () -> TopAccessory) {
         self.accessory = accessory
@@ -240,7 +243,10 @@ struct InputBarView<Accessory: View, TopAccessory: View>: View {
         // Safety net for paste routes onKeyPress doesn't intercept (context menu, Edit menu).
         // delta > 1 filters out single-keystroke typing; IME commits are too short to hit
         // the longTextThreshold, so false positives are not a concern.
-        if newValue.count - oldValue.count > 1,
+        // Skip when suppressPasteDetection is set — selectAtFile is replacing @query with
+        // a file path, which should remain as text, not become an attachment.
+        if !suppressPasteDetection,
+           newValue.count - oldValue.count > 1,
            let inserted = insertedSubstring(oldValue: oldValue, newValue: newValue) {
             if let attachment = attachmentFromPastedText(inserted) {
                 windowState.addAttachment(attachment)
@@ -535,13 +541,16 @@ struct InputBarView<Accessory: View, TopAccessory: View>: View {
         }
     }
 
+    /// Replace the `@query` trigger text with `@relativePath `.
     private func selectAtFile(_ relativePath: String) {
-        withAnimation(.easeOut(duration: 0.15)) { showAtFilePopup = false }
+        suppressPasteDetection = true
+        showAtFilePopup = false
         var text = windowState.inputText
         if let atRange = text.range(of: "@", options: .backwards) {
             text.replaceSubrange(atRange.lowerBound..., with: "@\(relativePath) ")
         }
         windowState.inputText = text
+        suppressPasteDetection = false
     }
 
     private func hasActiveAtQuery(in text: String) -> Bool {

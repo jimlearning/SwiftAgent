@@ -18,7 +18,7 @@ struct TabContentView: View {
                         appViewModel.refreshDiffSummary()
                     }
             case .terminal:
-                TerminalPanelView(tabID: tab.id.uuidString)
+                TerminalPanelView(tabID: tab.id.uuidString, projectPath: currentProjectPath)
             case .browser:
                 BrowserPanelView(tabID: tab.id.uuidString, initialURL: initialBrowserURL)
             case .files:

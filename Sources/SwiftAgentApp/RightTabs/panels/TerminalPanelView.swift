@@ -5,17 +5,19 @@ import ClarcCore
 /// Each Terminal tab gets its own independent shell process (zsh).
 public struct TerminalPanelView: View {
     let tabID: String
+    let projectPath: String?
     @State private var process = TerminalProcess()
 
-    public init(tabID: String) {
+    public init(tabID: String, projectPath: String? = nil) {
         self.tabID = tabID
+        self.projectPath = projectPath
     }
 
     public var body: some View {
         EmbeddedTerminalView(
             executable: "/bin/zsh",
             arguments: ["-i"],
-            currentDirectory: NSHomeDirectory(),
+            currentDirectory: projectPath ?? NSHomeDirectory(),
             process: process
         )
         .padding(8)
