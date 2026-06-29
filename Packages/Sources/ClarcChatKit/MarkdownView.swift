@@ -58,6 +58,9 @@ struct MarkdownContentView: View {
                 case .attributedText(let attrStr):
                     Text(attrStr)
                         .textSelection(.enabled)
+                        // Reserve the text's ideal height so the final line can't be
+                        // clipped at the bubble edge (markdown strips trailing newlines).
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .blockquote(let attrStr):
                     BlockquoteView(content: attrStr)
@@ -667,31 +670,6 @@ struct CodeBlockView: View {
     let language: String
     let code: String
     @State private var isCopied = false
-    @State private var highlighted: AttributedString
-
-    private static let highlightCache: NSCache<NSString, CacheEntry> = {
-        let cache = NSCache<NSString, CacheEntry>()
-        cache.countLimit = 150
-        return cache
-    }()
-
-    private final class CacheEntry {
-        let result: AttributedString
-        init(_ result: AttributedString) { self.result = result }
-    }
-
-    init(language: String, code: String) {
-        self.language = language
-        self.code = code
-        let cacheKey = "\(language):\n\(code)" as NSString
-        if let cached = Self.highlightCache.object(forKey: cacheKey) {
-            _highlighted = State(initialValue: cached.result)
-        } else {
-            let result = SyntaxHighlighter.highlight(code, language: language, fontSize: 14)
-            Self.highlightCache.setObject(CacheEntry(result), forKey: cacheKey)
-            _highlighted = State(initialValue: result)
-        }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -717,7 +695,7 @@ struct CodeBlockView: View {
 
             // Code content
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(highlighted)
+                Text(SyntaxHighlighter.highlight(code, language: language, fontSize: 14))
                     .textSelection(.enabled)
                     .fixedSize()
                     .padding(12)
@@ -761,4 +739,46 @@ private extension String {
 }
 
 
-// MARK: - Previews are disabled — SPM builds lack the PreviewsMacros plugin
+// MARK: - Previews
+
+// #Preview("Markdown") {
+//     ScrollView {
+//         MarkdownContentView(text: """
+//         # H1 Heading
+//         ## H2 Subheading
+//         ### H3 Section heading
+//         #### H4 Small heading
+//
+//         This is a **markdown** test. `Inline code` is also supported.
+//
+//         > This is a blockquote. Use it to emphasize important content.
+//
+//         - List item 1
+//         - List item 2
+//         - **Bold** list item 3
+//
+//         1. Ordered list
+//         2. Second item
+//         3. Third item
+//
+//         ---
+//
+//         | Item | Value |
+//         |------|-------|
+//         | Swift files | 381 |
+//         | Total lines | ~55,000 |
+//         | SwiftUI : UIKit ratio | 87% : 13% |
+//
+//         ```swift
+//         func hello() {
+//             print("Hello, World!")
+//         }
+//         ```
+//
+//         Regular text continues here.
+//         """)
+//         .padding()
+//     }
+//     .frame(width: 500, height: 600)
+//     .background(ClaudeTheme.background)
+// }

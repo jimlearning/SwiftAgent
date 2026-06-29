@@ -519,6 +519,13 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     private func handleStreamComplete(assistantID: String) {
         guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
         messages[index].finalize()
+        // Set thinking duration AFTER finalize so ThinkingBlockView's onChange
+        // fires AFTER isMessageStreaming becomes false — otherwise it would
+        // collapse the thinking block mid-stream when duration becomes non-nil
+        // while isMessageStreaming is still true.
+        if let start = executionStartTime {
+            messages[index].setThinkingDuration(Date().timeIntervalSince(start))
+        }
         persistMessageWithBlocks(messages[index])
 
         // Write stop_hook_summary system entry (CC writes after each assistant turn)
@@ -669,8 +676,8 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             switch block {
             case .text(let text):
                 return text.isEmpty ? nil : .text(text)
-            case .thinking(let text, _, _):
-                return .thinking(text, signature: UUID().uuidString)
+            case .thinking(let text, let id, _, _):
+                return .thinking(text, signature: id)
             case .toolUse(let toolUse):
                 if let input = toolUse.rawInput {
                     return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)

@@ -18,12 +18,12 @@ struct MessageBubble: View {
     private static let longTextThreshold = 500
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        return HStack(alignment: .top, spacing: 0) {
             if message.role == .user {
                 Spacer(minLength: 80)
             }
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
+            LazyVStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
                 // Show attachments
                 if !message.attachmentPaths.isEmpty {
                     attachmentPreview
@@ -183,9 +183,7 @@ struct MessageBubble: View {
                     .lineLimit(isLong && !isLongTextExpanded ? 5 : nil)
                 if isLong {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isLongTextExpanded.toggle()
-                        }
+                        isLongTextExpanded.toggle()
                     } label: {
                         if isLongTextExpanded {
                             Text("Collapse", bundle: .module)
@@ -264,9 +262,7 @@ struct MessageBubble: View {
         .onHover { hoveredBlockId = $0 ? blockId : nil }
         .onTapGesture {
             if hasHiddenTools {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showTransientTools.toggle()
-                }
+                showTransientTools.toggle()
             }
         }
         .accessibilityLabel("Assistant: \(text)")

@@ -78,8 +78,8 @@ public struct AgentMessage: Identifiable, Equatable {
     public mutating func appendThinking(_ text: String) {
         renderToken &+= 1
         if let idx = blocks.lastIndex(where: { if case .thinking = $0 { return true }; return false }),
-           case .thinking(_, let id, let expanded) = blocks[idx] {
-            blocks[idx] = .thinking(text, id: id, isExpanded: expanded)
+           case .thinking(_, let id, let expanded, let duration) = blocks[idx] {
+            blocks[idx] = .thinking(text, id: id, isExpanded: expanded, duration: duration)
             return
         }
         blocks.append(.thinking(text))
@@ -110,6 +110,18 @@ public struct AgentMessage: Identifiable, Equatable {
         if let usage = tokenUsage { self.tokenUsage = usage }
     }
 
+    /// Set the duration on the last thinking block so that `ThinkingBlockView`
+    /// can auto-collapse via `onChange(of: block.thinkingDuration)`.
+    /// No-op if there is no thinking block or if one already has a duration.
+    public mutating func setThinkingDuration(_ duration: TimeInterval) {
+        guard let idx = blocks.lastIndex(where: {
+            if case .thinking = $0 { return true }; return false
+        }), case .thinking(let text, let id, let expanded, let existing) = blocks[idx],
+              existing == nil else { return }
+        renderToken &+= 1
+        blocks[idx] = .thinking(text, id: id, isExpanded: expanded, duration: duration)
+    }
+
     public mutating func markFailed(_ error: String) {
         renderToken &+= 1
         isStreaming = false
@@ -129,7 +141,7 @@ public enum AgentMessageRole: String, Equatable, Sendable {
 
 public enum AgentMessageBlock: Equatable, Codable {
     case text(String)
-    case thinking(String, id: String = UUID().uuidString, isExpanded: Bool = false)
+    case thinking(String, id: String = UUID().uuidString, isExpanded: Bool = false, duration: TimeInterval? = nil)
     case toolUse(ToolUseBlock)
     case toolResult(ToolResultBlock)
     case systemReminder(String)
@@ -150,7 +162,7 @@ public enum AgentMessageBlock: Equatable, Codable {
     }
 
     public var thinkingContent: String? {
-        if case .thinking(let text, _, _) = self { return text }
+        if case .thinking(let text, _, _, _) = self { return text }
         return nil
     }
 
@@ -165,7 +177,8 @@ public enum AgentMessageBlock: Equatable, Codable {
             let text = try nested.decode(String.self, forKey: ._0)
             let isExpanded = try nested.decodeIfPresent(Bool.self, forKey: .isExpanded) ?? false
             let id = (try? nested.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
-            self = .thinking(text, id: id, isExpanded: isExpanded)
+            let duration = try nested.decodeIfPresent(TimeInterval.self, forKey: .duration)
+            self = .thinking(text, id: id, isExpanded: isExpanded, duration: duration)
         } else if container.contains(.toolUse) {
             let block = try container.decode(ToolUseBlock.self, forKey: .toolUse)
             self = .toolUse(block)
@@ -186,11 +199,12 @@ public enum AgentMessageBlock: Equatable, Codable {
         switch self {
         case .text(let text):
             try container.encode(text, forKey: .text)
-        case .thinking(let text, let id, let isExpanded):
+        case .thinking(let text, let id, let isExpanded, let duration):
             var nested = container.nestedContainer(keyedBy: ThinkingCodingKeys.self, forKey: .thinking)
             try nested.encode(text, forKey: ._0)
             try nested.encode(id, forKey: .id)
             try nested.encode(isExpanded, forKey: .isExpanded)
+            try nested.encodeIfPresent(duration, forKey: .duration)
         case .toolUse(let block):
             try container.encode(block, forKey: .toolUse)
         case .toolResult(let block):
@@ -212,6 +226,7 @@ public enum AgentMessageBlock: Equatable, Codable {
         case _0
         case id
         case isExpanded
+        case duration
     }
 }
 
@@ -357,7 +372,7 @@ extension AgentMessage {
                 let blocks: [AgentMessageBlock] = msg.content.compactMap { block in
                     switch block {
                     case .text(let text): return .text(text)
-                    case .thinking(let text, _): return .thinking(text)
+                    case .thinking(let text, let signature): return .thinking(text, id: signature ?? UUID().uuidString)
                     case .toolUse(let id, let name, let input),
                          .serverToolUse(let id, let name, let input):
                         let summary = summarizeInput(toolName: name, input: input)
@@ -426,7 +441,7 @@ extension AgentMessage {
                 var blocks: [AgentMessageBlock] = assistant.content.compactMap { block in
                     switch block {
                     case .text(let text): return .text(text)
-                    case .thinking(let text, _): return .thinking(text)
+                    case .thinking(let text, let signature): return .thinking(text, id: signature ?? UUID().uuidString)
                     case .toolUse(let id, let name, let input),
                          .serverToolUse(let id, let name, let input):
                         return .toolUse(ToolUseBlock(

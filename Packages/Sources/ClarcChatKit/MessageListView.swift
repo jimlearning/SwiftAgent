@@ -72,6 +72,16 @@ struct MessageListView: View {
                     }
                 }
 
+                if chatBridge.isStreaming {
+                    HStack(alignment: .top, spacing: 0) {
+                        StreamingIndicatorView(
+                            isThinking: chatBridge.isThinking,
+                            startDate: chatBridge.streamingStartDate
+                        )
+                        Spacer(minLength: 40)
+                    }
+                }
+
                 if !chatBridge.isStreaming && !settledItems.isEmpty {
                     WebPreviewButton(messages: settledItems)
                         .id("web-preview")
@@ -83,10 +93,11 @@ struct MessageListView: View {
             .animation(.none, value: windowState.currentSessionId)
 
             Color.clear.frame(height: 1)
-                .padding(.bottom, chatBridge.isStreaming ? 60 : 16)
+                .padding(.bottom, 16)
         }
         .opacity(isSessionReady ? 1 : 0)
         .scrollPosition($scrollPosition)
+        //.defaultScrollAnchor(.bottom)
         .onScrollGeometryChange(for: Bool.self) { geo in
             let distanceFromBottom = geo.contentSize.height - geo.visibleRect.maxY
             return distanceFromBottom < 120
@@ -125,19 +136,6 @@ struct MessageListView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay(alignment: .bottom) {
-            if chatBridge.isStreaming {
-                HStack(alignment: .top, spacing: 0) {
-                    StreamingIndicatorView(
-                        isThinking: chatBridge.isThinking,
-                        startDate: chatBridge.streamingStartDate
-                    )
-                    Spacer(minLength: 40)
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
-            }
-        }
     }
 
     // MARK: - Helpers
@@ -155,6 +153,8 @@ struct MessageListView: View {
             }
         }
     }
+
+    // MARK: - Message Grouping
 
     // MARK: - Settled Items
 

@@ -22,7 +22,7 @@ struct ThinkingBlockView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: 0) {
             header
             if isExpanded { body(content: thinkingText) }
         }

@@ -140,4 +140,9 @@ struct WebViewWrapper: NSViewRepresentable {
     }
 }
 
-// Preview disabled — SPM builds lack PreviewsMacros plugin
+// #Preview {
+//     WebPreviewButton(messages: [
+//         ChatMessage(role: .assistant, content: "Server started. Check it at http://localhost:3000."),
+//     ])
+//     .padding()
+// }

@@ -185,6 +185,25 @@ struct MainContentView: View {
 
 // MARK: - Message Conversion (shared)
 
+/// Caches text block IDs so SwiftUI ForEach identity stays stable across
+/// repeated conversion runs. Keyed by `messageID:textContent` — when text
+/// hasn't changed (the common case for settled messages), the same UUID is
+/// returned, avoiding unnecessary view recreation that can corrupt adjacent
+/// cell heights during folding/expanding animations.
+private let textBlockIDCache = TextBlockIDCache()
+
+private final class TextBlockIDCache: @unchecked Sendable {
+    private var cache: [String: String] = [:]
+    func id(for text: String, messageID: String) -> String {
+        let key = "\(messageID):\(text)"
+        if let cached = cache[key] { return cached }
+        let newID = UUID().uuidString
+        cache[key] = newID
+        return newID
+    }
+    func removeAll() { cache.removeAll() }
+}
+
 /// Converts `[AgentMessage]` → `[ChatMessage]`, merging tool-result blocks
 /// into their matching tool-use blocks by `toolUseID` so that tool cards
 /// display the tool name and input summary (instead of blank).
@@ -212,9 +231,11 @@ private func convertMessages(_ agentMessages: [AgentMessage]) -> [ChatMessage] {
         let blocks: [MessageBlock] = am.blocks.compactMap { block in
             switch block {
             case .text(let text):
-                return .text(text)
-            case .thinking(let text, let id, _):
-                return .thinking(text, id: id)
+                let bid = textBlockIDCache.id(for: text, messageID: am.id)
+                return .text(text, id: bid)
+            case .thinking(let text, let id, _, let duration):
+                let bid = id
+                return .thinking(text, duration: duration, id: bid)
             case .toolUse(let tb):
                 let input = convertInputJSON(tb.rawInput)
                 let result = toolResultMap[tb.toolUseID]
@@ -226,9 +247,7 @@ private func convertMessages(_ agentMessages: [AgentMessage]) -> [ChatMessage] {
                     isError: result?.isError ?? false
                 ))
             case .toolResult(let tr):
-                // Skip if already merged into a toolUse above (avoids duplicate IDs).
                 if toolUseMap[tr.toolUseID] != nil { return nil }
-                // Orphan result with no matching tool use — emit as standalone.
                 return .toolCall(ToolCall(
                     id: tr.toolUseID,
                     name: "",
@@ -237,7 +256,7 @@ private func convertMessages(_ agentMessages: [AgentMessage]) -> [ChatMessage] {
                     isError: tr.isError
                 ))
             case .systemReminder(let text):
-                return .text(text)
+                return .text(text, id: textBlockIDCache.id(for: text, messageID: am.id))
             }
         }
         let isComplete = !am.isStreaming && (agentMessages.last?.id == am.id)

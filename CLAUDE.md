@@ -172,6 +172,7 @@ These docs form a hierarchy. When you add or change code, update the RIGHT doc:
 | `docs/ROADMAP.md` | Phase progress & priorities | Phase completes, new priority emerges, blocker found |
 | `docs/AI_HANDOFF.md` | Comprehensive alignment snapshot | After major alignment milestones (batch update, not per-change) |
 | `docs/FREEZE_DEBUGGING.md` | UI freeze patterns, diagnosis, and prevention | New freeze pattern found, HangDetector enhanced, layout re-entrancy fix |
+| `docs/SWIFTUI_LAYOUT_CACHE.md` | VStack vs LazyVStack layout cache bugs | New layout cache pattern found, fix applied |
 | `specs/*.md` | Executable feature specs | New feature spec written, acceptance criteria change |
 | `README.md` | Human-facing project overview | New top-level feature, command change, new prerequisite |
 

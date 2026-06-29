@@ -47,7 +47,7 @@ struct ToolResultView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 6) {
             // Header + Input summary (both clickable)
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
