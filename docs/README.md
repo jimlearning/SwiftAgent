@@ -1,33 +1,33 @@
-# SwiftAgent Documentation
+# SwiftAgent 文档
 
-## Index
+## 索引
 
-| Doc | For | Read when... |
+| 文档 | 适用对象 | 阅读时机... |
 |-----|-----|--------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Module boundaries, design decisions, detailed layout | You need to understand how modules fit together or where code should live |
-| [ROADMAP.md](ROADMAP.md) | Phase progress, next priorities, blockers | You need to know what's done and what to work on next |
-| [AI_HANDOFF.md](AI_HANDOFF.md) | Comprehensive CC-alignment snapshot | You're a new AI/developer onboarding, or need the full gap analysis |
-| [PROMPT_CACHE_HIT_RATE.md](PROMPT_CACHE_HIT_RATE.md) | Prompt cache request-shape parity, measurements, and pitfalls | You're changing LLM request formatting or investigating cache hit rate |
-| [../specs/](../specs/) | Executable feature specifications | You're implementing a specific feature and need acceptance criteria |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 模块边界、设计决策、详细布局 | 需要了解模块如何组合或代码应该放在何处时 |
+| [ROADMAP.md](ROADMAP.md) | 阶段进度、后续优先级、阻塞项 | 需要了解已完成事项和下一步工作内容时 |
+| [AI_HANDOFF.md](AI_HANDOFF.md) | 完整的 CC 对齐快照 | 作为新 AI/开发者上手，或需要完整差距分析时 |
+| [PROMPT_CACHE_HIT_RATE.md](PROMPT_CACHE_HIT_RATE.md) | 提示缓存请求形状对齐、测量结果和陷阱 | 正在修改 LLM 请求格式或调查缓存命中率时 |
+| [../specs/](../specs/) | 可执行功能规格 | 正在实现特定功能并需要验收标准时 |
 
-## Quick Start
+## 快速开始
 
 ```bash
-swift build --disable-sandbox     # 0 errors, 0 warnings
+swift build --disable-sandbox     # 0 错误, 0 警告
 swift test --disable-sandbox --no-parallel   # 171 tests, 47 suites
 swift run --disable-sandbox swift-agent chat
 ```
 
-## Current CLI Runtime Notes
+## 当前 CLI 运行时说明
 
-- Background sub-agents are tracked through `TaskManager` with structured progress snapshots. `TaskOutput(block: true)` emits live progress while it waits, so the chat spinner can summarize running background tasks instead of showing only `Running TaskOutput...`.
-- Terminal rendering tests cover CJK width, markdown tables, paste placeholders, parallel tool scheduling, and compact background task progress status.
+- 后台 sub-agent 通过 `TaskManager` 进行跟踪，配合结构化进度快照。`TaskOutput(block: true)` 在等待期间发送实时进度，因此聊天 spinner 可以汇总正在运行的后台任务，而非仅显示 `Running TaskOutput...`。
+- 终端渲染测试覆盖了 CJK 宽度、markdown 表格、粘贴占位符、并行工具调度以及紧凑的后台任务进度状态。
 
-## Project At a Glance
+## 项目概览
 
-SwiftAgent is a Swift-native Claude Code reimplementation. Two modules:
+SwiftAgent 是 Swift 原生的 Claude Code 重新实现。两个模块：
 
-- **SwiftAgentCore** — Agent runtime: types, tools, LLM adapter, agent loop, safety, config, MCP, hooks, plugins
-- **SwiftAgentCLI** — Terminal: ArgumentParser commands, chat loop, ANSI rendering, line editor, markdown renderer
+- **SwiftAgentCore** — Agent 运行时：types, tools, LLM adapter, agent loop, safety, config, MCP, hooks, plugins
+- **SwiftAgentCLI** — 终端：ArgumentParser commands, chat loop, ANSI rendering, line editor, markdown renderer
 
-CC source reference: `~/CLI/claude-code/`
+CC 源码参考：`~/CLI/claude-code/`

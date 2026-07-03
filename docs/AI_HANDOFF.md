@@ -1,13 +1,13 @@
 # SwiftAgent — AI Handoff 文档
 
-> **This is a point-in-time snapshot.** For living documentation, see the files below. This document is updated after major alignment milestones, not per-commit.
+> **这是某个时间点的快照。** 有关最新文档，请参见下方文件。本文档在主要对齐里程碑后更新，而非每次提交。
 >
-> | Living doc | Covers |
+> | 最新文档 | 涵盖内容 |
 > |---|---|
-> | [ARCHITECTURE.md](ARCHITECTURE.md) | Module boundaries, design decisions, conventions |
-> | [ROADMAP.md](ROADMAP.md) | Phase progress, next priorities |
-> | [../CLAUDE.md](../CLAUDE.md) | AI quick-reference (build, structure, conventions) |
-> | [../AGENTS.md](../AGENTS.md) | Agent behavior, principles, guardrails |
+> | [ARCHITECTURE.md](ARCHITECTURE.md) | 模块边界、设计决策、约定 |
+> | [ROADMAP.md](ROADMAP.md) | 阶段进度、下一步优先级 |
+> | [../CLAUDE.md](../CLAUDE.md) | AI 快速参考（构建、结构、约定） |
+> | [../AGENTS.md](../AGENTS.md) | Agent 行为、原则、护栏 |
 
 ## 项目概述
 
@@ -16,8 +16,8 @@
 - **项目路径**: `/Users/jim/SwiftAgent/`
 - **CC 源码参考**: `~/CLI/claude-code/`
 - **当前对齐度**: ~99.0%
-- **构建系统**: Swift Package Manager (0 warnings)
-- **测试**: 171 个测试 / 47 个测试套件，全部通过
+- **构建系统**: Swift Package Manager（0 warnings）
+- **测试**: 258 个测试 / 61 个测试套件，全部通过
 
 ---
 
@@ -169,7 +169,7 @@ Sources/
 │
 └── Tests/
     ├── SwiftAgentCoreTests/
-    └── SwiftAgentCLITests/       # 终端渲染和输入回归测试；总计 47 套件，171 测试
+    └── SwiftAgentCLITests/       # 终端渲染和输入回归测试；总计 61 套件，258 测试
         ├── Phase1TypesTests.swift
         ├── Phase2LLMTests.swift
         ├── Phase3AgentTests.swift
@@ -207,39 +207,39 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 
 ### 最近修复：后台 subagent 进度 UX
 
-- `TaskManager` now stores structured progress (`TaskProgressEvent` / `TaskProgressSummary`) alongside the legacy accumulated `output` text.
-- `SubAgentManager` maps streaming agent events into structured phases such as `thinking`, `using_tool`, `writing_results`, and `turn_complete`.
-- `TaskOutputTool(block: true)` polls task snapshots while waiting and emits `TaskOutputProgressData`, allowing the CLI spinner to show compact background-task summaries instead of only `Running TaskOutput...`.
-- Regression coverage lives in `Phase11SubAgentTests` and `TerminalRenderingTests`.
+- `TaskManager` 现在存储结构化的进度信息（`TaskProgressEvent` / `TaskProgressSummary`），与传统累积的 `output` 文本并存。
+- `SubAgentManager` 将流式 agent 事件映射为结构化阶段，如 `thinking`、`using_tool`、`writing_results` 和 `turn_complete`。
+- `TaskOutputTool(block: true)` 在等待期间轮询任务快照并发出 `TaskOutputProgressData`，使 CLI spinner 能够显示紧凑的后台任务摘要，而非仅显示 `Running TaskOutput...`。
+- 回归测试覆盖位于 `Phase11SubAgentTests` 和 `TerminalRenderingTests` 中。
 
-### ✅ 已完成对齐（主要）
+### 已完成对齐（主要）
 
 | 领域 | 状态 |
 |------|------|
-| **Tool 协议** | ✅ 所有方法签名匹配 CC（call, description, prompt, validateInput, checkPermissions 等） |
-| **工具名称** | ✅ 全部 43 个工具的 LLM 名称匹配 CC（PascalCase，无 "Tool" 后缀） |
-| **工具参数** | ✅ JSON schema 全部使用 camelCase，匹配 CC |
-| **searchHint** | ✅ 33 个工具有 CC 匹配的搜索提示 |
-| **shouldDefer** | ✅ 24 个工具设置为 true，匹配 CC |
-| **isConcurrencySafe** | ✅ 全部 9 个不匹配已修正 |
-| **aliases** | ✅ BriefTool 有 `["Brief"]` 别名 |
-| **REPL 模式** | ✅ 现在是配置概念（非可调用工具），匹配 CC |
-| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史、CJK 宽度对齐 |
-| **类型系统** | ✅ 22 个类型文件涵盖全部 CC 领域类型 |
-| **QueryEngine** | ✅ streaming, batch, hooks, compaction, content block accumulation |
-| **MessageNormalizer** | ✅ 9 passes 匹配 CC（stripSignature, user-merge, assistant merge 等） |
-| **LLMClient** | ✅ auth headers, model normalization, fallback, beta keys |
-| **PermissionEngine** | ✅ 10 步管道, AST-aware, denial tracking |
-| **Hook 系统** | ✅ 所有事件类型, 异步执行, 超时, JSON 解析, blocking/non-blocking |
-| **MCP 传输** | ✅ SSE 和 HTTP 传输实现 |
-| **ConfigLoader** | ✅ 层级优先级加载匹配 CC |
-| **ClaudeMdLoader** | ✅ 层级加载 + @include 指令 |
-| **PluginManager** | ✅ 目录扫描, manifest 优先级（.claude-plugin/ → plugin.json → manifest.json） |
-| **MemoryStore** | ✅ frontmatter 解析, project/user memory |
-| **Branded IDs** | ✅ SessionId, AgentId 等品牌化类型 |
-| **Settings** | ✅ 80+ 字段匹配 CC |
+| **Tool 协议** | 所有方法签名匹配 CC（call, description, prompt, validateInput, checkPermissions 等） |
+| **工具名称** | 全部 43 个工具的 LLM 名称匹配 CC（PascalCase，无 "Tool" 后缀） |
+| **工具参数** | JSON schema 全部使用 camelCase，匹配 CC |
+| **searchHint** | 33 个工具有 CC 匹配的搜索提示 |
+| **shouldDefer** | 24 个工具设置为 true，匹配 CC |
+| **isConcurrencySafe** | 全部 9 个不匹配已修正 |
+| **aliases** | BriefTool 有 `["Brief"]` 别名 |
+| **REPL 模式** | 现在是配置概念（非可调用工具），匹配 CC |
+| **CLI 交互** | 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史、CJK 宽度对齐 |
+| **类型系统** | 22 个类型文件涵盖全部 CC 领域类型 |
+| **QueryEngine** | streaming, batch, hooks, compaction, content block accumulation |
+| **MessageNormalizer** | 9 passes 匹配 CC（stripSignature, user-merge, assistant merge 等） |
+| **LLMClient** | auth headers, model normalization, fallback, beta keys |
+| **PermissionEngine** | 10 步管道, AST-aware, denial tracking |
+| **Hook 系统** | 所有事件类型, 异步执行, 超时, JSON 解析, blocking/non-blocking |
+| **MCP 传输** | SSE 和 HTTP 传输实现 |
+| **ConfigLoader** | 层级优先级加载匹配 CC |
+| **ClaudeMdLoader** | 层级加载 + @include 指令 |
+| **PluginManager** | 目录扫描, manifest 优先级（.claude-plugin/ → plugin.json → manifest.json） |
+| **MemoryStore** | frontmatter 解析, project/user memory |
+| **Branded IDs** | SessionId, AgentId 等品牌化类型 |
+| **Settings** | 80+ 字段匹配 CC |
 
-### ⚠️ 剩余差距（~1.0%）
+### 剩余差距（~1.0%）
 
 | 差距 | 影响 | 修复难度 |
 |------|------|----------|
@@ -250,7 +250,6 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 | **isEnabled() 覆盖** | 19 个工具需要功能开关检查（isTodoV2Enabled, isAgentSwarmsEnabled 等） | 中（需要基础设施） |
 | **CLI 标志** | CC 有 ~70 个 CLI 标志，SA 有 ~7 个（--model, --permission, --api-key, --no-color, --no-markdown, --debug/-d, --help） | 中 |
 | **TUI 功能** | 完整终端 UI | 高 |
-| **CLI 交互** | ✅ 粘贴检测、多行输入 (Option+Enter/Shift+Enter)、ESC 取消、Markdown 渲染、行编辑器历史、CJK 宽度对齐 | 已完成 |
 | **CC 内部工具** | TungstenTool, SuggestBackgroundPRTool 等 ant-only 工具未复制 | 不需要 |
 
 ---
@@ -266,76 +265,74 @@ swift test --disable-sandbox --no-parallel --filter Phase4ToolsTests
 
 ---
 
----
+## SwiftAgentApp — macOS App（第 1-5 阶段已完成，v0.5.0）
 
-## SwiftAgentApp — macOS App (Phases 1-5 Complete, v0.5.0)
+> **截至 2026-06-16**，SwiftAgentApp macOS target 交付了完全打磨的产品。
 
-> **As of 2026-06-16**, the SwiftAgentApp macOS target ships a fully-polished product.
+### 架构
 
-### Architecture
+macOS App 采用 **MVVM** 配合 SwiftUI，底层由 SQLite 持久化支持：
 
-The macOS app uses **MVVM** with SwiftUI, backed by SQLite persistence:
+- **AppViewModel** — 根状态（项目、线程、API key、LLM provider、**布局开关**）
+- **ThreadViewModel** — 每个线程的状态、消息发送/流生命周期
+- **ProjectViewModel** — 每个项目的状态
 
-- **AppViewModel** — Root state (projects, threads, API key, LLM provider, **layout toggles**)
-- **ThreadViewModel** — Per-thread state, message send/stream lifecycle
-- **ProjectViewModel** — Per-project state
+数据流：Storage（SQLite）→ AppViewModel → 通过 `@Published` / `@EnvironmentObject` 流向 SwiftUI 视图。
 
-Data: Storage (SQLite) → AppViewModel → SwiftUI views via `@Published` / `@EnvironmentObject`.
+### 三栏布局（HSplitView）
 
-### 3-Pane Layout (HSplitView)
+主窗口是三栏 `HSplitView`（侧边栏 | 内容 | 右侧标签），三个独立开关（`sidebarVisible`、`rightVisible`、`focusMode`）接入原生 macOS 工具栏，通过 `.toolbar { ToolbarItem(placement: .navigation | .primaryAction) }` 实现。详见 [ARCHITECTURE.md](ARCHITECTURE.md) 的 "macOS App 布局 — HSplitView 三栏" 部分了解设计原理（为什么不用 `NavigationSplitView`，为什么专注模式将 `ContentView` 从树中完全移除）。
 
-The main window is a 3-pane `HSplitView` (Sidebar | Content | Right Tabs) with three independent toggles (`sidebarVisible`, `rightVisible`, `focusMode`) wired into the native macOS toolbar via `.toolbar { ToolbarItem(placement: .navigation | .primaryAction) }`. See [ARCHITECTURE.md](ARCHITECTURE.md) "macOS App Layout — HSplitView 3-Pane" for the design rationale (why not `NavigationSplitView`, why focus mode removes `ContentView` from the tree entirely).
+### 关键模块
 
-### Key Modules
-
-| Module | Description | Files |
+| 模块 | 描述 | 文件数 |
 |--------|-------------|-------|
-| **Settings** | Independent window (4 categories × 13 tabs) | 18 files |
-| **RightTabs** | Multi-tab workspace (Review/Terminal/Browser/Files/Side chat) | 10 files |
-| **Storage** | SQLite persistence (Projects, Threads, Messages) | 6 files |
-| **DeepSeek** | Streaming Chat Completions, Keychain API key | 4 files |
-| **Skills** | Skills library + creator wizard | 4 files |
-| **MCP** | MCP server config + management | 4 files |
-| **Appshots** | Cmd+Cmd screen capture via Accessibility API | 4 files |
-| **Errors** | 16 error states with Banner/Toast/Modal presentation | 4 files |
-| **Animations** | Duration tokens, easing, reduce-motion support | 1 file |
-| **Accessibility** | a11y labels, high contrast, dynamic type, VoiceOver | 1 file |
-| **Shortcuts** | 27+ shortcuts registry (single source of truth) | 1 file |
-| **DesignSystem** | Color, Typography, Spacing, Radius, StatusDot | 5 files |
+| **设置** | 独立窗口（4 类 × 13 标签页） | 18 文件 |
+| **右侧标签** | 多标签工作区（Review/Terminal/Browser/Files/Side chat） | 10 文件 |
+| **存储** | SQLite 持久化（Projects、Threads、Messages） | 6 文件 |
+| **DeepSeek** | 流式 Chat Completions、Keychain API key | 4 文件 |
+| **技能** | 技能库 + 创建向导 | 4 文件 |
+| **MCP** | MCP 服务器配置 + 管理 | 4 文件 |
+| **Appshots** | Cmd+Cmd 通过 Accessibility API 截屏 | 4 文件 |
+| **错误** | 16 种错误状态，带 Banner/Toast/Modal 展示 | 4 文件 |
+| **动画** | 时长 token、缓动、减少动画支持 | 1 文件 |
+| **无障碍** | a11y 标签、高对比度、动态字体、VoiceOver | 1 文件 |
+| **快捷键** | 27+ 快捷键注册表（单一事实来源） | 1 文件 |
+| **设计系统** | Color、Typography、Spacing、Radius、StatusDot | 5 文件 |
 
-### Settings Categories
+### 设置分类
 
-- **Personal** (5 tabs): General, Appearance, Configuration, Personalization, Keyboard shortcuts
-- **Integrations** (4 tabs): Appshots, MCP Servers, Browser, Computer Use (placeholder)
-- **Coding** (5 tabs): Hooks, Connections, Git, Environments, Worktrees
-- **Archived** (1 tab): Archived chats (Restore / Delete permanently)
+- **个人**（5 个标签页）：通用、外观、配置、个性化、键盘快捷键
+- **集成**（4 个标签页）：Appshots、MCP 服务器、浏览器、Computer Use（占位）
+- **编码**（5 个标签页）：Hooks、连接、Git、环境、Worktrees
+- **归档**（1 个标签页）：已归档聊天（恢复 / 永久删除）
 
-### Keyboard Shortcuts (27+)
+### 键盘快捷键（27+）
 
-15 shortcuts are bound via `.commands` modifier in the app Scene. The full table (27+ entries) is displayed in Settings → Keyboard shortcuts. Categories: Thread Management (7), Navigation (7), Right Tabs (10), Panels (3), Environment (1), Global (5).
+15 个快捷键通过 App Scene 中的 `.commands` modifier 绑定。完整表格（27+ 条目）显示在设置 → 键盘快捷键中。分类：线程管理（7）、导航（7）、右侧标签（10）、面板（3）、环境（1）、全局（5）。
 
-### Error States (16)
+### 错误状态（16 种）
 
-All 16 from the spec covered: Sandbox denied, Network reconnection, 429 rate limit, 5xx model error, Worktree conflict, 401 invalid key, 402 low balance, Appshot permission, Appshot capture failed, MCP disconnected, Skill load failed, Diff merge failed, /goal persistence failed, Project switch data loss, Thread list >1000, Network proxy.
+规范中的所有 16 种已覆盖：沙箱拒绝、网络重连、429 速率限制、5xx 模型错误、Worktree 冲突、401 无效密钥、402 余额不足、Appshot 权限、Appshot 截取失败、MCP 断开连接、技能加载失败、Diff 合并失败、/goal 持久化失败、项目切换数据丢失、线程列表 >1000、网络代理。
 
-### Accessibility
+### 无障碍
 
-- All interactive elements labelled
-- Reduce Motion detected + animations shortened
-- High Contrast mode honored
-- Dynamic Type supported
-- Semantic colors (no pure-color-only signaling)
+- 所有交互元素已标记
+- 检测到"减少动画"并缩短动画时长
+- 遵循高对比度模式
+- 支持动态字体
+- 语义色彩（无纯颜色-only 信号）
 
-### Tests
+### 测试
 
-- **258 unit tests** across 61 suites (Core, CLI, App) — all passing
-- **5 XCUITest suites** (LaunchAndSeeLayout, NewThreadSendsMessage, SwitchPanel, SettingsOpens, ThemeSwitch)
+- **258 个单元测试**，跨 61 个套件（Core、CLI、App）— 全部通过
+- **5 个 XCUITest 套件**（LaunchAndSeeLayout、NewThreadSendsMessage、SwitchPanel、SettingsOpens、ThemeSwitch）
 
-### Build
+### 构建
 
 ```bash
 swift build --disable-sandbox    # 0 errors, 0 warnings
-swift test --disable-sandbox --no-parallel  # 258 passed, 0 failed
+swift test --disable-sandbox --no-parallel  # 258 通过, 0 失败
 ```
 
 ---

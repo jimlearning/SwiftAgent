@@ -1,6 +1,6 @@
-# Prompt Cache Hit Rate（工程档案）
+# Prompt Cache 命中率（工程档案）
 
-> **📖 新读者请阅读 [PROMPT_CACHE_GUIDE.md](./PROMPT_CACHE_GUIDE.md)**，那是从入门到精通的全面指南。
+> **新读者请阅读 [PROMPT_CACHE_GUIDE.md](./PROMPT_CACHE_GUIDE.md)**，那是从入门到精通的全面指南。
 >
 > 本文档保留为 SwiftAgent 缓存对齐的工程档案，包含完整的试错记录和 Claude Code capture 对比数据。
 
@@ -227,12 +227,12 @@ Claude Code 使用 non-global mode（org scope），即所有 system content 放
 
 **预期**：动态内容（session-specific guidance、memory、date）不缓存，静态内容缓存。匹配 CC 的 global mode。
 
-**实际效果（通过 SAME proxy 对比）：**
+**实际效果（通过同一代理对比）：**
 
 | 场景 | cache_read | cache_creation | 命中率 |
 |---|---|---|---|
 | CC flash（deepseek-v4-flash） | 24K → 103K | 有 | 90%+ |
-| SwiftAgent（修复后） | 7K（flat） | 0 | 6-16% |
+| SwiftAgent（修复后） | 7K（不增长） | 0 | 6-16% |
 
 **问题分析**：
 
@@ -254,7 +254,7 @@ Claude Code 使用 non-global mode（org scope），即所有 system content 放
 - cache marker 总数：system=2, total=3。
 - 所有 258 个测试通过。
 
-**实测结果（通过 SAME proxy 运行 `eval cache-hit-rate`）：**
+**实测结果（通过同一代理运行 `eval cache-hit-rate`）：**
 
 ```
 Turn  Input  Cache Read  Cache Cre.  Hit Rate
@@ -353,7 +353,7 @@ private struct SortedJSON: Encodable {
 
 **同时修复 DebugLogger**：`DebugLogger.sortKeysRecursively` 和 `expandJSONStrings` 中的同样问题，移除 `JSONSerialization.data(withJSONObject:)` 调用，改用 `SortedJSON` 编码。
 
-**实测结果（通过 SAME proxy 对比，deepseek-v4-flash）：**
+**实测结果（通过同一代理对比，deepseek-v4-flash）：**
 
 ```
 Turn  Input  Cache Read  Cache Cre.  Hit Rate
@@ -433,7 +433,7 @@ jq -r '
 
 - 每次请求优先在最后一条 message 的最后一个 `text` content block 上添加 `cache_control`。
 - `thinking`、`redacted_thinking` 和 `tool_result` 不承载 message-level cache marker。
-- tool-result 回合会追加一个稳定的 trailing `<system-reminder>` text block，使 breakpoint 落在 text 上。
+- tool-result 回合会追加一个稳定的 trailing `<system-reminder>` text block，使断点落在 text 上。
 - 这与 Claude Code 的 latest-message breakpoint 行为一致。
 
 ### Tool cache marker
@@ -632,9 +632,9 @@ NSDictionary(objects: ["billing","text"], forKeys: ["text","type"])
 
 ```
 Turn  Input  Cache Read  Cache Cre.  Hit Rate
-  1   1,646      31,744           0     95.1%  95% hit (system prompt cached from prior session)
-  2     314      34,560           0     99.1%  near-perfect  
-  3     168      34,816           0     99.5%  almost all cached
+  1   1,646      31,744           0     95.1%  系统提示从先前会话缓存命中
+  2     314      34,560           0     99.1%  接近完美
+  3     168      34,816           0     99.5%  几乎全部命中
 ```
 
 **解读**：

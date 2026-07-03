@@ -81,7 +81,7 @@
 
 ### 3.1 现状
 
-**完整**：
+**已完整**：
 - 类型层（`HookJSONTypes.swift`，969 行）：27 个事件特定 Input、14+ 个事件特定 Output、BaseHookInput、HookJSONOutputDecodable
 - 引擎层（`HookSystem.swift`，552 行）：dispatch 并行执行 + 优先级聚合 + matcher 解析 + 占位符替换 + command/http/prompt 三种 hook 执行
 - 配置层：`loadFromSettings()` 支持 `disableAllHooks` / `allowManagedHooksOnly`
@@ -244,7 +244,7 @@ swift test --disable-sandbox --no-parallel --filter Phase13HookTests
 
 ### 4.1 现状
 
-**完整**：
+**已完整**：
 - 类型层（`PluginManager.swift`，719 行）：`PluginManifest` 26 字段、`PluginComponent` 5 枚举、`PluginAuthor/Repository`、25 种 `PluginErrorType`、`StructuredPluginError` 详细上下文
 - 加载层：`load(from:)` 解析 3 种 manifest 路径（`.claude-plugin/plugin.json` → `plugin.json` → `manifest.json`）、`scanPluginsDirectory()`、`createPluginFromPath()` 自动探测 5 个组件目录、`loadAllPlugins(from:)` 返回 `PluginLoadResult`
 - 内置：`BuiltinPluginDefinition`、`BundledSkillDefinition` 框架
@@ -292,33 +292,33 @@ public actor PluginManager {
         agentRegistry: inout [String: AgentDefinition],
         skillRegistry: inout [SkillManifest]
     ) async throws {
-        // Commands: load commands/*.md → FullCommand
+        // Commands: 加载 commands/*.md → FullCommand
         for path in plugin.commandsPaths ?? [] {
             guard let cmd = PluginCommandLoader.load(from: path, pluginName: plugin.name) else { continue }
             commandRegistry.register(cmd)
         }
 
-        // Agents: load agents/*.md → AgentDefinition
+        // Agents: 加载 agents/*.md → AgentDefinition
         for path in plugin.agentsPaths ?? [] {
             guard let agent = PluginAgentLoader.load(from: path, pluginName: plugin.name) else { continue }
             agentRegistry[agent.name] = agent
         }
 
-        // Skills: load skills/<name>/SKILL.md → SkillManifest
+        // Skills: 加载 skills/<name>/SKILL.md → SkillManifest
         for path in plugin.skillsPaths ?? [] {
             guard let manifest = PluginSkillLoader.load(from: path) else { continue }
             skillRegistry.append(manifest)
         }
 
-        // Hooks: parse plugin.hooksConfig → HookEntry, register
+        // Hooks: 解析 plugin.hooksConfig → HookEntry, register
         if let hooksConfig = plugin.hooksConfig {
             for entry in PluginHookLoader.parse(hooksConfig, source: .plugin) {
                 await hookSystem.register(entry)
             }
         }
 
-        // MCP servers: load to MCPManager (defer to MCP team)
-        // LSP servers: deferred (no LSPManager yet)
+        // MCP servers: 加载到 MCPManager（移交给 MCP 团队）
+        // LSP servers: 延迟（尚无 LSPManager）
     }
 }
 ```
@@ -495,7 +495,7 @@ swift test --disable-sandbox --no-parallel --filter Phase13PluginTests
 
 ### 5.1 现状
 
-**完整**：
+**已完整**：
 - 类型层（`Agent.swift`，249 行）：`AgentDefinition` 30 字段、`AgentRole` 枚举（5 种）、`AgentMemoryScope`（3 种）、`AgentMcpServerSpec`、`AgentContext`
 - 工具层（`AgentTool.swift`，287 行）：完整 schema、参数解析、sync/background 两条路径、事件转发
 - 管理器（`SubAgentManager.swift`，304 行）：`run()` / `startBackground()` / `effectiveTools()` 过滤
@@ -707,7 +707,7 @@ swift test --disable-sandbox --no-parallel --filter "Phase13AgentTests|Phase11Su
 
 ### 6.1 现状
 
-**完整**：25 个 `PluginErrorType` 变体已定义（含 `marketplaceBlockedByPolicy`, `marketplaceNotFound`, `marketplaceLoadFailed`）。
+**已完整**：25 个 `PluginErrorType` 变体已定义（含 `marketplaceBlockedByPolicy`, `marketplaceNotFound`, `marketplaceLoadFailed`）。
 
 **缺口**：除错误类型外，**完全空白**。无配置、无发现、无客户端。
 
@@ -748,7 +748,7 @@ public struct MarketplaceConfig: Sendable, Codable {
 }
 
 public enum TrustLevel: String, Sendable, Codable {
-    case official      // anthropic 官方
+    case official      // 官方
     case verified      // 已签名验证
     case unverified    // 信任用户
 }

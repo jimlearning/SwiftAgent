@@ -1,4 +1,4 @@
-# Prompt Cache Hit Rate — 从入门到精通
+# Prompt Cache 命中率 — 从入门到精通
 
 > SwiftAgent 的 prompt cache 完全指南：从 API 基础概念到生产级工程实践。
 
@@ -350,7 +350,7 @@ Turn  Input  Cache Read  Cache Cre.  Hit Rate
 
 - 每次请求**仅**最后一条 message 的最后一个 `text` content block 承载 `cache_control`
 - `thinking`、`redacted_thinking`、`tool_result` blocks **不**承载 message-level marker
-- tool-result 回合追加 trailing `<system-reminder>` text block，使 breakpoint 落在 text 上
+- tool-result 回合追加 trailing `<system-reminder>` text block，使断点落在 text 上
 - 仅含 tool_result 的 message 不加任何 marker
 
 ---

@@ -1,6 +1,6 @@
-# Prompt Cache Hit Rate — 从入门到精通
+# Prompt Cache 命中率 — 从入门到精通
 
-本文是 SwiftAgent prompt cache hit rate 的全面指南，涵盖原理、架构、调优、排查和维护。它不是通用 Anthropic API 说明，而是本项目实际落地缓存优化的工程档案。
+本文是 SwiftAgent prompt cache 命中率的全面指南，涵盖原理、架构、调优、排查和维护。它不是通用 Anthropic API 说明，而是本项目实际落地缓存优化的工程档案。
 
 ---
 
@@ -47,7 +47,7 @@
 
 
 
-1. **同模型 ≠ 同命中率**。缓存 key 依赖请求结构的字节级匹配，不仅依赖模型。
+1. **同模型不等于同命中率**。缓存 key 依赖请求结构的字节级匹配，不仅依赖模型。
 2. **第一轮不会有高命中**。服务端需要先见过这个前缀才能创建缓存。
 3. **会话越长，可缓存的历史越多**，命中率通常越高（假设前缀稳定）。
 
@@ -57,14 +57,14 @@
 
 ### 什么是 Prefix-based Caching
 
-Anthropic Messages API 使用 **prefix-based** 缓存策略。对于每个请求，服务端检查请求的输入（system → tools → messages）是否能匹配到已存储的缓存条目。匹配从前缀开始，一旦某个位置不匹配，后续部分就无法命中缓存。
+Anthropic Messages API 使用 **prefix-based**（基于前缀的）缓存策略。对于每个请求，服务端检查请求的输入（system → tools → messages）是否能匹配到已存储的缓存条目。匹配从前缀开始，一旦某个位置不匹配，后续部分就无法命中缓存。
 
 
 
 
 ```
 请求 A: [system-aaaaaaa][tools-aaaaa][msg1-aaa][msg2-aaa]
-                                                  ^ breakpoint
+                                                  ^ 断点
 
 请求 B: [system-aaaaaaa][tools-aaaaa][msg1-bbb]  ← 从 msg1 开始不匹配
          ↑ 可命中          ↑ 可命中  ↑ 不匹配 → 后续都无法命中
@@ -72,7 +72,7 @@ Anthropic Messages API 使用 **prefix-based** 缓存策略。对于每个请求
 
 ### Cache Marker 的作用
 
-`cache_control` marker 告诉 API "到这里为止可以作为一个缓存边界"：
+`cache_control` 标记告诉 API"到这里为止可以作为一个缓存边界"：
 
 ```json
 {
@@ -83,10 +83,10 @@ Anthropic Messages API 使用 **prefix-based** 缓存策略。对于每个请求
 ```
 
 **关键点**：
-- marker 嵌在 content block 上，**不是独立的请求字段**
-- marker 的位置决定缓存前缀的边界，**不是"在这里缓存这一条"**
+- 标记嵌在 content block 上，**不是独立的请求字段**
+- 标记的位置决定缓存前缀的边界，**不是"在这里缓存这一条"**
 - `ephemeral` 表示短期缓存（默认 TTL 5 分钟，续期后可达 1 小时）
-- marker **多不一定好**——多余的 marker 改变请求形状，可能反而破坏对齐
+- 标记**多不一定好**——多余的标记改变请求形状，可能反而破坏对齐
 
 ### 缓存生命周期
 
@@ -116,7 +116,7 @@ Anthropic Messages API 使用 **prefix-based** 缓存策略。对于每个请求
 | 块结构变化  | system 块拆分/合并方式改变                          |
 | 字段变化    | 新增/删除 `defer_loading`、`scope` 字段             |
 | 顶层字段    | 多出 `temperature`、`tool_choice`、`anthropic_beta` |
-| marker 变化 | cache_control 数量、位置、字段内容变化              |
+| 标记变化    | cache_control 数量、位置、字段内容变化              |
 
 **核心原则**：缓存命中率首先是 prefix 稳定性问题，其次才是模型/网关问题。
 
@@ -212,7 +212,7 @@ Any:     cache_read=flat, cache_creation=0  → 系统缓存可用，消息级�
 | > 90%  | 优秀 | 大部分稳定前缀被缓存，仅最新消息需要处理 |
 | 70-90% | 良好 | 可接受的缓存效率                         |
 | 50-70% | 中等 | 有改进空间                               |
-| 30-50% | 低   | 需要检查结构和 marker 位置               |
+| 30-50% | 低   | 需要检查结构和标记位置                   |
 | < 30%  | 极低 | 代理可能不支持缓存，或请求形状完全不同   |
 
 这些阈值是经验值。实际效果取决于会话长度、模型和代理。
@@ -232,8 +232,8 @@ SwiftAgent 对齐 Claude Code 的请求形状，目标是让发送到同一 API 
 │ system: [                                                │
 │   [0] billing header text (无 cache_control)             │
 │   [1] "You are Claude Code..." (+ cache_control)  ← ┐   │
-│   [2] static content (+ cache_control)              │   │
-│   [3] dynamic content (+ cache_control)  ← 连续链 ─┘   │
+│   [2] 静态内容 (+ cache_control)                   │   │
+│   [3] 动态内容 (+ cache_control)  ← 连续链 ─┘          │
 │ ]                                                        │
 │ tools: [Read, Edit, Bash, ...] (无 cache_control)        │
 │ messages: [                                              │
@@ -243,8 +243,8 @@ SwiftAgent 对齐 Claude Code 的请求形状，目标是让发送到同一 API 
 │     text "<system-reminder>..." (+ cache_control) ← ┐   │
 │   ]                                          断点 ──┘   │
 │ ]                                                        │
-│ top-level: thinking, context_management, output_config   │
-│   (无 temperature, 无 tool_choice, 无 anthropic_beta)   │
+│ 顶层字段: thinking, context_management, output_config    │
+│   (无 temperature, 无 tool_choice, 无 anthropic_beta)    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -275,8 +275,8 @@ SwiftAgent 对齐 Claude Code 的请求形状，目标是让发送到同一 API 
 
 请求的最后一条 message 的最后一个 **text** content block 上放置 `cache_control`：
 
-- 缓存 marker 不放在 `tool_result`、`thinking`、`redacted_thinking` 上
-- 当 message 只在 tool_result 后面没有 text 时，**追加**一个稳定的 `<system-reminder>` text block 作为 breakpoint
+- 缓存标记不放在 `tool_result`、`thinking`、`redacted_thinking` 上
+- 当 message 只在 tool_result 后面没有 text 时，**追加**一个稳定的 `<system-reminder>` text block 作为断点
 - `lastCacheableBlockIndex()` 从消息末尾向前查找第一个 text 块
 
 ### 代码路径
@@ -302,7 +302,7 @@ ChatCommand.run()
 | `LLMClient.swift`           | `apiFormattedSystem()`, `apiFormattedMessages()`, `apiFormattedTools()`, `applyClaudeCodeRequestShape()` |
 | `ToolExecutor.swift`        | `ToolRegistry.toolDefinitions()` — 工具列表生成（排序、缓存） |
 | `SystemPromptBuilder.swift` | `build()` — 构建带 boundary 的系统提示文本                   |
-| `MessageFactory.swift`      | `appendToolResultCacheBreakpointReminder()` — 追加 breakpoint text |
+| `MessageFactory.swift`      | `appendToolResultCacheBreakpointReminder()` — 追加断点 text 块 |
 | `MessageNormalizer.swift`   | `normalizeMessagesForAPI()` — 17 步归一化 pipeline           |
 | `EvalCommand.swift`         | `CacheHitRateCommand` — 缓存命中率评估工具                   |
 | `ChatCommand.swift`         | 主循环 — 组装请求、使用 `.adaptive` thinking                 |
@@ -326,8 +326,6 @@ ChatCommand.run()
 
 
 
-
-
   "max_tokens": 32000,
   "stream": true,
   "system": [...],
@@ -336,7 +334,6 @@ ChatCommand.run()
   "thinking": { "type": "adaptive" },
   "context_management": {
     "edits": [{ "type": "clear_thinking_20251015", "keep": "all" }]
-
 
   },
   "output_config": { "effort": "high" },
@@ -364,16 +361,10 @@ anthropic-beta: claude-code-20250219,
 
 
 
-
-
 ```
-
 当工具列表包含 deferred tools 时，追加 `tool-search-1p-2025-05-14`。
 
 ### Static Headers
-
-
-
 
 
 
@@ -441,7 +432,7 @@ Claude Code Switch 和第三方代理对缓存行为有额外影响，**不能�
 
 ```
 [block-1: cache] [block-2: no cache] [block-3: no cache] [tools] [messages]
-                  ↑ gap here → proxy resets cache boundary
+                  ↑ 此处有 gap → 代理重置缓存边界
 ```
 
 代理在 gap 之后可能**完全停止缓存匹配**，导致 tools 和 messages 永远无法命中缓存。
@@ -449,7 +440,7 @@ Claude Code Switch 和第三方代理对缓存行为有额外影响，**不能�
 **正确做法**：所有非 billing 系统块连续覆盖 `cache_control`：
 
 ```
-[billing: no cache] [identity: cache] [static: cache] [dynamic: cache] → no gap
+[billing: no cache] [identity: cache] [static: cache] [dynamic: cache] → 无 gap
 ```
 
 ### 消息级缓存支持
@@ -471,7 +462,7 @@ Claude Code Switch 和第三方代理对缓存行为有额外影响，**不能�
 
 ```
 cache_read == 0 且 cache_creation == 0?
-  ├─ Yes → 代理不支持缓存 (or 请求太小 < 1000 tokens)
+  ├─ Yes → 代理不支持缓存 (或请求太小 < 1000 tokens)
   │        → 尝试更大请求、检查 provider 文档
   │
   └─ No → cache_creation > 0 但 cache_read == 0?
@@ -479,9 +470,9 @@ cache_read == 0 且 cache_creation == 0?
   │                → 检查 prefix 稳定性（见下文）
   │
   └─ No → cache_read > 0?
-          ├─ Flat (不随回合增长) → 系统缓存 OK, 消息级缓存不可用
-          │                         → 检查代理/thinking/请求大小
-          └─ Growing → ✅ 一切正常
+          ├─ 不随回合增长 → 系统缓存 OK, 消息级缓存不可用
+          │                  → 检查代理/thinking/请求大小
+          └─ 随回合增长 → ✅ 一切正常
 ```
 
 ### 检查清单
@@ -582,11 +573,9 @@ jq -r '
 
 
 
-
-
 ### 误区 5：message marker 可以放在 tool_result 上
 
-**错误**。CC capture 中 marker 始终落在 text 块，不在 tool_result 块。SwiftAgent 的 `lastCacheableBlockIndex()` 正确实现了这一点。
+**错误**。CC capture 中标记始终落在 text 块，不在 tool_result 块。SwiftAgent 的 `lastCacheableBlockIndex()` 正确实现了这一点。
 
 ### 误区 6：用 `cache_read/input_tokens` 计算命中率
 
@@ -601,9 +590,10 @@ jq -r '
 
 ### 误区 8：单元测试通过 = 缓存生效
 
-**错误**。`CacheControlPlacementTests` 只验证结构和 marker 位置，不验证代理是否实际缓存。必须用真实 API 调用验证。
+**错误**。`CacheControlPlacementTests` 只验证结构和标记位置，不验证代理是否实际缓存。必须用真实 API 调用验证。
 
 ### 误区 9：`message_delta.usage` 包含完整用量
+
 
 
 
@@ -613,9 +603,9 @@ jq -r '
 
 ### 误区 10：不加 marker 的块不影响缓存
 
-**错误**。不加 marker 的文本块仍然参与前缀序列化。如果某块的 text 每轮都变（如时间戳），它会破坏之后所有块的缓存匹配，无论之后是否有 marker。
+**错误**。不加标记的文本块仍然参与前缀序列化。如果某块的 text 每轮都变（如时间戳），它会破坏之后所有块的缓存匹配，无论之后是否有标记。
 
-### 误解 11：cache_creation == 0 = 缓存不工作
+### 误区 11：cache_creation == 0 = 缓存不工作
 
 **错误**。`cache_creation` 只在新建缓存条目时 > 0。如果缓存条目已在更早的请求中创建（预热），后续请求可以只有 `cache_read` 而没有 `cache_creation`。
 
@@ -636,10 +626,10 @@ return tools.values.sorted { $0.name < $1.name }
 
 
 ```
-
 这确保同一 session 内工具序列化顺序稳定。测试 `ToolRegistryCachingTests` 验证了排序稳定性。
 
 ### Description 稳定性
+
 
 
 
@@ -678,31 +668,31 @@ SwiftAgent 和 Claude Code 的工具集不一定完全相同（MCP 工具、自�
 `normalizeMessagesForAPI()` 执行 17 步归一化（`MessageNormalizer.swift`），目标不仅是 API 兼容性，也保障缓存稳定性：
 
 ```
-1.  Filter virtual messages        (display-only, never to API)
-2.  Filter progress messages       (never to API)
-3.  Filter system messages         (never to API)
-4.  Deduplicate by UUID            (first occurrence wins)
-5.  Normalize tool_use inputs      (strip internal fields)
-6.  Strip unavailable tools        (removes tool_reference blocks)
-7.  Filter orphaned thinking-only  (thinking-only → skip)
-8.  Filter trailing thinking       (last msg → strip trailing thinking)
-9.  Filter whitespace-only         (replace with NO_CONTENT_MESSAGE)
-10. Merge consecutive user messages (all consecutive → merge)
-11. Merge assistant by message ID   (backward walk, same requestId)
-12. Smoosh system reminders         (fold into tool_result content)
-13. Sanitize error tool_results     (non-text in is_error → strip)
-14. Ensure non-empty assistant      (placeholder for empty arrays)
-15. Normalize content               (strip empty text blocks)
-16. Apply tool result budget        (MAX_TOOL_RESULTS_PER_MESSAGE_CHARS)
-17. Ensure tool_use/result pairing  (insert/remove synthetic blocks)
+1.  过滤虚拟消息                   (仅展示，不发往 API)
+2.  过滤进度消息                   (不发往 API)
+3.  过滤系统消息                   (不发往 API)
+4.  按 UUID 去重                   (首次出现为准)
+5.  归一化 tool_use input          (去除内部字段)
+6.  去除不可用工具                  (移除 tool_reference blocks)
+7.  过滤孤立 thinking-only         (thinking-only → 跳过)
+8.  过滤尾部 thinking              (最后一条 msg → 去除尾部 thinking)
+9.  过滤纯空白消息                  (替换为 NO_CONTENT_MESSAGE)
+10. 合并连续 user 消息              (所有连续的 → 合并)
+11. 按 message ID 合并 assistant    (反向遍历, 相同 requestId)
+12. 折叠 system reminders           (折叠进 tool_result content)
+13. 清理错误 tool_results           (is_error 中非 text → 去除)
+14. 确保非空 assistant              (空数组用占位符)
+15. 归一化 content                  (去除空 text blocks)
+16. 应用 tool result 预算           (MAX_TOOL_RESULTS_PER_MESSAGE_CHARS)
+17. 确保 tool_use/result 配对       (插入/移除合成 blocks)
 ```
 
 ### 影响缓存的关键步骤
 
 - **Pass 5**：归一化 tool_use input（去除 plan/planFilePath 等内部字段）。如果输入未被归一化，不同的内部字段会导致 cache miss。
-- **Pass 6**：strip unavailable tools。如果 tool 可用性在不同请求中变化，message content 可能变化。
-- **Pass 12**：smoosh system reminders。将 `<system-reminder>` text blocks 折叠进 tool_result content 中。如果折叠位置不同，message 序列化会变化。
-- **Pass 13**：sanitize error tool_results。确保 is_error 块只有 text 内容。
+- **Pass 6**：去除不可用工具。如果 tool 可用性在不同请求中变化，message content 可能变化。
+- **Pass 12**：折叠 system reminders。将 `<system-reminder>` text blocks 折叠进 tool_result content 中。如果折叠位置不同，message 序列化会变化。
+- **Pass 13**：清理 error tool_results。确保 is_error 块只有 text 内容。
 
 ### Tool Result Cache Breakpoint
 
@@ -729,10 +719,7 @@ Continue using them as the latest observed tool outputs.
 </system-reminder>
 """
 
-
-
 ```
-
 这个块的文本是**硬编码常量**，不会变化，因此是稳定的 prefix 断点。CC 的等价实现也是在 tool_result 后追加 system-reminder text。
 
 ### Message 顺序的重要性
@@ -757,7 +744,7 @@ API 要求 message 交替（user → assistant → user → ...）。如果 norm
 | `cacheControlOnLastTextBlock`                                | marker 正确落在 text 块                     |
 | `noCacheControlOnToolResultOnlyMessage`                      | tool_result-only 消息无 marker              |
 | `cacheControlPrefersTrailingTextAfterToolResults`            | marker 跳过 tool_result                     |
-| `toolResultCacheBreakpointReminderCreatesTrailingTextMarker` | breakpoint 正确追加                         |
+| `toolResultCacheBreakpointReminderCreatesTrailingTextMarker` | 断点 text 块正确追加                        |
 | `skipsThinkingBlockForCacheControl`                          | marker 跳过 thinking                        |
 | `skipsRedactedThinkingBlock`                                 | marker 跳过 redacted_thinking               |
 | `allThinkingBlocksNoCacheControl`                            | 纯 thinking 消息无 marker                   |

@@ -1,57 +1,57 @@
-# AgentRuntime Architecture
+# AgentRuntime 架构
 
-The AgentRuntime is the central AI agent execution layer, designed after Apple's [FoundationModels](https://developer.apple.com/documentation/FoundationModels) framework. It replaces the legacy `LLMClient` + `QueryEngine` stack with a provider-agnostic, protocol-driven architecture where `LanguageModelSessionImpl` orchestrates the full agent loop.
+AgentRuntime 是中心化的 AI agent 执行层，参照 Apple 的 [FoundationModels](https://developer.apple.com/documentation/FoundationModels) 框架设计。它用一套与 provider 无关、由协议驱动的架构取代了传统的 `LLMClient` + `QueryEngine` 技术栈，其中 `LanguageModelSessionImpl` 编排着完整的 agent 循环。
 
 ---
 
-## 1. Overview
+## 1. 概览
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                  Integration Layer                       │
+│                  集成层                                  │
 │  ThreadViewModel (App)    │    ChatCommand (CLI)         │
 ├─────────────────────────────────────────────────────────┤
-│                  Session Layer                           │
-│  LanguageModelSessionImpl ─── actor, owns the loop       │
-│  ├─ Transcript (conversation history)                    │
+│                  Session 层                              │
+│  LanguageModelSessionImpl ─── actor，掌管核心循环        │
+│  ├─ Transcript（对话历史）                               │
 │  ├─ ResponseStream = AsyncThrowingStream<SessionEvent>   │
-│  └─ 8 subsystem references                              │
+│  └─ 8 个子系统引用                                       │
 ├────────────────────┬──────────┬─────────────────────────┤
-│    Provider Layer  │ Tools    │ Subsystems               │
-│  AnthropicProvider │ 64 tools │ SQLiteMemoryStore (actor)│
-│  DeepSeekProvider  │ 3 batches│ AgentPermissionBridge    │
+│    Provider 层     │ 工具     │ 子系统                   │
+│  AnthropicProvider │ 64 工具  │ SQLiteMemoryStore (actor)│
+│  DeepSeekProvider  │ 3 批次   │ AgentPermissionBridge    │
 │  OpenAIProvider    │          │ MCPBootstrapper (actor)  │
 ├────────────────────┴──────────┴─────────────────────────┤
-│  Core Types: Transcript, SessionEvent, Usage, Response   │
-│  AgentPermission (13 cases), AgentRuntimeError (19 cases)│
+│  核心类型: Transcript, SessionEvent, Usage, Response     │
+│  AgentPermission (13 种), AgentRuntimeError (19 种)      │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Design principles:**
+**设计原则：**
 
-- **Provider-agnostic** — App/CLI code never sees API-specific types. All communication flows through `SessionEvent` and `Transcript`.
-- **Snapshot semantics** — `textDelta` and `thinkingDelta` carry accumulated totals, not incremental deltas. Consumers replace, not append.
-- **Actor isolation** — `LanguageModelSessionImpl`, `StreamingGenerationChannel`, `SQLiteMemoryStore`, and `DefaultToolEngine` are all actors. Provider structs are `Sendable` value types.
-- **FoundationModels alignment (2026-06-27)** — P0/P1/P2 alignment complete: `LanguageModelExecutorConfiguration`, `LanguageModelExecutorGenerationRequest`, `ContextOptions`, `GenerationOptions` (SamplingMode, ToolCallingMode), `LanguageModelCapabilities` (Capability enum, `contains(_:)`), `SessionToolDefinition.parameters`, richer `AgentRuntimeError` info structs, `Prompt`/`Instructions`/`PromptAttachment` types, `TranscriptErrorHandlingPolicy`, `Tool` protocol `Output` associated type. See §2 for details.
+- **Provider 无关** — App/CLI 代码永远不接触 API 特定类型。所有通信通过 `SessionEvent` 和 `Transcript` 流转。
+- **快照语义** — `textDelta` 和 `thinkingDelta` 携带累积总量，而非增量 delta。消费者执行替换，而非追加。
+- **Actor 隔离** — `LanguageModelSessionImpl`、`StreamingGenerationChannel`、`SQLiteMemoryStore` 和 `DefaultToolEngine` 均为 actor。Provider 结构体为 `Sendable` 值类型。
+- **FoundationModels 对齐 (2026-06-27)** — P0/P1/P2 对齐已完成：`LanguageModelExecutorConfiguration`、`LanguageModelExecutorGenerationRequest`、`ContextOptions`、`GenerationOptions`（SamplingMode、ToolCallingMode）、`LanguageModelCapabilities`（Capability 枚举、`contains(_:)`）、`SessionToolDefinition.parameters`、更丰富的 `AgentRuntimeError` info 结构体、`Prompt`/`Instructions`/`PromptAttachment` 类型、`TranscriptErrorHandlingPolicy`、`Tool` 协议的 `Output` 关联类型。详见 §2。
 
 ---
 
-## 2. Core Protocols and Type System
+## 2. 核心协议与类型系统
 
 ### 2.1 LanguageModel + LanguageModelExecutor
 
 ```
 LanguageModel (Sendable)              LanguageModelExecutor (Sendable)
 ├─ capabilities: LanguageModelCapabilities   ├─ model: any LanguageModel
-├─ displayName: String                       ├─ prewarm(transcript:) → no-op default
+├─ displayName: String                       ├─ prewarm(transcript:) → no-op 默认
 ├─ executorConfiguration: LanguageModel      └─ respond(to: LanguageModelExecutor
 │    ExecutorConfiguration                       GenerationRequest,
 └─ makeExecutor() -> any LanguageModelExecutor   streamingInto:) async throws
 ```
 
-**`LanguageModel`** (`Providers/LanguageModel.swift`) is a factory protocol. It holds configuration (API key, base URL, model ID) but no runtime state. `makeExecutor()` creates per-model inference backends. `executorConfiguration` exposes the configuration (aligned with Apple's `LanguageModel.Executor.Configuration`). Uses `makeExecutor()` factory instead of `associatedtype Executor` due to existential type constraints (session stores `any LanguageModel`).
+**`LanguageModel`**（`Providers/LanguageModel.swift`）是一个工厂协议。它持有配置信息（API key、base URL、model ID），但不包含运行时状态。`makeExecutor()` 创建每个 model 的推断后端。`executorConfiguration` 暴露配置信息（与 Apple 的 `LanguageModel.Executor.Configuration` 对齐）。由于存在类型限制（session 存储 `any LanguageModel`），使用 `makeExecutor()` 工厂方法而非 `associatedtype Executor`。
 
-**`LanguageModelExecutor`** (`Providers/LanguageModelExecutor.swift`) is the internal protocol for performing inference. Takes a bundled `LanguageModelExecutorGenerationRequest` (aligned with Apple) instead of flat parameters:
+**`LanguageModelExecutor`**（`Providers/LanguageModelExecutor.swift`）是执行推断的内部协议。接收一个打包好的 `LanguageModelExecutorGenerationRequest`（与 Apple 对齐），而非扁平参数：
 
 ```swift
 public struct LanguageModelExecutorGenerationRequest: Sendable {
@@ -65,36 +65,36 @@ public struct LanguageModelExecutorGenerationRequest: Sendable {
 }
 ```
 
-`prewarm(transcript:)` allows preloading model assets (no-op default, aligned with Apple). Each provider struct conforms to **both** protocols — `makeExecutor()` returns `self`.
+`prewarm(transcript:)` 允许预加载模型资源（默认为 no-op，与 Apple 对齐）。每个 provider 结构体同时遵循**两个**协议 — `makeExecutor()` 返回 `self`。
 
-**`LanguageModelCapabilities`** (`Providers/LanguageModel.swift`) uses flattened bools + `Capability` enum with `contains(_:)` for Apple-aligned inspection: `supportsToolUse`, `supportsGuidedGeneration`, `supportsReasoning`, `supportsStreaming`, `supportsVision`, `contextWindow`, `maximumResponseTokens`, `providerDisplayName`.
+**`LanguageModelCapabilities`**（`Providers/LanguageModel.swift`）使用展平布尔值 + `Capability` 枚举配合 `contains(_:)` 方法实现与 Apple 对齐的能力检查：`supportsToolUse`、`supportsGuidedGeneration`、`supportsReasoning`、`supportsStreaming`、`supportsVision`、`contextWindow`、`maximumResponseTokens`、`providerDisplayName`。
 
-**`GenerationOptions`** (`Providers/LanguageModelExecutor.swift`) Apple-aligned with `SamplingMode` (`.greedy`, `.temperature`), `ToolCallingMode` (`.auto`, `.required`, `.none`), `temperature`, `maximumResponseTokens`, `reasoningBudget`, `stream`.
+**`GenerationOptions`**（`Providers/LanguageModelExecutor.swift`）与 Apple 对齐，包含 `SamplingMode`（`.greedy`、`.temperature`）、`ToolCallingMode`（`.auto`、`.required`、`.none`）、`temperature`、`maximumResponseTokens`、`reasoningBudget`、`stream`。
 
-**`ContextOptions`** (`Providers/LanguageModelExecutor.swift`) separate struct for prompting behavior: `includeSchemaInPrompt`, `reasoningLevel` (`ReasoningLevel.low/.medium/.high`). Aligned with Apple.
+**`ContextOptions`**（`Providers/LanguageModelExecutor.swift`）独立的提示行为结构体：`includeSchemaInPrompt`、`reasoningLevel`（`ReasoningLevel.low/.medium/.high`）。与 Apple 对齐。
 
-**`SessionToolDefinition`** (`Providers/LanguageModelExecutor.swift`) is the normalized tool shape: `name`, `description`, `parameters: JSONSchema` (aligned with Apple's `Transcript.ToolDefinition.parameters`), `deferLoading`.
+**`SessionToolDefinition`**（`Providers/LanguageModelExecutor.swift`）是归一化的工具形态：`name`、`description`、`parameters: JSONSchema`（与 Apple 的 `Transcript.ToolDefinition.parameters` 对齐）、`deferLoading`。
 
 ### 2.2 GenerationChannel
 
-`Providers/GenerationChannel.swift:8` — the streaming abstraction between executor and runtime. Six methods, all `async`:
+`Providers/GenerationChannel.swift:8` — executor 与 runtime 之间的流式抽象。六个方法，全部 `async`：
 
-| Method | Purpose |
+| 方法 | 用途 |
 |--------|---------|
-| `send(textDelta:)` | Accumulated text snapshot |
-| `send(thinkingDelta:)` | Accumulated thinking snapshot |
-| `send(toolCallRequest:id:name:input:)` | Model requested tool execution |
-| `send(toolCallCompleted:id:output:)` | Tool execution finished |
-| `complete(stopReason:usage:)` | Turn finished normally |
-| `fail(with:)` | Error during streaming |
+| `send(textDelta:)` | 累积文本快照 |
+| `send(thinkingDelta:)` | 累积思考快照 |
+| `send(toolCallRequest:id:name:input:)` | 模型请求工具执行 |
+| `send(toolCallCompleted:id:output:)` | 工具执行完成 |
+| `complete(stopReason:usage:)` | 本轮正常结束 |
+| `fail(with:)` | 流式传输中出错 |
 
-Two concrete implementations:
-- **`StreamingGenerationChannel`** (`StreamingGenerationChannel.swift:15`) — public actor, bridges to `AsyncThrowingStream` continuation. Used by the streaming `streamResponse(to:)` path.
-- **`CollectingChannel`** (`LanguageModelSessionImpl.swift:8`) — private actor, records events locally. Used by the non-streaming `respond(to:)` path for post-hoc inspection.
+两种具体实现：
+- **`StreamingGenerationChannel`**（`StreamingGenerationChannel.swift:15`）— 公开 actor，桥接到 `AsyncThrowingStream` continuation。供流式 `streamResponse(to:)` 路径使用。
+- **`CollectingChannel`**（`LanguageModelSessionImpl.swift:8`）— 私有 actor，本地记录事件。供非流式 `respond(to:)` 路径用于事后检查。
 
 ### 2.3 LanguageModelSession
 
-`LanguageModelSession.swift:68` — the central orchestrator protocol. Only actor types can conform:
+`LanguageModelSession.swift:68` — 中央编排器协议。只有 actor 类型可以遵循：
 
 ```swift
 public protocol LanguageModelSession: Actor {
@@ -113,16 +113,16 @@ public protocol LanguageModelSession: Actor {
 }
 ```
 
-Eight subsystem properties, two entry points. `isResponding` guards against concurrent turns (throws `.rateLimited`).
+八个子系统属性，两个入口点。`isResponding` 防止并发轮次（抛出 `.rateLimited`）。
 
 ### 2.4 SessionEvent
 
-`SessionEvent.swift:18` — the provider-agnostic streaming event enum. All communication between executor and session flows through these 6 cases:
+`SessionEvent.swift:18` — provider 无关的流式事件枚举。executor 与 session 之间的所有通信通过这 6 种 case 流转：
 
 ```swift
 public enum SessionEvent: Sendable {
-    case textDelta(String)              // Accumulated text (not token delta)
-    case thinkingDelta(String)          // Accumulated thinking (not token delta)
+    case textDelta(String)              // 累积文本（非 token delta）
+    case thinkingDelta(String)          // 累积思考（非 token delta）
     case toolCallRequested(id: String, name: String, input: Data)
     case toolCallCompleted(id: String, output: ToolOutputValue, isError: Bool)
     case turnCompleted(usage: Usage?, stopReason: String?)
@@ -130,37 +130,37 @@ public enum SessionEvent: Sendable {
 }
 ```
 
-Key design: `textDelta` and `thinkingDelta` carry **replacement** values (full snapshot), not incremental deltas. This prevents the double-render bug where consumers concatenate partial strings.
+关键设计：`textDelta` 和 `thinkingDelta` 携带**替换**值（完整快照），而非增量 delta。这避免了消费者拼接部分字符串导致的重复渲染 bug。
 
 ### 2.5 Transcript
 
-`Transcript.swift:5` — Codable conversation history with 7 typed entry kinds:
+`Transcript.swift:5` — 可编码的对话历史，包含 7 种条目类型：
 
 ```swift
 public enum Entry: Sendable, Codable {
-    case instruction(String)                          // System prompt
-    case prompt(String)                               // User message
-    case response(String)                             // Model text response
-    case thinking(String)                             // Model reasoning
+    case instruction(String)                          // 系统提示
+    case prompt(String)                               // 用户消息
+    case response(String)                             // 模型文本回复
+    case thinking(String)                             // 模型推理
     case toolCall(id: String, name: String, input: Data)
     case toolOutput(id: String, output: String, isError: Bool)
-    case system(String)                               // System notification
+    case system(String)                               // 系统通知
 }
 ```
 
-The transcript accumulates across turns and is persisted to memory via `memoryStore.store(key:"latest", namespace:"sessions", value: transcript)`.
+transcript 在每轮对话中累积，并通过 `memoryStore.store(key:"latest", namespace:"sessions", value: transcript)` 持久化到记忆中。
 
-### 2.6 Usage, Response, ResponseStream
+### 2.6 Usage、Response、ResponseStream
 
-- **`Usage`** (`Usage.swift:5`) — Rich token counts aligned with Claude Code's `NonNullUsage`: `inputTokens`, `outputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `serverToolUse`, `cacheCreation`, `inferenceGeo`, `iterations`, `speed`, `costUSD`, `contextWindow`, `maxOutputTokens`.
-- **`Response`** (`Response.swift:8`) — Result of non-streaming `respond(to:)`: `transcript`, `usage`, `stopReason`.
-- **`ResponseStream`** (`Response.swift:29`) — `AsyncThrowingStream<SessionEvent, Error>`. Consumers iterate with `for try await event in stream`.
+- **`Usage`**（`Usage.swift:5`）— 与 Claude Code 的 `NonNullUsage` 对齐的丰富 token 计数：`inputTokens`、`outputTokens`、`cacheCreationInputTokens`、`cacheReadInputTokens`、`serverToolUse`、`cacheCreation`、`inferenceGeo`、`iterations`、`speed`、`costUSD`、`contextWindow`、`maxOutputTokens`。
+- **`Response`**（`Response.swift:8`）— 非流式 `respond(to:)` 的结果：`transcript`、`usage`、`stopReason`。
+- **`ResponseStream`**（`Response.swift:29`）— `AsyncThrowingStream<SessionEvent, Error>`。消费者通过 `for try await event in stream` 进行迭代。
 
-### 2.7 FoundationModels-Aligned Types (P1/P2)
+### 2.7 FoundationModels 对齐类型（P1/P2）
 
-New types added to match Apple's FoundationModels API surface (iOS 26+/27+):
+新增类型以匹配 Apple FoundationModels API 表面（iOS 26+/27+）：
 
-**`Prompt`** (`Providers/Prompt.swift`) — Typed prompt abstraction replacing raw `String` in session APIs:
+**`Prompt`**（`Providers/Prompt.swift`）— 类型化提示抽象，取代 session API 中的原始 `String`：
 
 ```swift
 public protocol PromptRepresentable: Sendable {
@@ -173,9 +173,9 @@ public struct Prompt: Sendable, PromptRepresentable {
 }
 ```
 
-`String` conforms to `PromptRepresentable` for seamless adoption. `@PromptBuilder` is a result builder for composable prompt construction. `PromptAttachment` wraps multimodal content (`.image`, `.file`, `.url`) and `ImageAttachmentContent` carries image metadata (format, detail level).
+`String` 遵循 `PromptRepresentable` 以实现无缝过渡。`@PromptBuilder` 是一个 result builder，用于可组合的提示构造。`PromptAttachment` 包装多模态内容（`.image`、`.file`、`.url`），`ImageAttachmentContent` 携带图像元数据（format、detail level）。
 
-**`Instructions`** (`Providers/Instructions.swift`) — Typed system instructions:
+**`Instructions`**（`Providers/Instructions.swift`）— 类型化系统指令：
 
 ```swift
 public struct Instructions: Sendable {
@@ -185,9 +185,9 @@ public struct Instructions: Sendable {
 }
 ```
 
-`@InstructionsBuilder` enables composable instruction assembly from strings and `Instructions` values.
+`@InstructionsBuilder` 使指令可以从字符串和 `Instructions` 值中组合构建。
 
-**`TranscriptErrorHandlingPolicy`** (`Providers/TranscriptErrorHandlingPolicy.swift`) — Policy for error handling during generation:
+**`TranscriptErrorHandlingPolicy`**（`Providers/TranscriptErrorHandlingPolicy.swift`）— 生成过程的错误处理策略：
 
 ```swift
 public struct TranscriptErrorHandlingPolicy: Sendable {
@@ -197,15 +197,15 @@ public struct TranscriptErrorHandlingPolicy: Sendable {
 }
 ```
 
-These types are defined and available but not yet wired into `LanguageModelSessionImpl` (session APIs still take raw `String` for backward compatibility during transition).
+这些类型已定义可用，但尚未接入 `LanguageModelSessionImpl`（session API 在过渡期间仍接受原始 `String` 以保持向后兼容）。
 
 ---
 
-## 3. Agent Loop
+## 3. Agent 循环
 
 ### 3.1 LanguageModelSessionImpl
 
-`LanguageModelSessionImpl.swift:55` — the concrete actor implementing `LanguageModelSession`. Created with 8 subsystem references:
+`LanguageModelSessionImpl.swift:55` — 实现 `LanguageModelSession` 的具体 actor。通过 8 个子系统引用创建：
 
 ```swift
 public init(
@@ -221,185 +221,183 @@ public init(
 )
 ```
 
-The system prompt (if provided) is appended as `.instruction(prompt)` to a fresh transcript.
+如果提供了系统提示，会以 `.instruction(prompt)` 的形式追加到一个新的 transcript 中。
 
-### 3.2 Reentrancy Guard
+### 3.2 重入防护
 
-`LanguageModelSessionImpl.swift:101` — `assertNotResponding()` checks `isResponding` before starting a turn. If a turn is in progress, throws `.rateLimited`. `isResponding` is set to `true` at turn start and `false` in a `defer` block.
+`LanguageModelSessionImpl.swift:101` — `assertNotResponding()` 在开始新一轮之前检查 `isResponding`。如果当前有正在进行的轮次，抛出 `.rateLimited`。`isResponding` 在轮次开始时设为 `true`，并在 `defer` 块中设为 `false`。
 
-### 3.3 Streaming Path
+### 3.3 流式路径
 
 ```
-User sends "run ls"
+用户输入 "run ls"
     │
     ▼
 streamResponse(to: "run ls")
     │
     ├─ transcript.entries.append(.prompt("run ls"))
-    ├─ Create StreamingGenerationChannel + setContinuation
+    ├─ 创建 StreamingGenerationChannel + setContinuation
     ├─ executor.respond(to: transcript, tools, options, streamingInto: channel)
     │       │
-    │       ├─ SSE bytes → SSE parser → channel.send(textDelta:)
+    │       ├─ SSE 字节 → SSE 解析器 → channel.send(textDelta:)
     │       ├─                              channel.send(thinkingDelta:)
     │       ├─                              channel.send(toolCallRequest:)
     │       └─                              channel.complete(stopReason:usage:)
     │
-    ├─ Guard 1: channel.receivedCompletion? → NO → fail stream (truncated response)
-    ├─ Guard 2: no thinking, no text, no tools? → YES → fail stream (empty response)
+    ├─ Guard 1: channel.receivedCompletion? → NO → fail stream（响应被截断）
+    ├─ Guard 2: 无思考、无文本、无工具？ → YES → fail stream（空响应）
     │
-    ├─ Read channel.accumulatedThinking → transcript.entries.append(.thinking)
-    ├─ Read channel.accumulatedText → transcript.entries.append(.response)
+    ├─ 读取 channel.accumulatedThinking → transcript.entries.append(.thinking)
+    ├─ 读取 channel.accumulatedText → transcript.entries.append(.response)
     │
     ├─ recordedToolCalls?
     │   │ YES
-    │   ├─ For each call:
-    │   │   ├─ executeTool(name:input:) → permission check → toolEngine.execute
+    │   ├─ 对每个调用：
+    │   │   ├─ executeTool(name:input:) → 权限检查 → toolEngine.execute
     │   │   ├─ transcript.entries.append(.toolCall)
     │   │   ├─ transcript.entries.append(.toolOutput)
     │   │   └─ continuation.yield(.toolCallCompleted)
-    │   └─ Loop back: re-prompt executor with updated transcript
+    │   └─ 循环返回：用更新后的 transcript 重新提示 executor
     │
     └─ NO → memoryStore.store(transcript) → continuation.finish()
 ```
 
-Key ordering guarantee: **thinking → text → toolCall → toolOutput** is strictly maintained in the transcript. This is required by thinking-mode APIs (DeepSeek, Anthropic) which validate block ordering.
+关键顺序保证：**thinking → text → toolCall → toolOutput** 在 transcript 中严格维护。这是 thinking-mode API（DeepSeek、Anthropic）的要求，它们会验证 block 顺序。
 
-Response validation (two guards before processing content):
-- **Guard 1 — Completion check**: If `channel.receivedCompletion` is `false`, the SSE stream never delivered a `message_delta` event. The response was truncated or malformed — fail the stream with `.invalidResponse`.
-- **Guard 2 — Content check**: If the model returns `end_turn` but produced no text, no thinking, and no tools, the API returned an empty response. This is treated as `.invalidResponse` rather than a silent "success" that would show nothing to the user.
+响应验证（处理内容前的两个守护条件）：
+- **Guard 1 — 完成检查**：如果 `channel.receivedCompletion` 为 `false`，说明 SSE 流从未传递 `message_delta` 事件。响应被截断或格式错误 — 以 `.invalidResponse` 使流失败。
+- **Guard 2 — 内容检查**：如果模型返回 `end_turn` 但没有产生文本、思考和工具调用，说明 API 返回了空响应。这种情形被视为 `.invalidResponse`，而非对用户无任何展示的静默"成功"。
 
-Key ordering guarantee: **thinking → text → toolCall → toolOutput** is strictly maintained in the transcript. This is required by thinking-mode APIs (DeepSeek, Anthropic) which validate block ordering.
+### 3.4 非流式路径
 
-### 3.4 Non-Streaming Path
+`LanguageModelSessionImpl.swift:160` — `respond(to:)` 遵循相同的模式，但换用 `CollectingChannel`。事件在本地收集，在 executor 完成后进行检查。工具调用触发重新提示（最多 50 次迭代）。返回 `Response(transcript, usage, stopReason)`。
 
-`LanguageModelSessionImpl.swift:160` — `respond(to:)` follows the same pattern but uses `CollectingChannel` instead. Events are collected locally and inspected after the executor finishes. Tool calls trigger re-prompt (max 50 iterations). Returns `Response(transcript, usage, stopReason)`.
+### 3.5 工具执行
 
-### 3.5 Tool Execution
+`LanguageModelSessionImpl.swift:113` — `executeTool(name:input:)`：
+1. 通信类工具（`SendUserMessage`、`TaskOutput`）绕过权限检查。
+2. 其他所有工具：通过 `permissionForTool(_:)` 将工具名称映射到 `AgentPermission`，调用 `permissionEngine.check(permission)`，然后 `toolEngine.execute(name:input:)`。
+3. 失败时：将 `.toolOutput(id:output:isError:true)` 追加到 transcript — 模型可以对错误做出响应。
 
-`LanguageModelSessionImpl.swift:113` — `executeTool(name:input:)`:
-1. Communication tools (`SendUserMessage`, `TaskOutput`) bypass permission checks.
-2. All other tools: map name to `AgentPermission` via `permissionForTool(_:)`, call `permissionEngine.check(permission)`, then `toolEngine.execute(name:input:)`.
-3. On failure: append `.toolOutput(id:output:isError:true)` to transcript — the model can respond to the error.
-
-### 3.6 Channel Comparison
+### 3.6 Channel 对比
 
 | | CollectingChannel | StreamingGenerationChannel |
 |---|---|---|
-| Visibility | private actor | public actor |
-| Storage | `events: [SessionEvent]` array | `AsyncThrowingStream` continuation |
-| Tool tracking | events array includes toolCallRequested | `recordedToolCalls` array |
-| Usage | `respond(to:)` non-streaming | `streamResponse(to:)` streaming |
-| Post-complete guard | `isFinished` flag | `isFinished` flag |
+| 可见性 | 私有 actor | 公开 actor |
+| 存储 | `events: [SessionEvent]` 数组 | `AsyncThrowingStream` continuation |
+| 工具跟踪 | events 数组包含 toolCallRequested | `recordedToolCalls` 数组 |
+| 使用方式 | `respond(to:)` 非流式 | `streamResponse(to:)` 流式 |
+| 完成后守卫 | `isFinished` 标记 | `isFinished` 标记 |
 
 ---
 
-## 4. Provider System
+## 4. Provider 系统
 
-### 4.1 Shared Architecture
+### 4.1 共享架构
 
-All three providers follow the same pattern:
+三个 provider 都遵循相同的模式：
 
 ```
 ┌──────────────────────────────────────────┐
-│  Provider Struct (LanguageModel +        │
-│  LanguageModelExecutor + Sendable)       │
+│  Provider 结构体（LanguageModel +        │
+│  LanguageModelExecutor + Sendable）      │
 │                                          │
 │  respond(to:tools:options:streamingInto:)│
-│    ├─ Transcript Translator → wire dict  │
-│    ├─ Tool Translator → wire dict        │
-│    ├─ URLRequest assembly                │
-│    ├─ URLSession.bytes(for:) → SSE lines │
-│    └─ SSE Parser → GenerationChannel     │
+│    ├─ Transcript 翻译器 → 协议字典       │
+│    ├─ Tool 翻译器 → 协议字典             │
+│    ├─ URLRequest 组装                    │
+│    ├─ URLSession.bytes(for:) → SSE 行    │
+│    └─ SSE 解析器 → GenerationChannel     │
 └──────────────────────────────────────────┘
 ```
 
 ### 4.2 AnthropicProvider
 
-`Providers/Anthropic/AnthropicProvider.swift:8` — targets `/v1/messages`.
+`Providers/Anthropic/AnthropicProvider.swift:8` — 目标端点为 `/v1/messages`。
 
-- **Transcript translation**: `AnthropicTranscriptTranslator` — maps Transcript entries to `{role, content: [{type, text/tool_use/tool_result/thinking}]}` arrays with role-flushing.
-- **Tool translation**: `AnthropicToolTranslator` — maps `SessionToolDefinition` to `{name, description, input_schema}`.
-- **SSE parsing**: `AnthropicSSEParser` — handles `content_block_start/delta/stop`, `message_delta`, `message_stop`, `error`.
-- **Content accumulation**: `AnthropicContentAccumulator` — per-index `input_json_delta` concatenation with `safeParseJSON` (handles double-stringified JSON).
-- **Model capabilities**: Sonnet 4.6, Opus 4.7, Haiku 4.5 with context windows 200K and max output 32K/32K/8K.
+- **Transcript 翻译**：`AnthropicTranscriptTranslator` — 将 Transcript 条目映射为 `{role, content: [{type, text/tool_use/tool_result/thinking}]}` 数组，并进行 role-flushing。
+- **工具翻译**：`AnthropicToolTranslator` — 将 `SessionToolDefinition` 映射为 `{name, description, input_schema}`。
+- **SSE 解析**：`AnthropicSSEParser` — 处理 `content_block_start/delta/stop`、`message_delta`、`message_stop`、`error`。
+- **内容累积**：`AnthropicContentAccumulator` — 按索引进行 `input_json_delta` 拼接，配合 `safeParseJSON`（处理双重 stringified JSON）。
+- **模型能力**：Sonnet 4.6、Opus 4.7、Haiku 4.5，上下文窗口 200K，最大输出 32K/32K/8K。
 
 ### 4.3 DeepSeekProvider
 
-`Providers/DeepSeek/DeepSeekProvider.swift:15` — dual API compatibility via `APICompatibility` enum:
+`Providers/DeepSeek/DeepSeekProvider.swift:15` — 通过 `APICompatibility` 枚举实现双 API 兼容：
 
-| Mode | Endpoint | Transcript Translator | SSE Parser |
+| 模式 | 端點 | Transcript 翻译器 | SSE 解析器 |
 |------|----------|----------------------|------------|
-| `.anthropicCompatible` | `/anthropic/v1/messages` | `translateAnthropicCompat()` | `DeepSeekSSEParser` (→`AnthropicSSEParser`) |
+| `.anthropicCompatible` | `/anthropic/v1/messages` | `translateAnthropicCompat()` | `DeepSeekSSEParser`（→`AnthropicSSEParser`） |
 | `.openAICompatible` | `/v1/chat/completions` | `translateChatCompletions()` | `ChatCompletionsSSEParser` |
 
-Both translators delegate to canonical implementations with DeepSeek-specific post-processing:
-- `translateAnthropicCompat` → `AnthropicTranscriptTranslator.translate` then strips `cache_control` keys and empty `signature` from thinking blocks.
-- `translateChatCompletions` → `OpenAITranscriptTranslator.translateChatCompletions`.
-- `DeepSeekToolTranslator` follows the same delegation pattern to `AnthropicToolTranslator` and `OpenAIToolTranslator`.
+两个翻译器都委托给规范化实现，并做 DeepSeek 特定的后处理：
+- `translateAnthropicCompat` → `AnthropicTranscriptTranslator.translate`，然后从 thinking blocks 中移除 `cache_control` key 和空的 `signature`。
+- `translateChatCompletions` → `OpenAITranscriptTranslator.translateChatCompletions`。
+- `DeepSeekToolTranslator` 遵循相同的委托模式，分别委托给 `AnthropicToolTranslator` 和 `OpenAIToolTranslator`。
 
-Key differences from Anthropic:
-- Strips `anthropic-beta` header and `cache_control` markers (DeepSeek rejects them).
-- Thinking blocks preserved as `{"type": "thinking", "thinking": text}` in Anthropic mode, `reasoning_content` in Chat Completions mode (required by DeepSeek for re-prompt validation).
-- `translateResponses` kept for future use when DeepSeek adds Responses API support.
-- Models: `deepseek-v4-pro` (128K ctx, 32K output), `deepseek-v4-flash` (128K ctx, 8K output), `deepseek-chat`, `deepseek-reasoner`.
+与 Anthropic 的关键差异：
+- 移除 `anthropic-beta` header 和 `cache_control` 标记（DeepSeek 拒绝这些）。
+- Thinking blocks 在 Anthropic 模式下保留为 `{"type": "thinking", "thinking": text}`，在 Chat Completions 模式下为 `reasoning_content`（DeepSeek 对重新提示验证的要求）。
+- `translateResponses` 保留以供将来 DeepSeek 添加 Responses API 支持时使用。
+- 模型：`deepseek-v4-pro`（128K 上下文，32K 输出）、`deepseek-v4-flash`（128K 上下文，8K 输出）、`deepseek-chat`、`deepseek-reasoner`。
 
 ### 4.4 OpenAIProvider
 
-`Providers/OpenAI/OpenAIProvider.swift:8` — targets `/v1/responses` (OpenAI Responses API, 2025+).
+`Providers/OpenAI/OpenAIProvider.swift:8` — 目标端点为 `/v1/responses`（OpenAI Responses API，2025+）。
 
-- **Transcript translation**: `OpenAITranscriptTranslator.translateResponses` — Responses API typed items (message, reasoning, function_call, tool_call_output).
-- **Tool translation**: `OpenAIToolTranslator.translateResponses` — `{"type": "function", "function": {name, description, parameters}}`.
-- **SSE parsing**: `ResponsesSSEParser` — event-based SSE (`response.output_text.delta`, `response.function_call_arguments.delta`, `response.completed`).
-- **o4 reasoning**: Maps `reasoningBudget` to `reasoning_effort` ("low"/"medium"/"high"), omits temperature for reasoning models.
-- **Chat Completions support**: Both `OpenAITranscriptTranslator` and `OpenAIToolTranslator` also expose `translateChatCompletions` for providers using the legacy format (e.g. DeepSeek `openAICompatible`).
+- **Transcript 翻译**：`OpenAITranscriptTranslator.translateResponses` — Responses API 类型化条目（message、reasoning、function_call、tool_call_output）。
+- **工具翻译**：`OpenAIToolTranslator.translateResponses` — `{"type": "function", "function": {name, description, parameters}}`。
+- **SSE 解析**：`ResponsesSSEParser` — 基于事件的 SSE（`response.output_text.delta`、`response.function_call_arguments.delta`、`response.completed`）。
+- **o4 推理**：将 `reasoningBudget` 映射为 `reasoning_effort`（"low"/"medium"/"high"），推理模型省略 temperature。
+- **Chat Completions 支持**：`OpenAITranscriptTranslator` 和 `OpenAIToolTranslator` 也暴露 `translateChatCompletions`，供使用旧格式的 provider 使用（如 DeepSeek `openAICompatible`）。
 
 ---
 
-## 5. Streaming Infrastructure
+## 5. 流式基础设施
 
 ### 5.1 StreamingGenerationChannel
 
-`StreamingGenerationChannel.swift:15` — the public actor bridging executor output to consumer. Key design:
+`StreamingGenerationChannel.swift:15` — 将 executor 输出桥接到消费者的公开 actor。关键设计：
 
-- **Snapshot semantics**: `send(textDelta:)` and `send(thinkingDelta:)` use REPLACEMENT — each call overwrites `accumulatedText`/`accumulatedThinking` and yields the full value. The executor provides accumulated totals, not incremental deltas.
-- **Post-complete guard**: After `complete()` or `fail()`, `isFinished = true` — all subsequent sends silently drop. Prevents dangling events after turn completion.
-- **Completion detection**: `receivedCompletion: Bool` is set `true` only by `complete()`. Stays `false` if the stream was truncated, errored via `fail()`, or produced no events. The agent loop checks this to distinguish valid completions from malformed responses.
-- **Tool tracking**: `recordedToolCalls: [(id, name, input)]` — the agent loop inspects this after the executor finishes to decide whether to execute tools or finish.
-- **Continuation lifecycle**: `setContinuation()` stores the stream continuation. `fail(with:)` calls `continuation.finish(throwing:)`; normal completion calls `continuation.finish()` from the agent loop.
+- **快照语义**：`send(textDelta:)` 和 `send(thinkingDelta:)` 使用替换模式 — 每次调用覆盖 `accumulatedText`/`accumulatedThinking` 并 yielding 完整值。executor 提供累积总量，而非增量 delta。
+- **完成后守护**：在 `complete()` 或 `fail()` 之后，`isFinished = true` — 所有后续发送静默丢弃。防止轮次完成后的悬空事件。
+- **完成检测**：`receivedCompletion: Bool` 仅由 `complete()` 设为 `true`。如果流被截断、通过 `fail()` 报错或未产生事件，则保持 `false`。Agent 循环检查这个标志以区分有效完成和格式错误的响应。
+- **工具跟踪**：`recordedToolCalls: [(id, name, input)]` — agent 循环在 executor 完成后检查此数据以决定是执行工具还是结束。
+- **Continuation 生命周期**：`setContinuation()` 存储流 continuation。`fail(with:)` 调用 `continuation.finish(throwing:)`；正常完成由 agent 循环调用 `continuation.finish()`。
 
-Thread safety: `recordedToolCalls` and `accumulatedText`/`accumulatedThinking` are `public private(set)` — write-protected behind the actor, read-accessible with `await`.
+线程安全：`recordedToolCalls` 和 `accumulatedText`/`accumulatedThinking` 为 `public private(set)` — 在 actor 内部受写保护，读取可通过 `await` 访问。
 
-### 5.2 SSE Parsers
+### 5.2 SSE 解析器
 
-Each provider has its own SSE parser, but all share the same output interface (they write to `GenerationChannel`):
+每个 provider 有自己的 SSE 解析器，但所有解析器共享相同的输出接口（它们写入 `GenerationChannel`）：
 
-- **`AnthropicSSEParser`** — Parses Anthropic SSE events: `content_block_start` (registers tool call), `content_block_delta` (text/thinking/input_json), `content_block_stop` (finalizes tool call), `message_delta` (usage/stop_reason → `channel.complete()`), `error` → `channel.fail()`. After the loop, if no `message_delta` was received, the stream was truncated and the parser calls `channel.fail()` — preventing the agent loop from treating an empty response as a valid completion.
-- **`DeepSeekSSEParser`** — Anthropic-compat only; delegates entirely to `AnthropicSSEParser`. The Chat Completions path uses `ChatCompletionsSSEParser` directly.
-- **`ResponsesSSEParser`** — Parses OpenAI Responses API event-based SSE: `response.output_text.delta`, `response.reasoning.delta`, `response.function_call_arguments.delta`, `response.output_item.done`, `response.completed`.
-- **`ChatCompletionsSSEParser`** — Parses Chat Completions SSE: `choices[0].delta.content` → text, `choices[0].delta.reasoning_content` → thinking, `choices[0].delta.tool_calls` → tool call, `choices[0].finish_reason` → complete. Used by DeepSeek `openAICompatible` mode.
+- **`AnthropicSSEParser`** — 解析 Anthropic SSE 事件：`content_block_start`（注册工具调用）、`content_block_delta`（text/thinking/input_json）、`content_block_stop`（完成工具调用）、`message_delta`（usage/stop_reason → `channel.complete()`）、`error` → `channel.fail()`。循环结束后，如果没有收到 `message_delta`，流已被截断，解析器调用 `channel.fail()` — 防止 agent 循环将空响应视为有效完成。
+- **`DeepSeekSSEParser`** — 仅用于 Anthropic-compat 模式；完全委托给 `AnthropicSSEParser`。Chat Completions 路径直接使用 `ChatCompletionsSSEParser`。
+- **`ResponsesSSEParser`** — 解析 OpenAI Responses API 基于事件的 SSE：`response.output_text.delta`、`response.reasoning.delta`、`response.function_call_arguments.delta`、`response.output_item.done`、`response.completed`。
+- **`ChatCompletionsSSEParser`** — 解析 Chat Completions SSE：`choices[0].delta.content` → text、`choices[0].delta.reasoning_content` → thinking、`choices[0].delta.tool_calls` → tool call、`choices[0].finish_reason` → complete。供 DeepSeek `openAICompatible` 模式使用。
 
-### 5.3 Transcript Translators
+### 5.3 Transcript 翻译器
 
-Pure functions converting `Transcript` → provider-specific wire format:
+将 `Transcript` 转换为 provider 特定协议格式的纯函数：
 
-| Translator | Input | Output | Format |
+| 翻译器 | 输入 | 输出 | 格式 |
 |------------|-------|--------|--------|
 | `AnthropicTranscriptTranslator.translate` | Transcript | `(messages, system)` | Anthropic Messages API |
-| `DeepSeekTranscriptTranslator.translateAnthropicCompat` | Transcript | `(messages, system)` | Anthropic Messages (delegates + strips cache_control) |
-| `DeepSeekTranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions (delegates to `OpenAITranscriptTranslator`) |
-| `DeepSeekTranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API (delegates to `OpenAITranscriptTranslator`) |
-| `OpenAITranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions messages[] with role-flushing |
-| `OpenAITranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API typed input items |
+| `DeepSeekTranscriptTranslator.translateAnthropicCompat` | Transcript | `(messages, system)` | Anthropic Messages（委托 + 移除 cache_control） |
+| `DeepSeekTranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions（委托给 `OpenAITranscriptTranslator`） |
+| `DeepSeekTranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API（委托给 `OpenAITranscriptTranslator`） |
+| `OpenAITranscriptTranslator.translateChatCompletions` | Transcript | `[[String: Any]]` | Chat Completions messages[] 含 role-flushing |
+| `OpenAITranscriptTranslator.translateResponses` | Transcript | `[[String: Any]]` | Responses API 类型化输入条目 |
 
-All translators include role-flushing logic: consecutive same-role entries are merged into one message; role changes (user↔assistant) or tool boundaries trigger a flush. DeepSeek translators delegate to canonical Anthropic/OpenAI translators with format-specific post-processing.
+所有翻译器都包含 role-flushing 逻辑：连续相同 role 的条目合并为一条消息；role 变更（user↔assistant）或工具边界触发 flush。DeepSeek 翻译器委托给规范化的 Anthropic/OpenAI 翻译器，并做格式特定的后处理。
 
 ---
 
-## 6. Tool System
+## 6. 工具系统
 
-### 6.1 Tool Protocol (Apple-aligned)
+### 6.1 Tool 协议（Apple 对齐）
 
-`Tools/RuntimeAgentTool.swift` — the `Tool` protocol with dual associated types aligned with Apple's FoundationModels:
+`Tools/RuntimeAgentTool.swift` — `Tool` 协议，带双重关联类型，与 Apple FoundationModels 对齐：
 
 ```swift
 public protocol Tool<Arguments, Output>: Sendable {
@@ -413,18 +411,18 @@ public protocol Tool<Arguments, Output>: Sendable {
 }
 ```
 
-Key changes from pre-alignment:
-- **`Output` associated type** — tools can return typed outputs conforming to `PromptRepresentable`. Default is `ToolOutputValue`.
-- **`call(arguments:)` returns `Output`** — aligned with Apple's `func call(arguments:) async throws -> Output`.
-- **`_callFromData` returns `ToolOutputValue`** — the type-erased path stays stable for `ToolEngine.execute(name:input:)`.
-- **60+ tools** declare `typealias Output = ToolOutputValue`.
-- **`@concurrent`** annotation noted for future Swift 6 adoption.
+对齐前的关键变更：
+- **`Output` 关联类型** — 工具可以返回遵循 `PromptRepresentable` 的类型化输出。默认为 `ToolOutputValue`。
+- **`call(arguments:)` 返回 `Output`** — 与 Apple 的 `func call(arguments:) async throws -> Output` 对齐。
+- **`_callFromData` 返回 `ToolOutputValue`** — 类型擦除路径对于 `ToolEngine.execute(name:input:)` 保持稳定。
+- **60+ 工具** 声明 `typealias Output = ToolOutputValue`。
+- **`@concurrent`** 注解标记供将来 Swift 6 采用。
 
-`ToolOutputValue` conforms to `PromptRepresentable` for Apple alignment. The deprecated `RuntimeAgentTool` typealias remains for backward compatibility.
+`ToolOutputValue` 遵循 `PromptRepresentable` 以实现 Apple 对齐。已弃用的 `RuntimeAgentTool` typealias 保留用于向后兼容。
 
 ### 6.2 ToolMetadata
 
-`Tools/ToolMetadata.swift` — operational metadata separate from the tool implementation:
+`Tools/ToolMetadata.swift` — 与工具实现分离的操作元数据：
 
 ```swift
 public struct ToolMetadata: Sendable {
@@ -440,23 +438,23 @@ public struct ToolMetadata: Sendable {
 }
 ```
 
-Registered as `(any Tool, ToolMetadata)` pairs in `DefaultToolEngine`.
+以 `(any Tool, ToolMetadata)` 对的形式注册在 `DefaultToolEngine` 中。
 
-### 6.3 Batch Registries
+### 6.3 批次注册表
 
-Tools are partitioned into 3 batches for parallel loading:
+工具被划分为 3 个批次以支持并行加载：
 
-| Batch | Count | Categories | File |
+| 批次 | 数量 | 类别 | 文件 |
 |-------|-------|------------|------|
-| Batch 1 | ~15 | Read-only: FileRead, Grep, Glob, WebSearch, WebFetch, ListSkills, etc. | `Batch1ToolRegistry.swift` |
-| Batch 23 | ~9 | File mutation + commands: FileWrite, FileEdit, Bash, NotebookEdit, LSP | `Batch23ToolRegistry.swift` |
-| Batch 45 | ~36 | Task/agent/workflow/MCP/cron/notification: AgentTool, TaskCreate, MCPTool, SkillTool, etc. | `Batch45ToolRegistry.swift` |
+| Batch 1 | ~15 | 只读：FileRead、Grep、Glob、WebSearch、WebFetch、ListSkills 等 | `Batch1ToolRegistry.swift` |
+| Batch 23 | ~9 | 文件修改 + 命令：FileWrite、FileEdit、Bash、NotebookEdit、LSP | `Batch23ToolRegistry.swift` |
+| Batch 45 | ~36 | 任务/agent/工作流/MCP/cron/通知：AgentTool、TaskCreate、MCPTool、SkillTool 等 | `Batch45ToolRegistry.swift` |
 
-Each registry exposes `static func tools(...) -> [(any Tool, ToolMetadata)]` with dependency-injected parameters (working directory, MCP clients, etc.).
+每个注册表暴露 `static func tools(...) -> [(any Tool, ToolMetadata)]`，参数通过依赖注入（工作目录、MCP 客户端等）。
 
 ### 6.4 DefaultToolEngine
 
-`SubsystemStubs.swift:8` — actor-based tool registry conforming to `ToolEngine`:
+`SubsystemStubs.swift:8` — 基于 actor 的工具注册表，遵循 `ToolEngine`：
 
 ```swift
 public actor DefaultToolEngine: ToolEngine {
@@ -467,11 +465,11 @@ public actor DefaultToolEngine: ToolEngine {
 }
 ```
 
-Tools are stored in a `[String: (any Tool, ToolMetadata)]` dictionary. `execute` decodes input via `_callFromData` and returns `ToolOutputValue`.
+工具存储在 `[String: (any Tool, ToolMetadata)]` 字典中。`execute` 通过 `_callFromData` 解码输入并返回 `ToolOutputValue`。
 
 ### 6.5 ToolOutputValue
 
-`Tools/ToolOutputValue.swift:9` — two-case enum for tool results:
+`Tools/ToolOutputValue.swift:9` — 工具结果的两种 case 枚举：
 
 ```swift
 public enum ToolOutputValue: Sendable {
@@ -480,15 +478,15 @@ public enum ToolOutputValue: Sendable {
 }
 ```
 
-`OutputBlock` has `type` (`text`, `code`, `diff`, `image`, `error`) and `content: String`. The `stringValue` computed property provides a text fallback.
+`OutputBlock` 有 `type`（`text`、`code`、`diff`、`image`、`error`）和 `content: String`。`stringValue` 计算属性提供文本回退。
 
 ---
 
-## 7. Permissions
+## 7. 权限
 
 ### 7.1 AgentPermission
 
-`Providers/AgentPermission.swift:10` — 13 cases across filesystem, network, device, and execution domains:
+`Providers/AgentPermission.swift:10` — 13 种 case，涵盖文件系统、网络、设备和执行领域：
 
 ```swift
 public enum AgentPermission: Sendable, CaseIterable {
@@ -502,11 +500,11 @@ public enum AgentPermission: Sendable, CaseIterable {
 }
 ```
 
-The `toolName` computed property maps each case to a canonical tool name (e.g., `.runCommands → "Bash"`, `.readFiles → "Read"`) for integration with the legacy `PermissionEngine`.
+`toolName` 计算属性将每个 case 映射到规范工具名（如 `.runCommands → "Bash"`、`.readFiles → "Read"`），用于与传统 `PermissionEngine` 集成。
 
 ### 7.2 SessionPermissionEngine
 
-`Providers/AgentPermission.swift:103` — single-method protocol:
+`Providers/AgentPermission.swift:103` — 单方法协议：
 
 ```swift
 public protocol SessionPermissionEngine: Sendable {
@@ -516,15 +514,15 @@ public protocol SessionPermissionEngine: Sendable {
 
 ### 7.3 AgentPermissionBridge
 
-`Providers/Permission/AgentPermissionBridge.swift:12` — adapts the legacy `PermissionEngine` to `SessionPermissionEngine`. Maps each `AgentPermission` case to tool-name-based permission checks through the wrapped engine, encoding associated paths/domains into the input dictionary.
+`Providers/Permission/AgentPermissionBridge.swift:12` — 将传统 `PermissionEngine` 适配为 `SessionPermissionEngine`。将每个 `AgentPermission` case 映射为基于工具名称的权限检查，通过包装的 engine 将关联的 paths/domains 编码到输入字典中。
 
 ---
 
-## 8. Memory
+## 8. 记忆
 
-### 8.1 SessionMemoryStore Protocol
+### 8.1 SessionMemoryStore 协议
 
-`Providers/SessionMemoryStore.swift:40` — generic key-namespace storage:
+`Providers/SessionMemoryStore.swift:40` — 通用 key-namespace 存储：
 
 ```swift
 public protocol SessionMemoryStore: Sendable {
@@ -539,94 +537,94 @@ public protocol SessionMemoryStore: Sendable {
 
 ### 8.2 SQLiteMemoryStore
 
-`Providers/Memory/SQLiteMemoryStore.swift:13` — actor-based implementation using direct SQLite3 C API (no third-party dependencies).
+`Providers/Memory/SQLiteMemoryStore.swift:13` — 基于 actor 的实现，使用直接 SQLite3 C API（无第三方依赖）。
 
-- **WAL journal mode** for concurrent read performance.
-- **4 schema migrations**: `schema_version` table, `memory_entries` table (key, namespace, value JSON BLOB, updated_at), indexes on namespace and updated_at.
-- **Parameterized queries** exclusively — no string interpolation.
-- **Serialized access** through the actor — all CRUD calls are `async`.
-- Values stored as JSON BLOBs — `Codable` types are encoded/decoded through `JSONEncoder`/`JSONDecoder`.
+- **WAL journal 模式**以获得并发读取性能。
+- **4 个 schema migrations**：`schema_version` 表、`memory_entries` 表（key、namespace、value JSON BLOB、updated_at）、namespace 和 updated_at 上的索引。
+- **仅使用参数化查询** — 无字符串拼接。
+- **通过 actor 进行序列化访问** — 所有 CRUD 调用均为 `async`。
+- 值存储为 JSON BLOBs — `Codable` 类型通过 `JSONEncoder`/`JSONDecoder` 编码/解码。
 
 ---
 
-## 9. Error Taxonomy
+## 9. 错误分类
 
-`AgentRuntimeError.swift:5` — 19 cases across 5 domains, all conforming to `LocalizedError`. Mirrors Apple's `LanguageModelError` pattern with dedicated info structs for rich error context.
+`AgentRuntimeError.swift:5` — 19 种 case，涵盖 5 个领域，全部遵循 `LocalizedError`。仿照 Apple `LanguageModelError` 模式，使用专用 info 结构体提供丰富的错误上下文。
 
-### 9.1 Error Info Structs (Apple-aligned)
+### 9.1 错误信息结构体（Apple 对齐）
 
-Six dedicated structs modeled after Apple's `LanguageModelError` nested info types:
+六个专用结构体，仿照 Apple 的 `LanguageModelError` 嵌套 info 类型建模：
 
-| Struct | Properties | Apple Source |
+| 结构体 | 属性 | Apple 来源 |
 |--------|-----------|--------------|
-| `ContextSizeExceeded` | `maxTokens: Int`, `requestedTokens: Int` | `LanguageModelError.ContextSizeExceeded` |
+| `ContextSizeExceeded` | `maxTokens: Int`、`requestedTokens: Int` | `LanguageModelError.ContextSizeExceeded` |
 | `RateLimited` | `retryAfter: TimeInterval?` | `LanguageModelError.RateLimited` |
 | `Refusal` | `reason: String` | `LanguageModelError.Refusal` |
 | `Timeout` | `duration: TimeInterval?` | `LanguageModelError.Timeout` |
-| `GuardrailViolation` | `guardrail: String`, `reason: String` | `LanguageModelError.GuardrailViolation` |
+| `GuardrailViolation` | `guardrail: String`、`reason: String` | `LanguageModelError.GuardrailViolation` |
 | `UnsupportedCapability` | `capability: String` | `LanguageModelError.UnsupportedCapability` |
 
-### 9.2 Error Cases by Domain
+### 9.2 按领域分类的错误 Cases
 
-| Domain | Cases |
+| 领域 | Cases |
 |--------|-------|
-| **Model** | `rateLimited(RateLimited)`, `unauthorized(reason:)`, `serverError(statusCode:body:)`, `timeout(Timeout)`, `contextSizeExceeded(ContextSizeExceeded)`, `invalidResponse(reason:)`, `refusal(Refusal)`, `guardrailViolation(GuardrailViolation)`, `unsupportedCapability(UnsupportedCapability)` |
-| **Memory** | `storageFull(availableBytes:)`, `keyNotFound(key:namespace:)`, `migrationFailed(fromVersion:toVersion:reason:)` |
-| **Permission** | `permissionDenied(permission:reason:)`, `sandboxViolation(resource:)` |
-| **Tool** | `toolNotFound(name:)`, `toolExecutionFailed(name:reason:)`, `toolValidationFailed(name:field:reason:)` |
-| **Graph** | `cycleDetected(nodes:)`, `nodeFailed(nodeID:reason:)` |
+| **Model** | `rateLimited(RateLimited)`、`unauthorized(reason:)`、`serverError(statusCode:body:)`、`timeout(Timeout)`、`contextSizeExceeded(ContextSizeExceeded)`、`invalidResponse(reason:)`、`refusal(Refusal)`、`guardrailViolation(GuardrailViolation)`、`unsupportedCapability(UnsupportedCapability)` |
+| **Memory** | `storageFull(availableBytes:)`、`keyNotFound(key:namespace:)`、`migrationFailed(fromVersion:toVersion:reason:)` |
+| **Permission** | `permissionDenied(permission:reason:)`、`sandboxViolation(resource:)` |
+| **Tool** | `toolNotFound(name:)`、`toolExecutionFailed(name:reason:)`、`toolValidationFailed(name:field:reason:)` |
+| **Graph** | `cycleDetected(nodes:)`、`nodeFailed(nodeID:reason:)` |
 
-Each case provides a human-readable `errorDescription` for UI display. Model cases (rateLimited, timeout, contextSizeExceeded, refusal, guardrailViolation, unsupportedCapability) carry structured info for programmatic handling — retry-after delays, token counts, refusal reasons, etc.
-
----
-
-## 10. Integration Layer
-
-### 10.1 App: ThreadViewModel
-
-`ViewModels/ThreadViewModel.swift:40` — `@MainActor` view model for a conversation thread.
-
-**Session creation**: `AppViewModel.makeSession()` creates a `LanguageModelSessionImpl` with:
-- `DeepSeekProvider` (Anthropic-compat mode, `deepseek-v4-pro`)
-- `SQLiteMemoryStore` at `~/.swift-agent/projects/<path>/`
-- `AgentPermissionBridge` wrapping the legacy `PermissionEngine`
-- `DefaultToolEngine` loaded with Batch1 + Batch23 tools
-
-**Stream handling** (`send()` at L257 → `startAgentRun()` at L293):
-1. Appends user message, creates assistant placeholder, sets `state = .executing`
-2. Calls `session.streamResponse(to: trimmed)` → returns `AsyncThrowingStream`
-3. `for try await event in stream` dispatches to `handleSessionEvent()`:
-   - `.textDelta` / `.thinkingDelta` → appends to assistant message blocks
-   - `.toolCallRequested` / `.toolCallCompleted` → adds `ToolUseBlock` / `ToolResultBlock`
-   - `.turnCompleted(usage:)` → records token usage
-   - `.error` → sets `state = .failed`, cancels streaming
-4. Stream exhaustion → `handleStreamComplete()` → finalizes message, persists to JSONL, processes queued messages
-
-**Persistence**: Messages split into thinking + non-thinking blocks, each written as separate JSONL entries with chained `parentUuid` (Claude Code format). File I/O runs in `Task.detached`.
-
-### 10.2 App: AppViewModel
-
-`ViewModels/AppViewModel.swift` — manages API key resolution, provider configuration, and session factory (`makeSession()`). Current model selection is published via `currentModel` (default: `deepseek-v4-pro`). Permission mode (`default`/`acceptEdits`/`bypassPermissions`/`plan`) drives `AgentPermissionBridge` configuration.
-
-### 10.3 CLI: ChatCommand
-
-`ChatCommand.swift` — creates a `LanguageModelSessionImpl` inline with the same 4 dependencies. Iterates `streamResponse(to:)` and renders `SessionEvent` values to ANSI terminal output via `SessionEventRenderer`.
+每个 case 提供人类可读的 `errorDescription` 供 UI 展示。Model 类 case（rateLimited、timeout、contextSizeExceeded、refusal、guardrailViolation、unsupportedCapability）携带结构化信息用于编程式处理 — 重试延迟、token 计数、拒绝原因等。
 
 ---
 
-## 11. Subsystem Stubs and Future Slots
+## 10. 集成层
 
-### 11.1 No-Op Implementations
+### 10.1 App：ThreadViewModel
 
-`SubsystemStubs.swift:53` provides three stubs for protocols not yet implemented:
+`ViewModels/ThreadViewModel.swift:40` — 对话线程的 `@MainActor` view model。
 
-- **`NoOpSessionContextManager`** — conforms to `SessionContextManager` (empty protocol). Future: context window tracking and auto-compaction.
-- **`NoOpProfileManager`** — conforms to `ProfileManager` (empty protocol). Future: agent identity, personality, and behavior profiles.
-- **`NoOpSessionHookSystem`** — conforms to `SessionHookSystem` (empty protocol). Future: lifecycle hooks (pre-prompt, post-response, pre-tool).
+**Session 创建**：`AppViewModel.makeSession()` 创建 `LanguageModelSessionImpl`，包含：
+- `DeepSeekProvider`（Anthropic-compat 模式，`deepseek-v4-pro`）
+- `SQLiteMemoryStore`，位于 `~/.swift-agent/projects/<path>/`
+- `AgentPermissionBridge` 包装的传统 `PermissionEngine`
+- `DefaultToolEngine` 加载 Batch1 + Batch23 工具
+
+**流处理**（`send()` at L257 → `startAgentRun()` at L293）：
+1. 追加用户消息，创建 assistant 占位符，设置 `state = .executing`
+2. 调用 `session.streamResponse(to: trimmed)` → 返回 `AsyncThrowingStream`
+3. `for try await event in stream` 分发到 `handleSessionEvent()`：
+   - `.textDelta` / `.thinkingDelta` → 追加到 assistant 消息 blocks
+   - `.toolCallRequested` / `.toolCallCompleted` → 添加 `ToolUseBlock` / `ToolResultBlock`
+   - `.turnCompleted(usage:)` → 记录 token 用量
+   - `.error` → 设置 `state = .failed`，取消流
+4. 流耗尽 → `handleStreamComplete()` → 完成消息，持久化到 JSONL，处理排队消息
+
+**持久化**：消息拆分为 thinking 和非 thinking blocks，每个以独立的 JSONL 条目写入，带链式 `parentUuid`（Claude Code 格式）。文件 I/O 在 `Task.detached` 中运行。
+
+### 10.2 App：AppViewModel
+
+`ViewModels/AppViewModel.swift` — 管理 API key 解析、provider 配置和 session 工厂（`makeSession()`）。当前模型选择通过 `currentModel` 发布（默认：`deepseek-v4-pro`）。权限模式（`default`/`acceptEdits`/`bypassPermissions`/`plan`）驱动 `AgentPermissionBridge` 配置。
+
+### 10.3 CLI：ChatCommand
+
+`ChatCommand.swift` — 行内创建 `LanguageModelSessionImpl`，使用相同的 4 个依赖项。迭代 `streamResponse(to:)` 并通过 `SessionEventRenderer` 将 `SessionEvent` 值渲染为 ANSI 终端输出。
+
+---
+
+## 11. 子系统 Stub 和未来预留位
+
+### 11.1 No-Op 实现
+
+`SubsystemStubs.swift:53` 为尚未实现的协议提供三个 stub：
+
+- **`NoOpSessionContextManager`** — 遵循 `SessionContextManager`（空协议）。未来：上下文窗口跟踪和自动压缩。
+- **`NoOpProfileManager`** — 遵循 `ProfileManager`（空协议）。未来：agent 身份、个性和行为 profile。
+- **`NoOpSessionHookSystem`** — 遵循 `SessionHookSystem`（空协议）。未来：生命周期 hooks（pre-prompt、post-response、pre-tool）。
 
 ### 11.2 AgentGraph
 
-`Graph/AgentGraph.swift:10` — protocol-only type-slot for multi-agent orchestration:
+`Graph/AgentGraph.swift:10` — 仅为协议的类型占位符，用于多 agent 编排：
 
 ```swift
 public protocol AgentGraph: Sendable {
@@ -635,53 +633,53 @@ public protocol AgentGraph: Sendable {
 }
 ```
 
-Reserved for a future WWDC27 AgentKit `WorkflowGraph` integration. `LanguageModelSessionImpl.graphEngine` is optional — `nil` when no multi-agent graph is active.
+预留供将来 WWDC27 AgentKit `WorkflowGraph` 集成使用。`LanguageModelSessionImpl.graphEngine` 为可选 — 当无多 agent graph 活动时为 `nil`。
 
 ### 11.3 PartiallyGenerated
 
-`PartiallyGenerated.swift` — generic snapshot accumulator for structured-output streaming. Holds `snapshot`, `previousSnapshot`, `changedKeys`, `isComplete`. Not yet wired into the agent loop — designed for future structured JSON output modes.
+`PartiallyGenerated.swift` — 结构化输出流式传输的通用快照累积器。持有 `snapshot`、`previousSnapshot`、`changedKeys`、`isComplete`。尚未接入 agent 循环 — 为将来的结构化 JSON 输出模式设计。
 
 ---
 
-## File Index
+## 文件索引
 
-| File | Purpose |
+| 文件 | 用途 |
 |------|---------|
-| `LanguageModelSession.swift` | Orchestrator protocol + ToolEngine + 3 stub subsystem protocols |
-| `LanguageModelSessionImpl.swift` | Actor implementation — agent loop, tool execution, both streaming/non-streaming paths |
-| `StreamingGenerationChannel.swift` | Public actor — continuation bridge with snapshot semantics |
-| `GenerationChannel.swift` | 6-method streaming abstraction protocol |
-| `SessionEvent.swift` | Provider-agnostic streaming event enum |
-| `Transcript.swift` | Codable conversation history (7 entry types) |
-| `LanguageModel.swift` | LanguageModel protocol + LanguageModelCapabilities |
-| `LanguageModelExecutor.swift` | Executor protocol + GenerationOptions + SessionToolDefinition |
-| `AgentPermission.swift` | Runtime permission enum (13 cases) + SessionPermissionEngine protocol |
-| `AgentRuntimeError.swift` | Unified error type (19 cases, 5 domains, 6 Apple-aligned info structs) |
-| `RuntimeAgentTool.swift` | Tool protocol with dual associated types (Arguments, Output) |
-| `Prompt.swift` | Prompt/PromptRepresentable/PromptBuilder + multimodal attachment types |
-| `Instructions.swift` | Instructions struct + InstructionsBuilder result builder |
-| `TranscriptErrorHandlingPolicy.swift` | Error handling policy for generation (tool errors, context overflow) |
-| `Usage.swift` | Token usage (CC-aligned NonNullableUsage) |
-| `Response.swift` | Response struct + ResponseStream typealias |
+| `LanguageModelSession.swift` | 编排器协议 + ToolEngine + 3 个 stub 子系统协议 |
+| `LanguageModelSessionImpl.swift` | Actor 实现 — agent 循环、工具执行、流式/非流式双路径 |
+| `StreamingGenerationChannel.swift` | 公开 actor — 带快照语义的 continuation 桥接 |
+| `GenerationChannel.swift` | 6 方法流式抽象协议 |
+| `SessionEvent.swift` | Provider 无关的流式事件枚举 |
+| `Transcript.swift` | 可编码对话历史（7 种条目类型） |
+| `LanguageModel.swift` | LanguageModel 协议 + LanguageModelCapabilities |
+| `LanguageModelExecutor.swift` | Executor 协议 + GenerationOptions + SessionToolDefinition |
+| `AgentPermission.swift` | 运行时权限枚举（13 种）+ SessionPermissionEngine 协议 |
+| `AgentRuntimeError.swift` | 统一错误类型（19 种 case，5 个领域，6 个 Apple 对齐的 info 结构体） |
+| `RuntimeAgentTool.swift` | 双重关联类型的 Tool 协议（Arguments、Output） |
+| `Prompt.swift` | Prompt/PromptRepresentable/PromptBuilder + 多模态附件类型 |
+| `Instructions.swift` | Instructions 结构体 + InstructionsBuilder result builder |
+| `TranscriptErrorHandlingPolicy.swift` | 生成过程的错误处理策略（工具错误、上下文溢出） |
+| `Usage.swift` | Token 用量（CC 对齐的 NonNullableUsage） |
+| `Response.swift` | Response 结构体 + ResponseStream typealias |
 | `SubsystemStubs.swift` | NoOp stubs + DefaultToolEngine actor |
-| `AgentPermissionBridge.swift` | SessionPermissionEngine adapter for legacy PermissionEngine |
-| `SQLiteMemoryStore.swift` | SQLite3 actor-based memory with schema migration |
-| **Provider files** | |
+| `AgentPermissionBridge.swift` | 传统 PermissionEngine 的 SessionPermissionEngine 适配器 |
+| `SQLiteMemoryStore.swift` | 基于 SQLite3 actor 的记忆存储，含 schema migration |
+| **Provider 文件** | |
 | `AnthropicProvider.swift` | Anthropic Messages API provider |
-| `DeepSeekProvider.swift` | DeepSeek dual-API provider |
+| `DeepSeekProvider.swift` | DeepSeek 双 API provider |
 | `OpenAIProvider.swift` | OpenAI Chat Completions provider |
-| `AnthropicSSEParser.swift` | Anthropic SSE stream parser |
-| `DeepSeekSSEParser.swift` | DeepSeek dual-mode SSE parser |
-| `OpenAISSEParser.swift` | OpenAI Chat Completions SSE parser |
-| `AnthropicTranscriptTranslator.swift` | Transcript → Anthropic wire format |
-| `DeepSeekTranscriptTranslator.swift` | Transcript → DeepSeek wire format (both modes) |
-| `OpenAITranscriptTranslator.swift` | Transcript → OpenAI wire format |
-| `AnthropicContentAccumulator.swift` | Per-index tool input JSON accumulator |
-| **Tool batch files** | |
-| `Batch1ToolRegistry.swift` | 15 read-only tools |
-| `Batch23ToolRegistry.swift` | 9 file/cmd tools |
-| `Batch45ToolRegistry.swift` | 36 task/agent/mcp tools |
-| **Integration files** | |
-| `ThreadViewModel.swift` | App: session creation, stream handling, persistence |
-| `AppViewModel.swift` | App: API key, provider config, session factory |
-| `ChatCommand.swift` | CLI: session creation, ANSI rendering |
+| `AnthropicSSEParser.swift` | Anthropic SSE 流解析器 |
+| `DeepSeekSSEParser.swift` | DeepSeek 双模式 SSE 解析器 |
+| `OpenAISSEParser.swift` | OpenAI Chat Completions SSE 解析器 |
+| `AnthropicTranscriptTranslator.swift` | Transcript → Anthropic 协议格式 |
+| `DeepSeekTranscriptTranslator.swift` | Transcript → DeepSeek 协议格式（双模式） |
+| `OpenAITranscriptTranslator.swift` | Transcript → OpenAI 协议格式 |
+| `AnthropicContentAccumulator.swift` | 按索引的工具输入 JSON 累积器 |
+| **工具批次文件** | |
+| `Batch1ToolRegistry.swift` | 15 个只读工具 |
+| `Batch23ToolRegistry.swift` | 9 个文件/命令工具 |
+| `Batch45ToolRegistry.swift` | 36 个任务/agent/mcp 工具 |
+| **集成文件** | |
+| `ThreadViewModel.swift` | App：session 创建、流处理、持久化 |
+| `AppViewModel.swift` | App：API key、provider 配置、session 工厂 |
+| `ChatCommand.swift` | CLI：session 创建、ANSI 渲染 |
