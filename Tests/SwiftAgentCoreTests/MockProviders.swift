@@ -155,7 +155,7 @@ public struct MockPermissionEngine: SessionPermissionEngine, Sendable {
         self.shouldAllow = shouldAllow
     }
 
-    public func check(_ permission: AgentPermission) async throws -> Bool {
-        shouldAllow
+    public func check(_ permission: AgentPermission) async throws -> PermissionCheckResult {
+        shouldAllow ? .allowed : .denied(reason: "mock deny")
     }
 }

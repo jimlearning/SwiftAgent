@@ -29,7 +29,7 @@ public final class AgentPermissionBridge: SessionPermissionEngine, @unchecked Se
     /// Maps each AgentPermission case to the appropriate tool name and delegates
     /// to the wrapped PermissionEngine. Uses exhaustive switch (no default case)
     /// so the compiler enforces coverage of all 13 cases.
-    public func check(_ permission: AgentPermission) async throws -> Bool {
+    public func check(_ permission: AgentPermission) async throws -> PermissionCheckResult {
         switch permission {
         case .runCommands:
             let verdict = await engine.check(
@@ -38,55 +38,76 @@ public final class AgentPermissionBridge: SessionPermissionEngine, @unchecked Se
                 mode: mode,
                 context: .default
             )
-            return verdict.decision != .deny
+            return verdict.decision == .deny
+                ? .denied(reason: verdict.reason ?? "blocked by permission engine")
+                : .allowed
 
         case .readFiles(let paths):
+            // Only include file_path if actual paths exist; an empty string
+            // triggers a false-positive safety deny via validatePath("").
+            var input: [String: JSONValue] = [:]
+            if !paths.isEmpty {
+                input["file_path"] = .string(paths.joined(separator: ","))
+            }
             let verdict = await engine.check(
                 toolName: "Read",
-                input: ["file_path": .string(paths.joined(separator: ","))],
+                input: input,
                 mode: mode,
                 context: .default
             )
-            return verdict.decision != .deny
+            return verdict.decision == .deny
+                ? .denied(reason: verdict.reason ?? "blocked by permission engine")
+                : .allowed
 
         case .writeFiles(let paths):
+            var input: [String: JSONValue] = [:]
+            if !paths.isEmpty {
+                input["file_path"] = .string(paths.joined(separator: ","))
+            }
             let verdict = await engine.check(
                 toolName: "Write",
-                input: ["file_path": .string(paths.joined(separator: ","))],
+                input: input,
                 mode: mode,
                 context: .default
             )
-            return verdict.decision != .deny
+            return verdict.decision == .deny
+                ? .denied(reason: verdict.reason ?? "blocked by permission engine")
+                : .allowed
 
         case .network(let domains):
+            var input: [String: JSONValue] = [:]
+            if !domains.isEmpty {
+                input["url"] = .string(domains.joined(separator: ","))
+            }
             let verdict = await engine.check(
                 toolName: "WebFetch",
-                input: ["url": .string(domains.joined(separator: ","))],
+                input: input,
                 mode: mode,
                 context: .default
             )
-            return verdict.decision != .deny
+            return verdict.decision == .deny
+                ? .denied(reason: verdict.reason ?? "blocked by permission engine")
+                : .allowed
 
         case .all:
-            return true
+            return .allowed
 
         case .default:
-            return mode == .default
+            return mode == .default ? .allowed : .denied(reason: "AgentPermission.default requires .default PermissionMode")
 
         case .plan:
-            return mode == .plan
+            return mode == .plan ? .allowed : .denied(reason: "AgentPermission.plan requires .plan PermissionMode")
 
         case .contacts, .calendar, .location, .camera, .microphone, .delete:
-            // Route through PermissionEngine so rules can be configured for these.
-            // Without matching rules, PermissionEngine denies by default (same as before),
-            // but now operators can add rules to selectively grant them.
             let verdict = await engine.check(
                 toolName: permission.toolName,
                 input: [:],
                 mode: mode,
                 context: .default
             )
-            return verdict.decision != .deny
+            return verdict.decision == .deny
+                ? .denied(reason: verdict.reason ?? "blocked by permission engine")
+                : .allowed
         }
     }
 }

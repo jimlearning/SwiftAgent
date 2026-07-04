@@ -104,7 +104,13 @@ public protocol SessionPermissionEngine: Sendable {
     /// Check whether the given permission is granted at the runtime level.
     ///
     /// - Parameter permission: The capability being requested.
-    /// - Returns: `true` if the permission is granted.
+    /// - Returns: `.allowed` if the tool may execute, `.denied(reason:)` if blocked.
     /// - Throws: May throw if the permission check itself encounters an error.
-    func check(_ permission: AgentPermission) async throws -> Bool
+    func check(_ permission: AgentPermission) async throws -> PermissionCheckResult
+}
+
+/// Result of a permission check via SessionPermissionEngine.
+public enum PermissionCheckResult: Sendable, Equatable {
+    case allowed
+    case denied(reason: String)
 }

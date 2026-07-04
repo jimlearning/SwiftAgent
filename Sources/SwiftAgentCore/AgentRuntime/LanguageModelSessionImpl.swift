@@ -122,11 +122,14 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
         }
 
         let permission = Self.permissionForTool(name)
-        let allowed = try await permissionEngine.check(permission)
-        guard allowed else {
+        let result = try await permissionEngine.check(permission)
+        switch result {
+        case .allowed:
+            break
+        case .denied(let reason):
             throw AgentRuntimeError.permissionDenied(
                 permission: name,
-                reason: "Tool \"\(name)\" blocked by permission engine"
+                reason: reason
             )
         }
         return try await toolEngine.execute(name: name, input: input)
@@ -365,15 +368,16 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                             // No tool calls — turn is complete.
                             turnComplete = true
                         } else {
-                            // Tool calls were requested. Execute each one,
-                            // yield completion events, and append to transcript.
-                            // If a tool fails (permission denied, etc.), append
-                            // an error tool_result so the transcript stays well-formed
-                            // and the model can respond to the failure.
+                            // Tool calls were requested. Batch all tool_calls
+                            // into one assistant message FIRST (so thinking stays
+                            // in the same content array as ALL tool_use blocks),
+                            // then execute and append results in a second pass.
                             for call in calls {
                                 await self.transcript.entries.append(
                                     .toolCall(id: call.id, name: call.name, input: call.input)
                                 )
+                            }
+                            for call in calls {
                                 do {
                                     let output = try await self.executeTool(name: call.name, input: call.input)
                                     await self.transcript.entries.append(

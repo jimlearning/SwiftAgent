@@ -13,7 +13,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.runCommands)
-        XCTAssertTrue(result, "runCommands should be allowed when Bash is allowed")
+        XCTAssertEqual(result, .allowed, "runCommands should be allowed when Bash is allowed")
     }
 
     func testRunCommandsDeniedWhenBashDenied() async throws {
@@ -21,7 +21,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.runCommands)
-        XCTAssertFalse(result, "runCommands should be denied when Bash is denied")
+        XCTAssertNotEqual(result, .allowed, "runCommands should be denied when Bash is denied")
     }
 
     // MARK: - Test 2: readFiles maps to Read tool check
@@ -31,7 +31,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.readFiles(paths: ["/tmp"]))
-        XCTAssertTrue(result, "readFiles should be allowed when Read is allowed")
+        XCTAssertEqual(result, .allowed, "readFiles should be allowed when Read is allowed")
     }
 
     func testReadFilesDeniedWhenReadDenied() async throws {
@@ -39,7 +39,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.readFiles(paths: ["/tmp"]))
-        XCTAssertFalse(result, "readFiles should be denied when Read is denied")
+        XCTAssertNotEqual(result, .allowed, "readFiles should be denied when Read is denied")
     }
 
     // MARK: - Test 3: writeFiles maps to Write tool check
@@ -49,7 +49,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.writeFiles(paths: ["/tmp"]))
-        XCTAssertTrue(result, "writeFiles should be allowed when Write is allowed")
+        XCTAssertEqual(result, .allowed, "writeFiles should be allowed when Write is allowed")
     }
 
     func testWriteFilesDeniedWhenWriteDenied() async throws {
@@ -57,7 +57,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.writeFiles(paths: ["/tmp"]))
-        XCTAssertFalse(result, "writeFiles should be denied when Write is denied")
+        XCTAssertNotEqual(result, .allowed, "writeFiles should be denied when Write is denied")
     }
 
     // MARK: - Test 4: .all returns true unconditionally
@@ -68,7 +68,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.all)
-        XCTAssertTrue(result, ".all should return true unconditionally")
+        XCTAssertEqual(result, .allowed, ".all should return true unconditionally")
     }
 
     // MARK: - Test 5: .default respects mode
@@ -78,7 +78,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.default)
-        XCTAssertTrue(result, ".default should return true when mode is .default")
+        XCTAssertEqual(result, .allowed, ".default should return true when mode is .default")
     }
 
     func testDefaultReturnsFalseInOtherMode() async throws {
@@ -86,7 +86,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .plan)
 
         let result = try await bridge.check(.default)
-        XCTAssertFalse(result, ".default should return false when mode is not .default")
+        XCTAssertNotEqual(result, .allowed, ".default should return false when mode is not .default")
     }
 
     // MARK: - Test 6: .plan respects mode
@@ -96,7 +96,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .plan)
 
         let result = try await bridge.check(.plan)
-        XCTAssertTrue(result, ".plan should return true when mode is .plan")
+        XCTAssertEqual(result, .allowed, ".plan should return true when mode is .plan")
     }
 
     func testPlanReturnsFalseInOtherMode() async throws {
@@ -104,7 +104,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.plan)
-        XCTAssertFalse(result, ".plan should return false when mode is not .plan")
+        XCTAssertNotEqual(result, .allowed, ".plan should return false when mode is not .plan")
     }
 
     // MARK: - Test 7: Unestablished permissions default to ask (not deny)
@@ -114,7 +114,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.contacts)
-        XCTAssertTrue(result, ".contacts should not be denied by default (defaults to ask)")
+        XCTAssertEqual(result, .allowed, ".contacts should not be denied by default (defaults to ask)")
     }
 
     // MARK: - Test 8: All unestablished permissions default to ask (not deny)
@@ -129,7 +129,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
 
         for permission in permissions {
             let result = try await bridge.check(permission)
-            XCTAssertTrue(result, "\(permission) should not be denied by default (defaults to ask)")
+            XCTAssertEqual(result, .allowed, "\(permission) should not be denied by default (defaults to ask)")
         }
     }
 
@@ -140,7 +140,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.network(domains: ["api.example.com"]))
-        XCTAssertTrue(result, "network should be allowed when WebFetch is allowed")
+        XCTAssertEqual(result, .allowed, "network should be allowed when WebFetch is allowed")
     }
 
     func testNetworkDeniedWhenWebFetchDenied() async throws {
@@ -148,7 +148,7 @@ final class AgentPermissionBridgeTests: XCTestCase {
         let bridge = AgentPermissionBridge(engine: engine, mode: .default)
 
         let result = try await bridge.check(.network(domains: ["api.example.com"]))
-        XCTAssertFalse(result, "network should be denied when WebFetch is denied")
+        XCTAssertNotEqual(result, .allowed, "network should be denied when WebFetch is denied")
     }
 
     // MARK: - Test 10: LanguageModelSessionImpl integration with SQLiteMemoryStore
