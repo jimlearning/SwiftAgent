@@ -56,10 +56,7 @@ struct AnthropicSSEParser: Sendable {
                         accumulator.recordToolCall(index: index, id: id, name: name)
                     }
                 case "thinking":
-                    // Capture the opaque signature token — required to pass
-                    // thinking blocks back in subsequent API requests.
                     let rawSig = block["signature"] as? String
-                    print("[AnthropicSSEParser] thinking block: sig='\(rawSig ?? "nil")' thinking='\((block["thinking"] as? String)?.prefix(80) ?? "nil")...'")
                     if let sig = rawSig {
                         thinkingSignature = sig
                         await channel.update(thinkingSignature: sig)
@@ -85,7 +82,6 @@ struct AnthropicSSEParser: Sendable {
                     }
                 case "signature_delta":
                     if let sig = delta["signature"] as? String {
-                        print("[AnthropicSSEParser] signature_delta: '\(sig)'")
                         thinkingSignature = sig
                         await channel.update(thinkingSignature: sig)
                     }
@@ -128,7 +124,6 @@ struct AnthropicSSEParser: Sendable {
         // event, the SSE stream was truncated or malformed — fail the channel
         // so the agent loop doesn't treat an empty/incomplete response as valid.
         if !receivedMessageDelta && !Task.isCancelled {
-            print("[AnthropicSSEParser] Stream ended without message_delta — response truncated or empty")
             await channel.fail(with: .invalidResponse(
                 reason: "SSE stream ended without message_delta completion event"
             ))

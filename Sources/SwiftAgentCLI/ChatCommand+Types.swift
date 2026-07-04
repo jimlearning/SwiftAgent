@@ -209,6 +209,12 @@ final class CurrentToolTracker: @unchecked Sendable {
         set { lock.withLock { _isThinking = newValue } }
     }
 
+    private var _streamingText: Bool = false
+    var streamingText: Bool {
+        get { lock.withLock { _streamingText } }
+        set { lock.withLock { _streamingText = newValue } }
+    }
+
     private static func singleLine(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\n", with: " ")

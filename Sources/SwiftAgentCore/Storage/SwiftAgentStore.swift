@@ -86,14 +86,6 @@ public final class SwiftAgentStore: @unchecked Sendable {
 
         let isoNow = ISO8601DateFormatter().string(from: Date())
 
-        // Write initial metadata entry: last-prompt (placeholder)
-        let lastPromptEntry = LogEntry.lastPrompt(LastPromptEntry(
-            sessionID: sessionId,
-            lastPrompt: "",
-            leafUuid: nil
-        ))
-        try transcripts.append(lastPromptEntry, sessionId: sessionId, projectPath: projectPath)
-
         // Write custom title if provided
         if let title = title {
             let titleEntry = LogEntry.customTitle(CustomTitleEntry(
@@ -139,9 +131,6 @@ public final class SwiftAgentStore: @unchecked Sendable {
         sessionId: String,
         projectPath: String
     ) throws {
-        let filePath = SwiftAgentPaths.transcriptPath(sessionId: sessionId, projectPath: projectPath)
-        print("[Store] appendMessage: sessionId=\(sessionId.prefix(8)) projectPath=\(projectPath) → file=\(filePath)")
-
         let entry = LogEntry.transcript(message)
         try transcripts.append(entry, sessionId: sessionId, projectPath: projectPath)
 

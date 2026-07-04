@@ -281,12 +281,13 @@ extension Message: Codable {
 
         switch type {
         case .user:
-            // CC format: user messages have "content" as a plain string
-            for block in content {
-                if case .text(let text) = block {
-                    try container.encode(text, forKey: .content)
-                    break
-                }
+            // CC format: user messages with text use a plain string;
+            // user messages with tool_result use an array of content blocks.
+            let nonText = content.contains { if case .text = $0 { return false }; return true }
+            if !nonText, case .text(let text) = content.first {
+                try container.encode(text, forKey: .content)
+            } else {
+                try container.encode(content, forKey: .content)
             }
         case .assistant:
             try container.encode(uuid, forKey: .id)
@@ -355,7 +356,7 @@ public enum ContentBlock: Sendable {
     case text(String)
     /// Thinking block with optional cryptographic signature for verification.
     /// Matches CC's thinking block { thinking, signature }.
-    case thinking(String, signature: String? = nil)
+    case thinking(String, signature: String? = nil, duration: TimeInterval? = nil)
     /// Redacted thinking placeholder (e.g. for streaming truncation).
     /// Matches CC's redacted_thinking block.
     case redactedThinking(String)
@@ -388,6 +389,7 @@ extension ContentBlock: Codable {
         case text
         case thinking
         case signature
+        case duration
         case id
         case name
         case input
@@ -412,7 +414,8 @@ extension ContentBlock: Codable {
         case "thinking":
             let text = try container.decode(String.self, forKey: .thinking)
             let sig = try container.decodeIfPresent(String.self, forKey: .signature)
-            self = .thinking(text, signature: sig)
+            let dur = try container.decodeIfPresent(TimeInterval.self, forKey: .duration)
+            self = .thinking(text, signature: sig, duration: dur)
         case "redacted_thinking":
             let data = try container.decode(String.self, forKey: .data)
             self = .redactedThinking(data)
@@ -468,10 +471,11 @@ extension ContentBlock: Codable {
         case .text(let text):
             try container.encode("text", forKey: .type)
             try container.encode(text, forKey: .text)
-        case .thinking(let text, let signature):
+        case .thinking(let text, let signature, let duration):
             try container.encode("thinking", forKey: .type)
             try container.encode(text, forKey: .thinking)
             try container.encodeIfPresent(signature, forKey: .signature)
+            try container.encodeIfPresent(duration, forKey: .duration)
         case .redactedThinking(let data):
             try container.encode("redacted_thinking", forKey: .type)
             try container.encode(data, forKey: .data)

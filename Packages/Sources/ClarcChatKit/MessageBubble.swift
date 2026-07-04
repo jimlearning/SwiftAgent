@@ -43,10 +43,10 @@ struct MessageBubble: View {
                     // Assistant message: render blocks in order
                     let (renderItems, hidden) = buildRenderItems(from: message)
 
-                    // Render blocks in original order with summary at correct position
+                    // Render blocks in original order with summaries at correct positions
                     ForEach(renderItems) { item in
-                        if item.isSummary {
-                            transientToolSummary(hidden: hidden)
+                        if item.isSummary, let groupTools = item.summaryTools {
+                            transientToolSummary(hidden: groupTools)
                         } else if let block = item.block {
                             if let text = block.text, !text.isEmpty {
                                 assistantTextBubble(text: text, blockId: block.id, hasHiddenTools: !hidden.isEmpty)
@@ -326,18 +326,25 @@ struct MessageBubble: View {
 
     // MARK: - Transient Tool Helpers
 
-    /// Read, Grep, Glob, Bash etc. are collapsed into a summary after streaming completes
+    /// Read, Grep, Glob, Bash etc. are collapsed into a summary after streaming completes.
+    /// Contiguous groups of transient tools each get their own summary, preserving
+    /// interleaving order with non-transient tools (Write, Edit, etc.) and text blocks.
     private func buildRenderItems(from message: ChatMessage) -> ([RenderItem], hidden: [ToolCall]) {
-        let hidden = message.isStreaming ? [] : message.blocks.compactMap(\.toolCall).filter { isTransientTool($0) && $0.hasNonEmptyResult }
-        let hiddenIDs = Set(hidden.map(\.id))
-        var summaryRendered = false
+        let hiddenIDs = Set(message.isStreaming ? [] : message.blocks.compactMap(\.toolCall).filter { isTransientTool($0) && $0.hasNonEmptyResult }.map(\.id))
         var renderItems: [RenderItem] = []
         var pendingText: (id: String, text: String)? = nil
+        var pendingHidden: [ToolCall] = []
 
         func flushText() {
             guard let t = pendingText else { return }
             renderItems.append(RenderItem(id: t.id, block: .text(t.text, id: t.id), isSummary: false))
             pendingText = nil
+        }
+
+        func flushHidden() {
+            guard !pendingHidden.isEmpty else { return }
+            renderItems.append(RenderItem(id: "summary-\(pendingHidden.first!.id)", block: nil, isSummary: true, summaryTools: pendingHidden))
+            pendingHidden = []
         }
 
         for block in message.blocks {
@@ -355,13 +362,12 @@ struct MessageBubble: View {
 
             if let toolCall = block.toolCall {
                 if hiddenIDs.contains(toolCall.id) {
-                    if !summaryRendered {
-                        flushText()
-                        renderItems.append(RenderItem(id: "summary", block: nil, isSummary: true))
-                        summaryRendered = true
-                    }
+                    if pendingHidden.isEmpty { flushText() }
+                    pendingHidden.append(toolCall)
                     continue
                 }
+                // Non-hidden tool breaks the hidden group; flush hidden first (before text)
+                flushHidden()
                 flushText()
                 if message.isStreaming || toolCall.isKeepAlways || toolCall.result != nil || toolCall.isError {
                     renderItems.append(RenderItem(id: block.id, block: block, isSummary: false))
@@ -370,6 +376,8 @@ struct MessageBubble: View {
             }
 
             if block.isThinking {
+                flushHidden()
+                flushText()
                 let thinkingText = block.thinking ?? ""
                 if thinkingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    !block.isThinkingRedacted {
@@ -379,9 +387,12 @@ struct MessageBubble: View {
                 renderItems.append(RenderItem(id: block.id, block: block, isSummary: false))
             }
         }
+        flushHidden()
         flushText()
 
-        return (renderItems, hidden)
+        // Return all hidden tools for the legacy caller; each summary carries its own slice.
+        let allHidden = renderItems.compactMap(\.summaryTools).flatMap { $0 }
+        return (renderItems, allHidden)
     }
 
     private func isTransientTool(_ toolCall: ToolCall) -> Bool {
@@ -494,5 +505,7 @@ private struct RenderItem: Identifiable {
     let id: String
     let block: MessageBlock?
     let isSummary: Bool
+    /// Tools belonging to this summary group (nil for non-summary items).
+    var summaryTools: [ToolCall]?
 }
 

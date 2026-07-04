@@ -30,8 +30,8 @@ struct ChatCommand: AsyncParsableCommand {
     @Flag(name: .shortAndLong, help: "Enable debug logging of all API requests and responses")
     var debug: Bool = false
 
-    @Flag(name: .long, help: "Show model thinking content in dim text")
-    var showThinking: Bool = false
+    @Flag(inversion: .prefixedNo, help: "Show model thinking content in dim text")
+    var showThinking: Bool = true
 
     @Option(name: .long, help: "Send a single prompt and exit (non-interactive, automated mode)")
     var prompt: String?
@@ -44,9 +44,23 @@ struct ChatCommand: AsyncParsableCommand {
     var mcpClientsList = MCPClientsHolder()
 
     func run() async throws {
-        // Resolve API key
+        // Resolve API key — same sources as the App:
+        //   1. --api-key CLI flag
+        //   2. DEEPSEEK_API_KEY env var
+        //   3. ~/.swift-agent/credentials.json (same file KeychainStore uses in DEBUG)
+        //   4. Claude Code keychain / ~/.claude.json (for backward compat)
         let resolver = APIKeyResolver()
-        let key = apiKey ?? resolver.resolve() ?? ""
+        var resolvedKey = apiKey
+        if resolvedKey == nil || resolvedKey!.isEmpty {
+            resolvedKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
+        }
+        if resolvedKey == nil || resolvedKey!.isEmpty {
+            resolvedKey = readSwiftAgentCredentials()
+        }
+        if resolvedKey == nil || resolvedKey!.isEmpty {
+            resolvedKey = resolver.resolve()
+        }
+        let key = resolvedKey ?? ""
 
         // Mutable model reference — allows /model to change at runtime
         let sharedModel = SharedModel(model)
@@ -61,7 +75,12 @@ struct ChatCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        let baseURL = ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"] ?? "https://api.deepseek.com"
+        // Strip trailing /anthropic if present — DeepSeekProvider appends the
+        // full anthropic/v1/messages path, so we need the bare origin.
+        var baseURL = ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"] ?? "https://api.deepseek.com"
+        if baseURL.hasSuffix("/anthropic") {
+            baseURL = String(baseURL.dropLast("/anthropic".count))
+        }
 
         let capability = TerminalCapability()
         let theme: ColorTheme = noColor ? .monochrome : .default
@@ -252,6 +271,24 @@ struct ChatCommand: AsyncParsableCommand {
         var sessionId = UUID().uuidString
         let sessionState = SessionState()
 
+        // ── Session persistence: JSONL transcript (CC-compatible) ──
+        let store = SwiftAgentStore()
+        let gitBranch = resolveGitBranch(cwd: cwd)
+        do {
+            let result = try store.createSession(
+                sessionId: sessionId,
+                projectPath: cwd,
+                cwd: cwd,
+                gitBranch: gitBranch
+            )
+            sessionId = result.sessionId
+        } catch {
+            emitBlock("[dim]Session logging unavailable: \(error.localizedDescription)[/]")
+        }
+
+        // UUID chaining for parentUuid (CC-compatible message linking).
+        var lastAssistantUuid: String?
+
         // If --session flag provided, print notice (full resume requires memory store integration)
         if let resumeID = session {
             emitBlock("Session resume requested: \(resumeID). Transcript loading from memory store not yet implemented.")
@@ -413,7 +450,7 @@ struct ChatCommand: AsyncParsableCommand {
             let spinnerTask = Task {
                 var frame = 0
                 while !Task.isCancelled {
-                    if spinnerPause.paused {
+                    if spinnerPause.paused || currentTool.streamingText {
                         try? await Task.sleep(nanoseconds: 50_000_000)
                         continue
                     }
@@ -460,12 +497,14 @@ struct ChatCommand: AsyncParsableCommand {
                     case .toolCallCompleted:
                         currentTool.name = nil
                     case .textDelta:
+                        currentTool.streamingText = true
                         if currentTool.isThinking {
-                            if showThinking { print("\u{001B}[0m\n") }
+                            if showThinking { print("\u{001B}[0m") }
                             else { print("\r\u{001B}[K", terminator: "") }
                             currentTool.isThinking = false
                         }
                     case .thinkingDelta:
+                        currentTool.streamingText = false
                         currentTool.isThinking = true
                     case .turnCompleted(let usage, _):
                         if let u = usage {
@@ -490,14 +529,17 @@ struct ChatCommand: AsyncParsableCommand {
                 ? "(cancelled — press ↑ to recall previous input)"
                 : eventRenderer.accumulatedText
 
-            // Display response with left border
+            // Display response with left border.
+            // Clear the spinner line first, then one blank line before content.
             let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
+                print("\r\u{001B}[K")
                 let rendered = noMarkdown
                     ? renderer.renderLeftBorder(content: trimmed)
                     : markdown.render(trimmed)
                 emitBlock(rendered)
             } else if !wasCancelled {
+                print("\r\u{001B}[K")
                 emitBlock(renderer.renderLeftBorder(content: "(done)"))
             }
 
@@ -507,6 +549,179 @@ struct ChatCommand: AsyncParsableCommand {
                 ? String(format: "%.0fms", elapsed * 1000)
                 : String(format: "%.0fs", elapsed)
             emitBlock(capability.color("  ✻ \(elapsedStr)", color: .brightBlack))
+
+            // ── Persist messages to JSONL transcript (CC-compatible ordering) ──
+            do {
+                let userUuid = UUID().uuidString
+                let promptId = UUID().uuidString
+
+                // Step 1: Write user message first (CC order: user before metadata).
+                let userMsg = SerializedMessage(
+                    uuid: userUuid,
+                    message: Message(type: .user, content: [.text(input)]),
+                    cwd: cwd,
+                    userType: "external",
+                    entrypoint: "cli",
+                    sessionID: sessionId,
+                    timestamp: Date(),
+                    version: "0.1.0",
+                    gitBranch: gitBranch,
+                    permissionMode: parsePermissionMode(permission),
+                    parentUuid: lastAssistantUuid,
+                    isSidechain: false,
+                    promptId: promptId
+                )
+                try store.appendMessage(userMsg, sessionId: sessionId, projectPath: cwd)
+                var previousUuid = userUuid
+
+                if !trimmed.isEmpty || !wasCancelled {
+                    // Step 2: Metadata after user, before assistant (CC order).
+                    let lastPromptEntry = LogEntry.lastPrompt(LastPromptEntry(
+                        sessionID: sessionId,
+                        lastPrompt: input,
+                        leafUuid: userUuid
+                    ))
+                    try? store.appendMetadata(lastPromptEntry, sessionId: sessionId, projectPath: cwd)
+
+                    let permEntry = LogEntry.permissionMode(PermissionModeEntry(
+                        sessionID: sessionId,
+                        permissionMode: parsePermissionMode(permission)
+                    ))
+                    try? store.appendMetadata(permEntry, sessionId: sessionId, projectPath: cwd)
+
+                    // Step 3: Shared message.id for all assistant blocks from this turn.
+                    let messageId = UUID().uuidString
+                    let hasTools = !eventRenderer.toolCallRecords.isEmpty
+                    let totalUsage = Usage(
+                        inputTokens: sessionState.totalTokensIn,
+                        cacheCreationInputTokens: 0,
+                        cacheReadInputTokens: 0,
+                        outputTokens: sessionState.totalTokensOut
+                    )
+
+                    // Step 4: Write each content block as a separate message.
+                    // Thinking → assistant message (CC: signature == message.id).
+                    if !eventRenderer.accumulatedThinking.isEmpty {
+                        let thinkingUuid = UUID().uuidString
+                        let thinkingMsg = SerializedMessage(
+                            uuid: thinkingUuid,
+                            message: Message(
+                                uuid: messageId,
+                                type: .assistant,
+                                content: [.thinking(eventRenderer.accumulatedThinking, signature: messageId)],
+                                usage: totalUsage,
+                                model: sharedModel.current,
+                                stopReason: hasTools ? "tool_use" : "end_turn"
+                            ),
+                            cwd: cwd,
+                            userType: "external",
+                            entrypoint: "cli",
+                            sessionID: sessionId,
+                            timestamp: Date(),
+                            version: "0.1.0",
+                            gitBranch: gitBranch,
+                            parentUuid: previousUuid,
+                            isSidechain: false
+                        )
+                        try store.appendMessage(thinkingMsg, sessionId: sessionId, projectPath: cwd)
+                        previousUuid = thinkingUuid
+                    }
+
+                    // Tool use → assistant messages (same messageId, stop_reason: tool_use).
+                    for rec in eventRenderer.toolCallRecords {
+                        let inputJSON: JSONValue
+                        if !rec.input.isEmpty,
+                           let obj = try? JSONSerialization.jsonObject(with: rec.input) as? [String: Any] {
+                            inputJSON = .object(obj.mapValues { JSONValue.fromAny($0) ?? .null })
+                        } else {
+                            inputJSON = .object([:])
+                        }
+                        let toolUuid = UUID().uuidString
+                        let toolMsg = SerializedMessage(
+                            uuid: toolUuid,
+                            message: Message(
+                                uuid: messageId,
+                                type: .assistant,
+                                content: [.toolUse(id: rec.id, name: rec.name, input: inputJSON)],
+                                usage: totalUsage,
+                                model: sharedModel.current,
+                                stopReason: "tool_use"
+                            ),
+                            cwd: cwd,
+                            userType: "external",
+                            entrypoint: "cli",
+                            sessionID: sessionId,
+                            timestamp: Date(),
+                            version: "0.1.0",
+                            gitBranch: gitBranch,
+                            parentUuid: previousUuid,
+                            isSidechain: false
+                        )
+                        try store.appendMessage(toolMsg, sessionId: sessionId, projectPath: cwd)
+                        previousUuid = toolUuid
+                    }
+
+                    // Tool results → user messages (CC puts tool_result in user role).
+                    for rec in eventRenderer.toolResultRecords {
+                        let resultUuid = UUID().uuidString
+                        let resultMsg = SerializedMessage(
+                            uuid: resultUuid,
+                            message: Message(
+                                type: .user,
+                                content: [.toolResult(
+                                    toolUseID: rec.id,
+                                    content: .string(rec.output),
+                                    isError: rec.isError
+                                )]
+                            ),
+                            cwd: cwd,
+                            userType: "external",
+                            entrypoint: "cli",
+                            sessionID: sessionId,
+                            timestamp: Date(),
+                            version: "0.1.0",
+                            gitBranch: gitBranch,
+                            permissionMode: parsePermissionMode(permission),
+                            parentUuid: previousUuid,
+                            isSidechain: false,
+                            promptId: promptId
+                        )
+                        try store.appendMessage(resultMsg, sessionId: sessionId, projectPath: cwd)
+                        previousUuid = resultUuid
+                    }
+
+                    // Text → assistant message (same messageId).
+                    if !responseText.isEmpty {
+                        let textUuid = UUID().uuidString
+                        let textMsg = SerializedMessage(
+                            uuid: textUuid,
+                            message: Message(
+                                uuid: messageId,
+                                type: .assistant,
+                                content: [.text(responseText)],
+                                usage: totalUsage,
+                                model: sharedModel.current,
+                                stopReason: "end_turn"
+                            ),
+                            cwd: cwd,
+                            userType: "external",
+                            entrypoint: "cli",
+                            sessionID: sessionId,
+                            timestamp: Date(),
+                            version: "0.1.0",
+                            gitBranch: gitBranch,
+                            parentUuid: previousUuid,
+                            isSidechain: false
+                        )
+                        try store.appendMessage(textMsg, sessionId: sessionId, projectPath: cwd)
+                        previousUuid = textUuid
+                    }
+
+                    lastAssistantUuid = previousUuid
+                }
+            } catch {
+                debugLog?.logError(error)
+            }
 
             // In non-interactive mode (--prompt), exit after the first turn.
             // This enables automated cache testing: feed a prompt, let the
@@ -681,4 +896,46 @@ struct ChatCommand: AsyncParsableCommand {
         }
     }
 
+}
+
+// MARK: - Git Helpers
+
+/// Resolve the current git branch name from the working directory.
+private func resolveGitBranch(cwd: String) -> String? {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = ["branch", "--show-current"]
+    proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = FileHandle.nullDevice
+    do {
+        try proc.run()
+        proc.waitUntilExit()
+    } catch {
+        return nil
+    }
+    guard proc.terminationStatus == 0,
+          let data = try? pipe.fileHandleForReading.readToEnd(),
+          let branch = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !branch.isEmpty
+    else { return nil }
+    return branch
+}
+
+// MARK: - API Key Helpers
+
+/// Reads the DeepSeek API key from ~/.swift-agent/credentials.json,
+/// the same file used by KeychainStore in DEBUG builds.
+private func readSwiftAgentCredentials() -> String? {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".swift-agent")
+        .appendingPathComponent("credentials.json")
+    guard FileManager.default.fileExists(atPath: url.path),
+          let data = try? Data(contentsOf: url),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let key = json["apiKey"] as? String,
+          !key.isEmpty
+    else { return nil }
+    return key
 }

@@ -72,14 +72,12 @@ struct DeepSeekTranscriptTranslator: Sendable {
         return system // plain string, no cache_control to strip
     }
 
-    /// Strip cache_control and handle empty thinking signatures from a single content block.
+    /// Strip cache_control from a single content block.
+    /// Note: thinking signatures are preserved as-is (even empty ones).
+    /// DeepSeek V4 requires the signature key to be present in re-prompts.
     private static func stripBlock(_ block: [String: Any]) -> [String: Any] {
         var stripped = block
         stripped.removeValue(forKey: "cache_control")
-        if block["type"] as? String == "thinking",
-           let sig = stripped["signature"] as? String, sig.isEmpty {
-            stripped.removeValue(forKey: "signature")
-        }
         return stripped
     }
 

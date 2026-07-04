@@ -66,6 +66,8 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
     @Published public var queueCount: Int = 0
     /// Counter to throttle persistence of streaming text/thinking deltas.
     private var streamPersistCounter: Int = 0
+    /// Timestamp when the first thinking delta arrived (for accurate thought duration).
+    private var thinkingStartTime: Date?
 
     // MARK: - Message Pagination
 
@@ -398,6 +400,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         DispatchQueue.main.async { [self] in
             state = .executing
             executionStartTime = Date()
+            thinkingStartTime = nil
             reasoningExpanded = true
             startThoughtTimer()
             persistState()
@@ -502,6 +505,7 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             messages[index].appendText(text)
 
         case .thinkingDelta(let text):
+            if thinkingStartTime == nil { thinkingStartTime = Date() }
             messages[index].appendThinking(text)
 
         case .toolCallRequested(let toolUseID, let toolName, let input):
@@ -572,7 +576,9 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
         // fires AFTER isMessageStreaming becomes false — otherwise it would
         // collapse the thinking block mid-stream when duration becomes non-nil
         // while isMessageStreaming is still true.
-        if let start = executionStartTime {
+        if let start = thinkingStartTime {
+            messages[index].setThinkingDuration(Date().timeIntervalSince(start))
+        } else if let start = executionStartTime {
             messages[index].setThinkingDuration(Date().timeIntervalSince(start))
         }
         persistMessageWithBlocks(messages[index])
@@ -725,8 +731,8 @@ public final class ThreadViewModel: ObservableObject, Identifiable {
             switch block {
             case .text(let text):
                 return text.isEmpty ? nil : .text(text)
-            case .thinking(let text, let id, _, _):
-                return .thinking(text, signature: id)
+            case .thinking(let text, let id, _, let duration):
+                return .thinking(text, signature: id, duration: duration)
             case .toolUse(let toolUse):
                 if let input = toolUse.rawInput {
                     return .toolUse(id: toolUse.toolUseID, name: toolUse.toolName, input: input)

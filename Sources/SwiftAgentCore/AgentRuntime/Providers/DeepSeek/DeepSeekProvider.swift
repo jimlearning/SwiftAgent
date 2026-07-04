@@ -5,7 +5,7 @@ import Foundation
 /// Handles both of DeepSeek's wire formats through an internal `APICompatibility` switch:
 /// - `.anthropicCompatible`: Targets `/anthropic/v1/messages` (same shape as Anthropic Messages API).
 ///   Strips anthropogenic headers and cache_control markers that DeepSeek rejects (PITFALLS.md Pitfall 1).
-/// - `.openAICompatible`: Targets `/v1/chat/completions` (Chat Completions format).
+/// - `.anthropicCompatible`: Targets `/v1/chat/completions` (Chat Completions format).
 ///   Handles R1 reasoning_content as thinkingDelta snapshots.
 ///
 /// Both paths produce identical SessionEvent sequences for equivalent inputs.
@@ -205,16 +205,6 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         }
         request.httpBody = bodyData
 
-        // Debug: print request body
-        if let bodyStr = String(data: bodyData, encoding: .utf8) {
-            // Print full body for requests containing assistant messages (re-prompts)
-            if bodyStr.contains("\"assistant\"") {
-                print("[DeepSeekProvider] anthropic RE-PROMPT:\n\(bodyStr)")
-            } else {
-                print("[DeepSeekProvider] anthropic FIRST request: \(bodyStr.prefix(500))")
-            }
-        }
-
         try await streamAndParse(request: request, channel: channel)
     }
 
@@ -260,11 +250,6 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
         }
         request.httpBody = bodyData
 
-        // Debug: print request body
-        if let bodyStr = String(data: bodyData, encoding: .utf8) {
-            print("[DeepSeekProvider] openAI request: \(bodyStr.prefix(3000))")
-        }
-
         do {
             let (bytes, response) = try await session.bytes(for: request)
 
@@ -279,7 +264,6 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
                     }
                     errorBody = String(data: errorData, encoding: .utf8)
                 } catch {}
-                print("[DeepSeekProvider] HTTP \(status): \(errorBody ?? "no body")")
                 await channel.fail(with: .serverError(statusCode: status, body: errorBody))
                 return
             }
@@ -320,7 +304,6 @@ public struct DeepSeekProvider: LanguageModel, LanguageModelExecutor, Sendable {
                     }
                     errorBody = String(data: errorData, encoding: .utf8)
                 } catch {}
-                print("[DeepSeekProvider] HTTP \(status): \(errorBody ?? "no body")")
                 await channel.fail(with: .serverError(statusCode: status, body: errorBody))
                 return
             }

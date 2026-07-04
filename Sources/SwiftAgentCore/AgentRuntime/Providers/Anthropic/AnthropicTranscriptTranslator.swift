@@ -75,7 +75,7 @@ struct AnthropicTranscriptTranslator: Sendable {
                 if currentRole != "assistant" { flush() }
                 currentRole = "assistant"
                 var block: [String: Any] = ["type": "thinking", "thinking": text]
-                if let sig = signature { block["signature"] = sig }
+                block["signature"] = signature ?? ""
                 currentBlocks.append(block)
 
             case .system(let text):

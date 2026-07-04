@@ -194,8 +194,8 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
             let events = await channel.events
             var hasToolCalls = false
             thinkingText = await channel.accumulatedThinking
-            thinkingSig = await channel.thinkingSignature
-            print("[SessionImpl] thinkingText.isEmpty=\(thinkingText.isEmpty) thinkingSig='\(thinkingSig ?? "nil")'")
+            let rawSig = await channel.thinkingSignature
+            thinkingSig = (rawSig?.isEmpty == false) ? rawSig : UUID().uuidString
 
             // First pass: collect all events, identify tool calls
             var pendingToolCalls: [(id: String, name: String, input: Data)] = []
@@ -260,17 +260,6 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                     } catch {
                         transcript.entries.append(.toolOutput(id: call.id, output: error.localizedDescription, isError: true))
                     }
-                }
-            }
-
-            // Debug: log transcript entries
-            for e in transcript.entries {
-                switch e {
-                case .thinking(let t, let s): print("[Transcript] thinking(sig:'\(s ?? "nil")', text:'\(t.prefix(40))...')")
-                case .response(let t): print("[Transcript] response('\(t.prefix(40))...')")
-                case .toolCall(let id, let name, _): print("[Transcript] toolCall(id:\(id), name:\(name))")
-                case .toolOutput(let id, _, _): print("[Transcript] toolOutput(id:\(id))")
-                default: break
                 }
             }
 
@@ -344,7 +333,8 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                         // Thinking MUST be in the transcript so the API receives it
                         // back on subsequent turns (required by thinking mode).
                         let thinkingText = await channel.accumulatedThinking
-                        let thinkingSig = await channel.thinkingSignature
+                        let rawSig = await channel.thinkingSignature
+                        let thinkingSig: String? = (rawSig?.isEmpty == false) ? rawSig : UUID().uuidString
                         if !thinkingText.isEmpty {
                             await self.transcript.entries.append(.thinking(thinkingText, signature: thinkingSig))
                         }
@@ -358,18 +348,13 @@ public actor LanguageModelSessionImpl: LanguageModelSession {
                         // consumer sees an error instead of a silent hang.
                         let receivedCompletion = await channel.receivedCompletion
                         guard receivedCompletion else {
-                            print("[SessionImpl] Response truncated — no message_delta received (iteration \(iterationCount))")
                             continuation.finish(throwing: AgentRuntimeError.invalidResponse(
                                 reason: "Model response truncated — no completion event received"
                             ))
                             return
                         }
 
-                        // Guard 2: If the model produced absolutely nothing (no text,
-                        // no thinking, no tools), the API returned an empty response.
-                        // Treat this as an error rather than silently showing nothing.
                         if calls.isEmpty && thinkingText.isEmpty && responseText.isEmpty {
-                            print("[SessionImpl] Empty response — model returned end_turn with no content (iteration \(iterationCount))")
                             continuation.finish(throwing: AgentRuntimeError.invalidResponse(
                                 reason: "Model returned end_turn with no content"
                             ))

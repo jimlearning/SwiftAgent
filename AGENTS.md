@@ -3,6 +3,9 @@
 ## Build & Test
 
 ```bash
+# Patch KeyboardShortcuts #Preview macros (SPM-only issue, needed after `swift package update` or clean)
+bash scripts/patch-keyboardshortcuts.sh
+
 # Build all targets
 swift build --disable-sandbox
 

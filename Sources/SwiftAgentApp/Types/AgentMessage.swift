@@ -372,7 +372,7 @@ extension AgentMessage {
                 let blocks: [AgentMessageBlock] = msg.content.compactMap { block in
                     switch block {
                     case .text(let text): return .text(text)
-                    case .thinking(let text, let signature): return .thinking(text, id: signature ?? UUID().uuidString)
+                    case .thinking(let text, let signature, let duration): return .thinking(text, id: signature ?? UUID().uuidString, duration: duration)
                     case .toolUse(let id, let name, let input),
                          .serverToolUse(let id, let name, let input):
                         let summary = summarizeInput(toolName: name, input: input)
@@ -441,7 +441,7 @@ extension AgentMessage {
                 var blocks: [AgentMessageBlock] = assistant.content.compactMap { block in
                     switch block {
                     case .text(let text): return .text(text)
-                    case .thinking(let text, let signature): return .thinking(text, id: signature ?? UUID().uuidString)
+                    case .thinking(let text, let signature, let duration): return .thinking(text, id: signature ?? UUID().uuidString, duration: duration)
                     case .toolUse(let id, let name, let input),
                          .serverToolUse(let id, let name, let input):
                         return .toolUse(ToolUseBlock(

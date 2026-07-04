@@ -34,7 +34,7 @@ public struct TokenCounter: Sendable {
                 }
             case .image:
                 return total + 100  // rough overhead for image blocks
-            case .thinking(let text, _):
+            case .thinking(let text, _, _):
                 return total + count(text)
             case .redactedThinking:
                 return total + 50  // rough overhead for redacted thinking
