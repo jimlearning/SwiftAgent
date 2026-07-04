@@ -12,8 +12,12 @@ struct MessageListView: View {
     @State private var isNearBottom = true
     @State private var isOlderCollapsed = true
     @State private var isSessionReady = false
+    @State private var lastScrollTick: ContinuousClock.Instant = .now
 
     private let foldThreshold = 30
+
+    /// Frame-rate throttle ceiling for programmatic scrolls — one per 16ms (~60 fps).
+    private var scrollThrottle: Duration { .milliseconds(16) }
 
     var body: some View {
         ScrollView {
@@ -62,14 +66,22 @@ struct MessageListView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
+            // Composite settled messages into a single bitmap layer during streaming so
+            // text-delta-driven body evaluations don't re-layout the settled section.
+            .drawingGroup(when: chatBridge.isStreaming)
 
-            // Streaming view is outside VStack — text deltas don't affect settled layout
+            // Streaming view is outside settled VStack — text deltas don't affect settled layout
             VStack(spacing: 16) {
                 if !windowState.focusMode {
-                    StreamingMessageView {
-                        rebuildSettledItems()
-                        if isNearBottom { scrollToBottomDebounced() }
-                    }
+                    StreamingMessageView(
+                        onStructureChanged: {
+                            rebuildSettledItems()
+                            if isNearBottom { scrollToBottomThrottled() }
+                        },
+                        onContentChanged: {
+                            if isNearBottom { scrollToBottomThrottled() }
+                        }
+                    )
                 }
 
                 if chatBridge.isStreaming {
@@ -97,7 +109,6 @@ struct MessageListView: View {
         }
         .opacity(isSessionReady ? 1 : 0)
         .scrollPosition($scrollPosition)
-        //.defaultScrollAnchor(.bottom)
         .onScrollGeometryChange(for: Bool.self) { geo in
             let distanceFromBottom = geo.contentSize.height - geo.visibleRect.maxY
             return distanceFromBottom < 120
@@ -109,6 +120,7 @@ struct MessageListView: View {
             scrollTask?.cancel()
             isOlderCollapsed = true
             scrollPosition = ScrollPosition()
+            lastScrollTick = .now
             rebuildSettledItems()
             // Skip scroll/fade delay for empty sessions — appear instantly
             guard !settledItems.isEmpty else {
@@ -127,7 +139,7 @@ struct MessageListView: View {
             // Only update when streaming ends — settled list doesn't change at start, so skip
             if old && !new {
                 rebuildSettledItems()
-                scrollToBottomDebounced()
+                scrollToBottomThrottled()
             }
         }
         .overlay {
@@ -153,8 +165,6 @@ struct MessageListView: View {
             }
         }
     }
-
-    // MARK: - Message Grouping
 
     // MARK: - Settled Items
 
@@ -182,11 +192,24 @@ struct MessageListView: View {
         return settled
     }
 
-    private func scrollToBottomDebounced() {
+    /// Throttled scroll: fires immediately if no scroll in the last frame, otherwise
+    /// schedules a trailing scroll after the throttle window. This prevents piling up
+    /// `scrollTo` calls from rapid text deltas while still scrolling promptly.
+    private func scrollToBottomThrottled() {
+        let now: ContinuousClock.Instant = .now
+        let elapsed = now - lastScrollTick
+        if elapsed >= scrollThrottle {
+            lastScrollTick = now
+            scrollPosition.scrollTo(edge: .bottom)
+            return
+        }
+        // Already scrolled this frame — schedule one trailing scroll at throttle boundary.
         scrollTask?.cancel()
+        let remaining = scrollThrottle - elapsed
         scrollTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: remaining)
             guard !Task.isCancelled else { return }
+            lastScrollTick = .now
             scrollPosition.scrollTo(edge: .bottom)
         }
     }
@@ -288,6 +311,7 @@ struct StreamingMessageView: View {
     @Environment(ChatBridge.self) private var chatBridge
     @Environment(WindowState.self) private var windowState
     var onStructureChanged: () -> Void
+    var onContentChanged: () -> Void
 
     var body: some View {
         let messages = chatBridge.messages
@@ -326,6 +350,9 @@ struct StreamingMessageView: View {
         .onChange(of: messages.count) { _, _ in
             onStructureChanged()
         }
+        .onChange(of: streamingContentFingerprint) { _, _ in
+            onContentChanged()
+        }
     }
 
     /// Returns the last consecutive assistant sequence (including streaming turn) while streaming.
@@ -333,6 +360,20 @@ struct StreamingMessageView: View {
     private func activeResponseMessages(from messages: [ChatMessage]) -> [ChatMessage] {
         guard messages.last?.isStreaming == true else { return [] }
         return Array(messages[streamingBoundaryIndex(in: messages)...])
+    }
+
+    /// Fingerprint that changes on every text / thinking / block-structure delta in the
+    /// streaming message — used to drive auto-scroll for content changes that don't alter
+    /// `messages.count` (the existing structure-change trigger).
+    private var streamingContentFingerprint: Int {
+        guard let last = chatBridge.messages.last, last.isStreaming else { return 0 }
+        var hasher = Hasher()
+        for block in last.blocks {
+            hasher.combine(block.text)
+            hasher.combine(block.thinking)
+            hasher.combine(block.toolCall?.id)
+        }
+        return hasher.finalize()
     }
 }
 
@@ -449,5 +490,19 @@ struct ElapsedTimeView: View {
             .onReceive(timer) { _ in
                 elapsed = Date().timeIntervalSince(startDate)
             }
+    }
+}
+
+// MARK: - Conditional drawingGroup
+
+extension View {
+    /// Apply `.drawingGroup()` only when the condition is true.
+    @ViewBuilder
+    func drawingGroup(when condition: Bool) -> some View {
+        if condition {
+            self.drawingGroup()
+        } else {
+            self
+        }
     }
 }

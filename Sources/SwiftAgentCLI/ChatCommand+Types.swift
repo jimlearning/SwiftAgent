@@ -67,6 +67,8 @@ enum CommandOutcome {
     case normal(output: String?)
     case exit
     case resume(sessionId: String)
+    /// Pass the input through to the LLM as a normal prompt (used for skills).
+    case prompt(String)
 }
 
 /// Thread-safe flag to pause the spinner during interactive user prompts.

@@ -334,7 +334,7 @@ struct ChatCommand: AsyncParsableCommand {
                 continue
             }
 
-            let input = inputLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            var input = inputLine.trimmingCharacters(in: .whitespacesAndNewlines)
             if input.isEmpty { continue }
 
             // Handle slash commands
@@ -384,22 +384,28 @@ struct ChatCommand: AsyncParsableCommand {
                     planActive: sessionState.isPlanModeActive,
                     sharedModel: sharedModel
                 )
+                let isPrompt: Bool
                 switch outcome {
                 case .normal(let output):
                     if let output = output {
                         emitBlock(output)
                     }
+                    isPrompt = false
                 case .exit:
-                    break  // will exit outer loop
+                    isPrompt = false
                 case .resume(let resumeID):
                     sessionId = resumeID
                     emitBlock("Resumed session \(resumeID.prefix(8))... (transcript restore from memory store pending)")
+                    isPrompt = false
+                case .prompt(let promptText):
+                    // Skill/plugin command — pass through to LLM as a normal prompt.
+                    input = promptText
+                    isPrompt = true
                 }
-                // .exit needs to break the outer while loop
                 if case .exit = outcome {
                     break
                 }
-                continue
+                if !isPrompt { continue }
             }
 
             // Handle ! (bang) bash mode — execute command directly without LLM
@@ -892,6 +898,15 @@ struct ChatCommand: AsyncParsableCommand {
         case .resume(let id):
             return .resume(sessionId: id)
         case .none:
+            // Check if this is a skill (user/project/bundled) — pass through to LLM
+            let parts = input.split(separator: " ", maxSplits: 1)
+            let cmdName = String(parts[0].dropFirst()) // remove "/" prefix
+            let skillNames = SkillFileLoader.allSkillNames(
+                workingDirectory: FileManager.default.currentDirectoryPath
+            )
+            if skillNames.contains(cmdName) {
+                return .prompt(input)
+            }
             return .normal(output: "Unknown command: \(input). Type /help for available commands.")
         }
     }

@@ -14,7 +14,7 @@ open /tmp/hang-sample.txt
 
 查看**主线程**（`Thread 0x...  DispatchQueue: com.apple.main-thread`）。其栈顶的函数就是阻塞 UI 的原因。
 
-如果卡顿持续 2 秒以上，内置的 `HangDetector`（`Sources/SwiftAgentApp/Content/MessageListView.swift`）会自动捕获采样到 `~/Library/Logs/SwiftAgent/hang-*.txt`。
+如果卡顿持续 2 秒以上，使用 `sample` 命令手动捕获（见上文）。HangDetector 曾内置于 `MessageListView.swift`，现已移除——chat UI 已迁移到 `Packages/Sources/ClarcChatKit/`。
 
 ## 已知卡顿模式
 
@@ -30,6 +30,19 @@ open /tmp/hang-sample.txt
 - `Content/AppKitChatBridge.swift` — 缺少 `.throttle(16ms)` 用于消息观察
 
 **修复:** 持久化卸载到 `Task.detached`。Agent loop 卸载到 `Task.detached`，配合显式的 `MainActor.run` 跳转。消息观察 throttled 到 16ms (~60fps)。
+
+**增量优化（ClarcChatKit MessageListView）:**
+
+*分离结构变更与内容变更回调。* `StreamingMessageView` 原先仅在 `messages.count` 变化时触发 `onStructureChanged`（重建 settled items + 滚动）。文本/thinking delta 不改变 count，因此 streaming 期间的自动滚动会丢失。现在拆分为两个独立回调：
+
+- `onStructureChanged` — 仅在 `messages.count` 变化时触发（重建 settled items + 滚动）
+- `onContentChanged` — 在 `streamingContentFingerprint` 变化时触发（仅滚动）
+
+`streamingContentFingerprint` 对最后一个 streaming 消息的所有 block 的 `text`、`thinking` 和 `toolCall.id` 进行哈希，确保每次内容 delta 都会触发滚动，但不会不必要地重建 settled items。
+
+*帧率节流滚动。* `scrollToBottomDebounced`（固定 50ms 延迟）替换为 `scrollToBottomThrottled`——帧率感知节流，上限为 16ms（~60fps）。如果自上次滚动以来已过至少一帧，则立即滚动；否则安排在节流窗口边界进行一次尾随滚动。这可以防止来自快速文本 delta 的 `scrollTo` 调用堆积，同时仍能迅速滚动。
+
+*在 streaming 期间对已稳定消息使用 drawingGroup。* `.drawingGroup(when: chatBridge.isStreaming)` 将已稳定的消息部分合成为单个位图层，因此文本 delta 驱动的 body 评估不会重新布局已稳定的部分。仅在 streaming 期间激活（非 streaming 期间无开销）。
 
 ### 2. 焦点模式切换 + 文件选择卡顿
 
@@ -64,6 +77,9 @@ open /tmp/hang-sample.txt
 | **不必要地用 `Task { @MainActor }` 包装异步工作** | 使 MainActor 串行执行器饱和 | Agent loop 在 `@MainActor` 上，而实际上可以用 `Task.detached` |
 | **对高频发布者跳过 Combine throttle** | 每次变更都触发完整 UI 重新计算 | `$messages.sink { ... }` 没有 `.throttle(16ms)` |
 | **对大型列表使用递归 View** | 无 cell 复用，无虚拟化 | `ForEach(children) { FileTreeRow(...) }` 处理 200 个条目 |
+| **在每次 streaming text delta 时重新布局已稳定消息** | 每次 token 到达时重新计算整个聊天 body；与消息数量成 O(n) | Streaming 期间未对已稳定区域使用 `drawingGroup` |
+| **对高频 streaming 滚动使用固定延迟去抖动** | 50ms 去抖动落后于 16ms 帧——要么丢帧，要么堆积 `scrollTo` 调用 | `scrollToBottomDebounced(50ms)` 处理 60fps text deltas |
+| **使用单一回调处理结构变更和内容变更** | 每次内容 delta 不必要地重建已稳定项目列表 | `onChange(of: messages.count)` 驱动 settled rebuilds 和 scroll |
 
 ## 检查-修复-验证工作流
 
@@ -76,15 +92,11 @@ open /tmp/hang-sample.txt
 5. **验证** 再现触发场景——UI 必须保持响应
 6. **更新** 本文档，如果你发现了新的卡顿模式
 
-## HangDetector
+## HangDetector（已移除）
 
-`Sources/SwiftAgentApp/Content/MessageListView.swift` 包含 `HangDetector`——一个后台线程，每 50ms 通过 `DispatchQueue.main.async` + semaphore 对主线程进行 ping：
+`HangDetector` 曾位于 `Sources/SwiftAgentApp/Content/MessageListView.swift`，在 chat UI 迁移到 `Packages/Sources/ClarcChatKit/` 时被移除。它通过后台线程每 50ms ping 主线程（`DispatchQueue.main.async` + semaphore）：100ms+ 为软性微卡顿，500ms+ 为队列饱和警告，2000ms+ 为严重超时并自动捕获 1 秒 `sample` 到 `~/Library/Logs/SwiftAgent/`。
 
-- **100ms+ 往返时间:** 软性微卡顿（默认不记录）
-- **500ms+ 往返时间:** 记录为警告——队列饱和
-- **2000ms+ 超时:** 记录为严重，自动捕获 1 秒 `sample` 到 `~/Library/Logs/SwiftAgent/`
-
-从 `MessageListView.onAppear` 启动（幂等——全局启动一次）。
+手动诊断替代方案：`sample SwiftAgentApp 1 -file /tmp/hang-sample.txt`
 
 ## 布局重入：无声杀手
 
