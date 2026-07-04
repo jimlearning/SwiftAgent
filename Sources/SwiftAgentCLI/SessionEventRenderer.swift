@@ -31,8 +31,8 @@ public struct SessionEventRenderer {
         case none
         case thinking
         case text
+        case toolCall
         case toolResult
-        case usage
         case error
     }
     private var lastBlockType: BlockType = .none
@@ -61,15 +61,20 @@ public struct SessionEventRenderer {
         case .toolCallRequested(let id, let name, let input):
             activeTools[id] = name
             toolCallRecords.append((id, name, input))
+            separate(next: .toolCall)
+            renderToolCall(name: name, input: input)
         case .toolCallCompleted(let id, let output, let isError):
             activeTools.removeValue(forKey: id)
             toolResultRecords.append((id, output.stringValue, isError))
-            separate(next: .toolResult)
+            // toolCall → toolResult is a visual pair: no blank line between them
+            if lastBlockType != .toolCall {
+                separate(next: .toolResult)
+            } else {
+                lastBlockType = .toolResult
+            }
             renderToolResult(output: output, isError: isError)
-        case .turnCompleted(let usage, _):
+        case .turnCompleted:
             guard activeTools.isEmpty else { return }
-            separate(next: .usage)
-            renderUsage(usage)
         case .error(let err):
             separate(next: .error)
             renderError(err)
@@ -123,28 +128,84 @@ public struct SessionEventRenderer {
         guard thinking.count > accumulatedThinking.count else { return }
         let newPart = String(thinking.dropFirst(accumulatedThinking.count))
         if accumulatedThinking.isEmpty {
-            print(ansi("\r\u{001B}[K  Thinking:\n", color: theme.dim), terminator: "")
+            // CC format: ∴ Thinking… + blank line (gap={1}) + indented content.
+            // The 2-space indent is a line prefix, not a per-chunk prefix.
+            print(ansi("\r\u{001B}[K\u{2234} Thinking\u{2026}\n", color: theme.dim), terminator: "")
+            print("")
+            print(ansi("  ", color: theme.dim), terminator: "")
         }
         print(ansi(newPart, color: theme.dim), terminator: "")
         fflush(stdout)
         accumulatedThinking = thinking
     }
 
-    private func renderToolResult(output: ToolOutputValue, isError: Bool) {
-        let raw = output.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snippet = String(raw.prefix(500))
-        let truncated = raw.count > 500 ? "…" : ""
-        if isError {
-            print("\r\u{001B}[K  \(ansi("✗", color: theme.error)) \(snippet)\(truncated)")
-        } else if !snippet.isEmpty {
-            print("\r\u{001B}[K  \(ansi("✓", color: theme.success)) \(snippet)\(truncated)")
+    // MARK: - Tool call display
+
+    /// CC-aligned tool call prefix: `⏺` (U+23FA, black circle for record).
+    private static let toolCallPrefix = "\u{23FA} "
+    /// CC-aligned tool result prefix: `  ⎿  ` (U+23BF).
+    private static let toolResultPrefix = "  \u{23BF}  "
+
+    /// Display a tool call in CC format: `⏺ ToolName(summary)`.
+    private func renderToolCall(name: String, input: Data) {
+        let summary = Self.extractToolSummary(from: input)
+        let line: String
+        if let summary = summary {
+            line = "\r\u{001B}[K\(Self.toolCallPrefix)\(name)(\(summary))"
+        } else {
+            line = "\r\u{001B}[K\(Self.toolCallPrefix)\(name)"
         }
+        print(ansi(line, color: theme.secondary))
         fflush(stdout)
     }
 
-    private func renderUsage(_ usage: Usage?) {
-        guard let usage = usage else { return }
-        print(ansi("  ↳ Tokens: in=\(usage.inputTokens) out=\(usage.outputTokens)", color: theme.secondary))
+    /// Extract a human-readable summary from tool input JSON.
+    /// Looks for the tool's primary argument: command, file_path, pattern, query, etc.
+    private static func extractToolSummary(from input: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: input) as? [String: Any] else {
+            return nil
+        }
+        // Primary keys in priority order — the value that best describes what the tool does
+        let primaryKeys = ["command", "file_path", "pattern", "query", "old_string", "new_string", "content", "name", "description"]
+        for key in primaryKeys {
+            if let value = json[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        // Fallback: first non-empty string value
+        for (_, value) in json {
+            if let str = value as? String, !str.isEmpty {
+                return str
+            }
+        }
+        return nil
+    }
+
+    /// Display a tool result in CC format:
+    /// ```
+    ///   ⎿  first line
+    ///      subsequent lines (5-space indent aligns with text after ⎿  )
+    /// ```
+    private func renderToolResult(output: ToolOutputValue, isError: Bool) {
+        let raw = output.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = raw.components(separatedBy: "\n")
+
+        if isError {
+            let first = lines.first ?? ""
+            let snippet = String(first.prefix(500))
+            let truncated = first.count > 500 ? "…" : ""
+            print("\r\u{001B}[K  \(ansi("✗", color: theme.error)) \(snippet)\(truncated)")
+            for line in lines.dropFirst() {
+                print("     \(line)")
+            }
+        } else if !raw.isEmpty {
+            let first = lines.first ?? ""
+            print(ansi("\r\u{001B}[K\(Self.toolResultPrefix)\(first)", color: theme.secondary))
+            for line in lines.dropFirst() {
+                print(ansi("     \(line)", color: theme.secondary))
+            }
+        }
+        fflush(stdout)
     }
 
     private func renderError(_ error: AgentRuntimeError) {
