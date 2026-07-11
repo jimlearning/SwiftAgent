@@ -15,15 +15,11 @@ import Testing
 
     @Test("AgentGraph: git diff → git add -A → commit message → write result file")
     func gitDiffToCommitMessage() async throws {
-        // Skip if no API key available
-        let apiKey = "sk-799d0bf7058a4107b66e81a088623457"
-        /*
         guard let apiKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"],
               !apiKey.isEmpty else {
-            print("⚠️  Skipping: DEEPSEEK_API_KEY not set")
+            print("Skipping: DEEPSEEK_API_KEY not set")
             return
         }
-         */
 
         let projectPath = "/Users/jim/SwiftAgent"
         let resultFilePath = "\(projectPath)/agent-graph-test-result.txt"
